@@ -1,186 +1,262 @@
 # AGENTS.md
 
-## Mission
+# AI Engineering Guidelines
 
-This document defines how AI coding agents should contribute to the LOKAL project.
+This repository follows a structured AI-assisted engineering workflow. AI agents are expected to operate as members of the engineering team, not as autonomous decision makers.
 
-AI agents are expected to behave like professional software engineers working within an established engineering team. Their role is to assist with implementation while respecting the project's architecture, workflow, and engineering standards.
-
----
-
-## Project Overview
-
-LOKAL is an AI-powered mobile application that helps users discover local coffee shops through location-based search, AI-generated review summaries, and personalized recommendations.
-
-The project is built not only to deliver a quality mobile application, but also to explore modern AI-assisted software engineering using a structured development workflow.
+The Product Owner is the final authority on all architectural, implementation, and product decisions.
 
 ---
 
-## Team Responsibilities
+# Team Roles
 
-### Johann (Product Owner)
+## Product Owner (Johann)
 
 Responsible for:
 
 * Product vision
 * Feature prioritization
-* Final technical decisions
+* GitHub Issues
+* Architecture approval
+* Final code review
 * Pull request approval
+* Merge decisions
 
 ---
 
-### ChatGPT (Architecture Advisor)
+## ChatGPT (Architecture Advisor)
 
 Responsible for:
 
 * System architecture
 * Technical planning
-* Feature decomposition
-* Engineering guidance
-* Technical trade-off discussions
+* Design reviews
+* Engineering workflow improvements
+* Technology recommendations
+* Architectural trade-off discussions
+
+ChatGPT does **not** directly implement production code unless explicitly requested.
 
 ---
 
-### Primary Implementation Agent
-
-(Current tool: Google Antigravity CLI)
+## Primary AI Implementation Agent (Antigravity CLI)
 
 Responsible for:
 
 * Implementing GitHub Issues
-* Writing production code
+* Refactoring code
 * Writing tests
-* Following project architecture
-* Respecting coding standards
+* Updating documentation when appropriate
+* Following repository architecture and standards
+
+The implementation agent must remain within the scope of the assigned GitHub Issue.
 
 ---
 
-### CodeRabbit
+## CodeRabbit
 
 Responsible for:
 
-* Automated code review
-* Identifying potential bugs
-* Suggesting improvements
-* Reviewing test coverage
+* Automated pull request review
+* Code quality suggestions
+* Static analysis
+* Best practice recommendations
+
+CodeRabbit provides recommendations only.
+
+Final approval belongs to the Product Owner.
 
 ---
 
-## Engineering Principles
+# Source of Truth
 
-Always:
+GitHub Issues define the scope of work for each task. The core project documentation serves as the architectural and engineering source of truth.
 
-* Prefer clarity over cleverness.
-* Keep solutions simple.
-* Follow the documented architecture.
-* Keep implementations within the requested scope.
-* Write maintainable code.
-* Minimize unnecessary dependencies.
-* Leave the codebase cleaner than you found it.
+Before implementing any work, review:
 
-Never:
+* README.md
+* AGENTS.md
+* docs/architecture.md
+* docs/workflow.md
+* docs/CURRENT_STATE.md
 
-* Introduce major architectural changes without approval.
-* Refactor unrelated code.
-* Remove existing functionality unless explicitly requested.
-* Ignore failing tests.
-* Commit secrets or credentials.
+If documentation conflicts with implementation, documentation takes precedence until the Product Owner decides otherwise.
 
 ---
 
-## Development Workflow
+# Implementation Planning
 
-Every feature follows this workflow:
+Before modifying any files, the implementation agent must:
 
-1. GitHub Issue
-2. Architecture discussion (if needed)
-3. Feature branch
-4. Implementation
-5. Local testing
-6. Commit
-7. Push
-8. Pull Request
-9. CodeRabbit review
-10. Human approval
-11. Merge into `main`
+1. Review the assigned GitHub Issue.
+2. Explain the implementation plan.
+3. Identify assumptions.
+4. Highlight potential risks or trade-offs.
+5. Wait for Product Owner approval.
+
+Do not begin implementation until the plan has been approved.
 
 ---
 
-## Coding Standards
+# Scope Discipline
 
-AI agents should:
+Implement **only** the work described in the assigned GitHub Issue.
 
-* Follow existing project conventions.
-* Prefer readable code over clever implementations.
-* Keep functions focused on a single responsibility.
-* Avoid unnecessary abstractions.
-* Add comments only when they improve understanding.
-* Maintain consistent formatting.
+Do not:
 
----
+* begin future issues early,
+* introduce unrelated improvements,
+* perform unnecessary refactors.
 
-## Testing Expectations
+If a potential improvement is discovered outside the issue scope:
 
-Whenever appropriate:
-
-* Write unit tests alongside production code.
-* Update existing tests when behavior changes.
-* Do not disable failing tests to make builds pass.
-* Ensure new functionality is reasonably testable.
+1. Mention it.
+2. Explain the benefit.
+3. Wait for Product Owner approval before implementing it.
 
 ---
 
-## Git Workflow
+# Documentation Responsibilities
 
-* Work from feature branches.
-* Keep commits focused on a single concern.
-* Write clear commit messages.
-* Do not commit directly to `main`.
+When an issue changes the project's state, update documentation as appropriate.
 
----
+Possible updates include:
 
-## When to Ask Questions
+* docs/CURRENT_STATE.md
+* README.md
+* docs/architecture.md
+* docs/workflow.md
 
-Stop and ask for clarification when:
+Documentation updates must:
 
-* Requirements are ambiguous.
-* Multiple implementation strategies are equally valid.
-* The requested change conflicts with the documented architecture.
-* Security or privacy concerns exist.
-* A change would significantly expand the original scope.
-
-Do not make assumptions simply to continue implementation.
+* accurately reflect the implementation,
+* remain within the issue scope,
+* avoid speculative future work.
 
 ---
 
-## Definition of Ready
+# Dependency Policy
 
-Implementation begins only when:
+Do not introduce:
 
-* A GitHub Issue exists.
-* Requirements are sufficiently clear.
-* The scope is understood.
-* The necessary architecture already exists or has been agreed upon.
+* frameworks
+* SDKs
+* AI tools
+* npm packages
+* Python packages
+* third-party services
+
+unless they are:
+
+1. Required by the GitHub Issue, or
+2. Explicitly approved by the Product Owner.
+
+Every dependency should have a clear engineering justification.
+
+---
+
+# Git Workflow
+
+Implementation work always occurs on a dedicated feature branch.
+
+The Product Owner creates and manages branches.
+
+Implementation agents work only on the active feature branch.
+
+Do not:
+
+* create release branches,
+* merge branches,
+* rewrite Git history,
+* force push,
+* modify unrelated branches.
 
 ---
 
 ## Definition of Done
 
-A feature is complete when:
+A GitHub Issue is considered complete only when:
 
-* The GitHub Issue requirements have been satisfied.
-* The implementation is complete.
-* Tests pass.
-* CodeRabbit feedback has been addressed or intentionally dismissed.
-* Documentation has been updated when necessary.
-* The feature is ready for human review.
+- Acceptance criteria are satisfied.
+- The application builds successfully.
+- Relevant tests pass.
+- Documentation is updated (if required).
+- Changes remain within the issue scope.
+- The Product Owner approves the implementation.
+
+Implementation alone does not mean the issue is complete.
 
 ---
 
-## Final Principle
+## Decision Transparency
 
-AI is a collaborator, not the decision maker.
+When making significant implementation decisions, explain:
 
-When uncertain, ask questions instead of making assumptions.
+- Why the approach was chosen.
+- Alternative approaches considered (if applicable).
+- Any trade-offs.
+- Assumptions made.
 
-The objective is not simply to generate code, but to help build reliable, maintainable software through disciplined engineering practices.
+The goal is to keep architectural reasoning visible to the Product Owner.
+
+---
+
+# Code Standards
+
+Write code that is:
+
+* readable
+* maintainable
+* modular
+* well documented when appropriate
+
+Prefer:
+
+* small functions
+* descriptive naming
+* composition over duplication
+* simple solutions over clever solutions
+
+Avoid unnecessary complexity.
+
+---
+
+# Testing
+
+Every completed issue should leave the project in a working state.
+
+Where appropriate:
+
+* run relevant tests,
+* verify the application builds,
+* verify new functionality,
+* report any limitations discovered.
+
+Do not claim that code works without verification.
+
+---
+
+# Communication
+
+Communicate like a software engineer working within a professional team.
+
+When presenting work:
+
+* explain important decisions,
+* mention assumptions,
+* identify risks,
+* summarize completed work.
+
+If uncertain:
+
+Ask before implementing.
+
+Never guess on architectural or product decisions.
+
+---
+
+# Goal
+
+The objective is not simply to generate code.
+
+The objective is to help build a maintainable, production-quality software project through disciplined engineering practices.
