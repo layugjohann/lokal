@@ -1,225 +1,314 @@
+# workflow.md
+
 # Zero Cost AI Workflow
 
-This document defines the standard development workflow for the LOKAL project.
+This document defines the standard engineering workflow for LOKAL.
 
-The goal of this workflow is to produce high-quality software by combining human decision-making with AI-assisted implementation, automated testing, and AI-powered code review while keeping development costs as close to zero as possible.
+Every feature follows this process.
+
+## Development Session Checklist
+
+Before starting work:
+
+1. Pull the latest changes.
+2. Open the project in VS Code.
+3. Start Antigravity (`agy`) in a dedicated terminal.
+4. Check Antigravity usage (`/usage`).
+5. Read `docs/CURRENT_STATE.md`.
+6. Review the active GitHub Issue.
+7. Verify the correct feature branch is checked out.
+8. Begin implementation.
 
 ---
 
-# Team
+# Engineering Principles
 
-The development team consists of the following members:
-
-| Team Member                     | Primary Responsibility                                 |
-| ------------------------------- | ------------------------------------------------------ |
-| Johann                          | Product vision, feature prioritization, final approval |
-| ChatGPT                         | Architecture, planning, technical guidance             |
-| Primary AI Implementation Agent | Feature implementation                                 |
-| CodeRabbit                      | Automated code review                                  |
-| GitHub                          | Source control, Issues, Pull Requests                  |
-
----
-
-# Guiding Principles
-
-The workflow follows these principles:
-
-* Plan before implementing.
-* Keep features small and focused.
-* Maintain a single source of truth through GitHub Issues.
-* Let AI assist implementation, not replace engineering judgment.
-* Test before merging.
-* Update documentation when project knowledge changes.
-* Prefer consistency over speed.
+* GitHub Issues are the single source of truth.
+* Every feature has its own branch.
+* Architecture is reviewed before implementation.
+* AI proposes a plan before writing code.
+* Every issue should leave the project in a working state.
+* Documentation evolves alongside the codebase.
+* Small, reviewable changes are preferred over large batches of work.
 
 ---
 
 # Feature Development Lifecycle
 
-Every feature follows the same lifecycle.
-
-## 1. Create a GitHub Issue
-
-Each feature begins with a GitHub Issue describing:
-
-* Problem statement
-* Goal
-* Scope
-* Acceptance criteria
-
-No implementation begins without an Issue.
+```
+Idea
+    │
+    ▼
+GitHub Issue
+    │
+    ▼
+Architecture Review (if required)
+    │
+    ▼
+Product Owner creates Feature Branch
+    │
+    ▼
+AI reviews project documentation
+    │
+    ▼
+AI presents implementation plan
+    │
+    ▼
+Product Owner approval
+    │
+    ▼
+Implementation
+    │
+    ▼
+Local Testing
+    │
+    ▼
+Acceptance Review
+    │
+    ▼
+Update Documentation (if required)
+    │
+    ▼
+Commit
+    │
+    ▼
+Push Branch
+    │
+    ▼
+Open Pull Request
+    │
+    ▼
+CodeRabbit Review
+    │
+    ▼
+Human Review
+    │
+    ▼
+Merge into main
+```
 
 ---
 
-## 2. Technical Planning
+# Step 1 — GitHub Issue
 
-If necessary, discuss:
+Every feature begins with a GitHub Issue.
 
-* Architecture
-* Trade-offs
-* Dependencies
-* Risks
+Each issue should contain:
 
-Large architectural decisions should be made before implementation starts.
+* Objective
+* Background
+* Requirements
+* Acceptance Criteria
+* Out of Scope
+* Definition of Done
+
+The issue defines the scope of work.
 
 ---
 
-## 3. Create a Feature Branch
+# Step 2 — Architecture Review
 
-Create a dedicated branch for the feature.
+Determine whether the feature affects:
+
+* architecture,
+* database design,
+* APIs,
+* security,
+* application structure.
+
+If necessary, discuss design decisions before implementation begins.
+
+---
+
+# Step 3 — Feature Branch
+
+The Product Owner creates a dedicated feature branch.
 
 Example:
 
-```text
-feature/coffee-shop-search
+```
+feature/issue-7-authentication
 ```
 
-The `main` branch should remain stable.
+All implementation occurs on this branch.
 
 ---
 
-## 4. Implementation
+# Step 4 — AI Project Review
 
-The Primary AI Implementation Agent implements the feature while following:
+Before coding, the implementation agent reviews:
 
+* README.md
 * AGENTS.md
-* architecture.md
-* Project coding standards
-* GitHub Issue requirements
+* docs/architecture.md
+* docs/workflow.md
+* docs/CURRENT_STATE.md
 
-Implementation should stay within the agreed scope.
-
----
-
-## 5. Local Testing
-
-Before committing:
-
-* Run unit tests.
-* Verify the application builds successfully.
-* Confirm the feature behaves as expected.
-
-Known issues should not be ignored.
+This ensures implementation aligns with project standards.
 
 ---
 
-## 6. Commit Changes
+# Step 5 — Implementation Plan
 
-Create focused commits with clear messages.
+The implementation agent presents:
+
+* implementation strategy,
+* assumptions,
+* risks,
+* dependencies,
+* expected file changes.
+
+No code is written until the Product Owner approves the plan.
+
+---
+
+# Step 6 — Implementation
+
+The implementation agent completes only the assigned GitHub Issue.
+
+If additional improvements are identified:
+
+* explain them,
+* do not implement them without approval.
+
+---
+
+# Step 7 — Local Testing
+
+Verify:
+
+* application builds,
+* tests pass (where applicable),
+* functionality works,
+* no obvious regressions are introduced.
+
+---
+
+# Step 8 — Acceptance Review
+
+The Product Owner reviews:
+
+* implementation,
+* architecture,
+* code quality,
+* scope compliance.
+
+Only accepted work proceeds to commit.
+
+---
+
+# Step 9 — Documentation
+
+If the issue changes the project state, update documentation.
+
+Possible files include:
+
+* docs/CURRENT_STATE.md
+* README.md
+* docs/architecture.md
+* AGENTS.md
+* workflow.md
+
+Documentation should accurately reflect completed work.
+
+---
+
+# Step 10 — Commit
+
+Create a clear, single-purpose commit.
 
 Examples:
 
-```text
-feat: add coffee shop search screen
-
-fix: handle empty review responses
-
-refactor: simplify location service
+```
+feat:
+fix:
+refactor:
+docs:
+test:
+chore:
 ```
 
-Each commit should represent a single logical change.
+Keep commits focused.
 
 ---
 
-## 7. Push and Open a Pull Request
+# Step 11 — Push
 
-Push the feature branch and create a Pull Request.
+Push the feature branch to GitHub.
 
-The Pull Request should clearly describe:
-
-* What changed
-* Why it changed
-* Testing performed
-* Any known limitations
+Never commit directly to `main`.
 
 ---
 
-## 8. Code Review
+# Step 12 — Pull Request
+
+Open a Pull Request describing:
+
+* what changed,
+* why it changed,
+* testing performed,
+* screenshots (if applicable),
+* known limitations.
+
+---
+
+# Step 13 — Code Review
 
 CodeRabbit reviews the Pull Request.
 
-Review comments should be:
+Review every recommendation.
 
-* Addressed
-* Discussed
-* Or intentionally dismissed with justification
-
-Code review is part of development, not an optional step.
+Accept only suggestions that improve the project.
 
 ---
 
-## 9. Human Review
+# Step 14 — Human Approval
 
-Before merging:
+The Product Owner performs the final review.
 
-* Verify the implementation satisfies the Issue.
-* Confirm tests pass.
-* Review architecture impact.
-* Ensure documentation has been updated if necessary.
+Confirm:
 
----
-
-## 10. Merge
-
-Merge only after review is complete.
-
-Delete the feature branch once it has been merged.
+* issue requirements satisfied,
+* acceptance criteria met,
+* documentation updated,
+* project builds successfully.
 
 ---
 
-# Documentation Workflow
+# Step 15 — Merge
 
-Documentation is considered part of the feature.
+Merge the Pull Request into `main`.
 
-Update documentation whenever:
+After merging:
 
-* Architecture changes
-* Development workflow changes
-* Environment setup changes
-* New engineering conventions are introduced
-
-`CURRENT_STATE.md` should be updated at the end of each significant work session.
+* close the GitHub Issue,
+* delete the feature branch,
+* begin planning the next issue.
 
 ---
 
-# Testing Philosophy
+## End-of-Session Checklist
 
-Testing should provide confidence without becoming unnecessary overhead.
+Before ending a development session:
 
-General expectations:
-
-* Add tests for new business logic.
-* Update tests when behavior changes.
-* Do not remove failing tests to make builds pass.
-* Keep tests readable and maintainable.
+- Verify the application still runs.
+- Update documentation if needed.
+- Review modified files.
+- Commit completed work.
+- Push the feature branch.
+- Update `docs/CURRENT_STATE.md`.
+- Record blockers or next steps.
 
 ---
 
 # Continuous Improvement
 
-The workflow is intentionally stable.
+The workflow itself is a living document.
 
-Changes should only be made when repeated experience shows that a step no longer provides value or a better approach has been proven.
+Whenever a completed issue reveals a better process:
 
-The objective is continuous improvement through experience, not constant process redesign.
+1. Discuss the improvement.
+2. Update the documentation.
+3. Apply the refinement to future work.
 
----
-
-# Success Criteria
-
-A feature is considered complete when:
-
-* The GitHub Issue has been satisfied.
-* Code has been implemented.
-* Tests pass.
-* CodeRabbit review has been completed.
-* Documentation has been updated where necessary.
-* The feature is approved for merge.
-
----
-
-# Final Principle
-
-The Zero Cost AI Workflow is built around roles, responsibilities, and engineering principles—not specific tools.
-
-AI tools may change over time, but a disciplined engineering process should remain consistent.
+The engineering process should evolve alongside the project.
