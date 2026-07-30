@@ -1,4 +1,4 @@
-# workflow.md
+# docs/workflow.md
 
 # Zero Cost AI Workflow
 
@@ -14,16 +14,17 @@ Before starting work:
 2. Open the project in VS Code.
 3. Start Antigravity (`agy`) in a dedicated terminal.
 4. Check Antigravity usage (`/usage`).
-5. Read `docs/CURRENT_STATE.md`.
-6. Review the active GitHub Issue.
-7. Verify the correct feature branch is checked out.
-8. Begin implementation.
+5. Review the active GitHub Issue and core project documentation (`README.md`, `AGENTS.md`, `docs/architecture.md`, `docs/workflow.md`, `docs/CURRENT_STATE.md`).
+6. Verify the correct feature branch is checked out.
+7. Present implementation plan, identifying assumptions, risks, and trade-offs.
+8. Obtain Product Owner approval.
+9. Begin implementation.
 
 ---
 
 # Engineering Principles
 
-* GitHub Issues are the single source of truth.
+* GitHub Issues define feature scope, while core project documentation serves as the engineering source of truth.
 * Every feature has its own branch.
 * Architecture is reviewed before implementation.
 * AI proposes a plan before writing code.
@@ -35,7 +36,7 @@ Before starting work:
 
 # Feature Development Lifecycle
 
-```
+```text
 Idea
     │
     ▼
@@ -126,7 +127,7 @@ The Product Owner creates a dedicated feature branch.
 
 Example:
 
-```
+```text
 feature/issue-7-authentication
 ```
 
@@ -207,7 +208,7 @@ Possible files include:
 * README.md
 * docs/architecture.md
 * AGENTS.md
-* workflow.md
+* docs/workflow.md
 
 Documentation should accurately reflect completed work.
 
@@ -219,7 +220,7 @@ Create a clear, single-purpose commit.
 
 Examples:
 
-```
+```text
 feat:
 fix:
 refactor:

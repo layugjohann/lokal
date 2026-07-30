@@ -44,7 +44,7 @@ The development environment has been successfully configured, and the project is
 * ✅ README.md
 * ✅ AGENTS.md
 * ✅ architecture.md
-* ✅ workflow.md
+* ✅ docs/workflow.md
 
 ---
 
@@ -59,8 +59,7 @@ Completed **GitHub Issue #1 — Initialize Mobile Application with Expo**:
 
 # Next Task
 
-1. Commit and push feature branch `feature/issue-1-mobile-init` and open PR for CodeRabbit review & human approval.
-2. Prepare and implement **GitHub Issue #2 — Initialize FastAPI Backend**.
+Prepare and implement **GitHub Issue #2 — Initialize FastAPI Backend**.
 
 
 ---

@@ -70,6 +70,8 @@ Final approval belongs to the Product Owner.
 
 # Source of Truth
 
+GitHub Issues define the scope of work for each task. The core project documentation serves as the architectural and engineering source of truth.
+
 Before implementing any work, review:
 
 * README.md
