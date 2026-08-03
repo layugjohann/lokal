@@ -173,6 +173,15 @@ Do not:
 
 ---
 
+# Repository management belongs to the Product Owner.
+
+AI implementation agents must not:
+
+- create Git branches
+- rename branches
+- merge Pull Requests
+- delete branches
+
 ## Definition of Done
 
 A GitHub Issue is considered complete only when:

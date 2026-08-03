@@ -8,17 +8,20 @@ Every feature follows this process.
 
 ## Development Session Checklist
 
-Before starting work:
+Before starting any feature:
 
-1. Pull the latest changes.
-2. Open the project in VS Code.
-3. Start Antigravity (`agy`) in a dedicated terminal.
-4. Check Antigravity usage (`/usage`).
-5. Review the active GitHub Issue and core project documentation (`README.md`, `AGENTS.md`, `docs/architecture.md`, `docs/workflow.md`, `docs/CURRENT_STATE.md`).
-6. Verify the correct feature branch is checked out.
-7. Present implementation plan, identifying assumptions, risks, and trade-offs.
-8. Obtain Product Owner approval.
-9. Begin implementation.
+1. git checkout main
+2. git pull origin main
+3. git status (must be clean)
+4. Verify CURRENT_STATE.md reflects main
+5. Create GitHub Issue
+6. Create feature branch
+7. git checkout feature/<issue>-<description>
+8. Launch Antigravity
+9. Review documentation
+10. Present implementation plan
+11. Product Owner approval
+12. Begin implementation
 
 ---
 
@@ -125,13 +128,27 @@ If necessary, discuss design decisions before implementation begins.
 
 The Product Owner creates a dedicated feature branch.
 
-Example:
+Branch Naming Convention
 
-```text
-feature/issue-7-authentication
-```
+Use:
+
+feature/<issue-number>-<short-description>
+
+Examples:
+
+feature/2-initialize-fastapi-backend
+feature/3-supabase-auth
+feature/4-mobile-navigation
+
+Do not use:
+
+feature/issue-2-backend
+feature/backend
+backend-feature
 
 All implementation occurs on this branch.
+
+
 
 ---
 
@@ -288,6 +305,17 @@ After merging:
 
 ---
 
+# Feature Complete Checklist
+✓ Merge Pull Request
+✓ Delete remote branch
+✓ Delete local branch
+✓ Checkout main
+✓ Pull origin/main
+✓ Verify clean working tree
+✓ Update CURRENT_STATE.md
+
+---
+
 ## End-of-Session Checklist
 
 Before ending a development session:
@@ -313,3 +341,17 @@ Whenever a completed issue reveals a better process:
 3. Apply the refinement to future work.
 
 The engineering process should evolve alongside the project.
+
+# Clarify Responsibilities
+
+Product Owner
+- Creates GitHub Issues
+- Creates feature branches
+- Opens Pull Requests
+- Merges Pull Requests
+- Deletes feature branches
+
+Antigravity
+- Never creates branches
+- Never merges PRs
+- Never changes Git history
