@@ -24,6 +24,11 @@ def get_supabase_client() -> Client:
             "SUPABASE_URL and SUPABASE_ANON_KEY environment variables must be configured."
         )
 
+    if not settings.SUPABASE_URL.lower().startswith("https://"):
+        raise ValueError(
+            "SUPABASE_URL must begin with https:// to ensure secure communication."
+        )
+
     _supabase_client = create_client(settings.SUPABASE_URL, settings.SUPABASE_ANON_KEY)
     return _supabase_client
 
@@ -43,11 +48,12 @@ def verify_supabase_connection() -> dict:
             "message": "SUPABASE_URL or SUPABASE_ANON_KEY is not set.",
         }
 
-    if not (url.startswith("http://") or url.startswith("https://")):
+    if not url.lower().startswith("https://"):
         return {
             "status": "error",
-            "message": "SUPABASE_URL must begin with http:// or https://",
+            "message": "SUPABASE_URL must begin with https:// to ensure secure communication.",
         }
+
 
     # Perform a minimal network reachability ping to the Supabase REST root endpoint
     rest_url = f"{url.rstrip('/')}/rest/v1/"
