@@ -1,0 +1,7 @@
+backend/.venv/
+mobile/node_modules/
+mobile/.expo/
+.git/
+__pycache__/
+*.pyc
+.DS_Store
