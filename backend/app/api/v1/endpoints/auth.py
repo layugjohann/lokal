@@ -189,7 +189,8 @@ async def logout(
         )
 
     try:
-        supabase.auth.admin.sign_out(credentials.credentials)
+        # Token-scoped non-admin revocation using the caller's JWT
+        supabase.auth._request("POST", "logout", jwt=credentials.credentials)
         return MessageResponse(message="Successfully signed out.")
     except AuthApiError as exc:
         logger.warning(f"Supabase logout AuthApiError: {exc.message}")

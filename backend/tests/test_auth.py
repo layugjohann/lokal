@@ -194,18 +194,20 @@ class TestAuthEndpoints(unittest.TestCase):
         response = self.client.post("/api/v1/auth/logout", headers=headers)
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json(), {"message": "Successfully signed out."})
-        self.mock_supabase.auth.admin.sign_out.assert_called_once_with("valid-jwt-token")
+        self.mock_supabase.auth._request.assert_called_once_with("POST", "logout", jwt="valid-jwt-token")
         self.mock_supabase.auth.sign_out.assert_not_called()
+        self.mock_supabase.auth.admin.sign_out.assert_not_called()
 
     def test_logout_unauthenticated(self):
         response = self.client.post("/api/v1/auth/logout")
         self.assertEqual(response.status_code, 401)
-        self.mock_supabase.auth.admin.sign_out.assert_not_called()
+        self.mock_supabase.auth._request.assert_not_called()
         self.mock_supabase.auth.sign_out.assert_not_called()
+        self.mock_supabase.auth.admin.sign_out.assert_not_called()
 
-    def test_logout_admin_sign_out_failure_regression(self):
+    def test_logout_token_revocation_failure_regression(self):
         self.mock_supabase.auth.get_user.return_value = DummyUserResponse()
-        self.mock_supabase.auth.admin.sign_out.side_effect = AuthApiError(
+        self.mock_supabase.auth._request.side_effect = AuthApiError(
             "Session revocation failed",
             400,
             "session_revocation_failed"
@@ -214,18 +216,20 @@ class TestAuthEndpoints(unittest.TestCase):
         response = self.client.post("/api/v1/auth/logout", headers=headers)
         self.assertEqual(response.status_code, 400)
         self.assertIn("Logout failed: Session revocation failed", response.json()["detail"])
-        self.mock_supabase.auth.admin.sign_out.assert_called_once_with("valid-jwt-token")
+        self.mock_supabase.auth._request.assert_called_once_with("POST", "logout", jwt="valid-jwt-token")
         self.mock_supabase.auth.sign_out.assert_not_called()
+        self.mock_supabase.auth.admin.sign_out.assert_not_called()
 
     def test_logout_unexpected_error_regression(self):
         self.mock_supabase.auth.get_user.return_value = DummyUserResponse()
-        self.mock_supabase.auth.admin.sign_out.side_effect = RuntimeError("Network connection broken")
+        self.mock_supabase.auth._request.side_effect = RuntimeError("Network connection broken")
         headers = {"Authorization": "Bearer valid-jwt-token"}
         response = self.client.post("/api/v1/auth/logout", headers=headers)
         self.assertEqual(response.status_code, 500)
         self.assertIn("An unexpected error occurred during logout", response.json()["detail"])
-        self.mock_supabase.auth.admin.sign_out.assert_called_once_with("valid-jwt-token")
+        self.mock_supabase.auth._request.assert_called_once_with("POST", "logout", jwt="valid-jwt-token")
         self.mock_supabase.auth.sign_out.assert_not_called()
+        self.mock_supabase.auth.admin.sign_out.assert_not_called()
 
 
 class TestAuthDependency(unittest.TestCase):
