@@ -181,20 +181,36 @@ async def logout(
     supabase: Annotated[Client, Depends(get_supabase)],
 ):
     """Sign out the current authenticated user and invalidate session."""
-    try:
-        if credentials and credentials.credentials:
-            try:
-                supabase.auth.admin.sign_out(credentials.credentials)
-            except Exception as exc:
-                logger.debug(f"Admin sign out fallback triggered: {exc}")
-                supabase.auth.sign_out()
-        else:
-            supabase.auth.sign_out()
+    if not credentials or not credentials.credentials:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authentication token is missing.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
 
+    try:
+        supabase.auth.admin.sign_out(credentials.credentials)
         return MessageResponse(message="Successfully signed out.")
+    except AuthApiError as exc:
+        logger.warning(f"Supabase logout AuthApiError: {exc.message}")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Logout failed: {exc.message}",
+        )
+    except AuthError as exc:
+        logger.warning(f"Supabase logout AuthError: {exc}")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Logout failed: {str(exc)}",
+        )
+    except HTTPException:
+        raise
     except Exception as exc:
-        logger.warning(f"Error encountered during logout: {exc}")
-        return MessageResponse(message="Successfully signed out.")
+        logger.error(f"Unexpected logout error: {exc}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"An unexpected error occurred during logout: {str(exc)}",
+        )
 
 
 @router.get(
