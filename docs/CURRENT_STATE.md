@@ -8,7 +8,7 @@ This document provides a snapshot of the **current state of the `main` branch** 
 
 **Phase 1 — Project Bootstrapping**
 
-The engineering foundation, mobile application foundation, backend foundation, and initial Supabase integration have been established. The project is now ready to transition from infrastructure setup into application feature development.
+The engineering foundation, mobile application foundation, backend foundation, initial Supabase integration, database schema, and user authentication foundation have been established. The project is now ready for application feature development (such as coffee shop CRUD APIs, favorites, and map integrations).
 
 ---
 
@@ -16,9 +16,9 @@ The engineering foundation, mobile application foundation, backend foundation, a
 
 🟢 **On Track**
 
-The development environment, engineering workflow, mobile application foundation, FastAPI backend, and initial Supabase integration are established.
+The development environment, engineering workflow, mobile application foundation, FastAPI backend, Supabase database schema, and authentication system are fully established and verified.
 
-The backend now has a reusable Supabase client configuration with environment-based credentials, HTTPS enforcement, and basic connection verification.
+The backend provides user registration, login, logout, and token-based authentication verification associating authenticated requests directly with Supabase `auth.users.id`.
 
 The repository is ready for the next feature-development cycle.
 
@@ -26,20 +26,24 @@ The repository is ready for the next feature-development cycle.
 
 # Latest Completed Feature
 
-## GitHub Issue #7 — Database Schema
+## GitHub Issue #9 — User Authentication with Supabase
 
 **Status:** ✅ Completed
 
 ### Completed Work
 
-* Created a reproducible, version-controlled PostgreSQL DDL migration script (`supabase/migrations/20260811000000_initial_schema.sql`).
-* Defined initial database tables: `shops`, `reviews`, `favorites`, and `menu_items`.
-* Configured foreign key relationships with `ON DELETE CASCADE` actions (`reviews.shop_id`, `favorites.user_id` -> `auth.users.id`, `favorites.shop_id`, `menu_items.shop_id`).
-* Added data integrity CHECK constraints for ratings (`shops.rating` 0.00–5.00, `reviews.rating` 1–5), geographic coordinates (`shops.latitude` -90.0 to 90.0, `shops.longitude` -180.0 to 180.0), unique user favorites `(user_id, shop_id)`, and non-negative menu prices (`menu_items.price >= 0.00`).
-* Added performance B-tree indexes for spatial coordinates, place lookup IDs, and foreign keys.
-* Added `BEFORE UPDATE` trigger function (`update_updated_at_column()`) to maintain automated `updated_at` timestamps across tables.
-* Addressed CodeRabbit review feedback regarding data integrity.
-* Kept RLS policies, Pydantic backend models, and API endpoints out of scope for future dedicated issues.
+* Created Pydantic authentication request and response schemas (`RegisterRequest`, `LoginRequest`, `UserResponse`, `SessionResponse`, `AuthResponseSchema`, `MessageResponse`) in `backend/app/schemas/auth.py`.
+* Implemented reusable FastAPI dependency `get_current_user` in `backend/app/api/deps.py` to validate incoming Bearer tokens via Supabase Auth and extract `auth.users.id`.
+* Implemented `get_supabase` dependency wrapper providing clean HTTP 503 error handling when Supabase environment variables are missing.
+* Created authentication endpoints in `backend/app/api/v1/endpoints/auth.py`:
+  * `POST /api/v1/auth/register` (user account creation with email/password).
+  * `POST /api/v1/auth/login` (email/password authentication returning session tokens).
+  * `POST /api/v1/auth/logout` (token-scoped session revocation).
+  * `GET /api/v1/auth/me` (authenticated user profile retrieval returning `auth.users.id`).
+* Mounted auth router under `/api/v1/auth` in `backend/app/api/v1/router.py`.
+* Addressed CodeRabbit review findings for token-scoped non-admin session revocation with `no_resolve_json=True`.
+* Built comprehensive automated test suite with 26 unit and regression tests in `backend/tests/test_auth.py` executed via Python's built-in `unittest` runner.
+* Preserved backend `/health` and `/api/v1/health` endpoints without regressions.
 
 ---
 
@@ -52,7 +56,7 @@ The repository is ready for the next feature-development cycle.
 | Issue #3 — Initialize FastAPI Backend      | ✅ Complete |
 | Issue #5 — Initialize Supabase Integration | ✅ Complete |
 | Issue #7 — Database Schema                 | ✅ Complete |
-| Authentication                             | ⏳ Planned  |
+| Issue #9 — User Authentication             | ✅ Complete |
 | Maps Integration                           | ⏳ Planned  |
 | AI Review Summaries                        | ⏳ Planned  |
 
@@ -63,14 +67,16 @@ The repository is ready for the next feature-development cycle.
 The FastAPI backend currently provides:
 
 * Application configuration through environment variables.
-* Basic health-check endpoints.
-* Supabase client initialization through `backend/app/core/supabase.py`.
-* Lazy Supabase client creation.
-* HTTPS validation for Supabase URLs.
-* Basic Supabase connectivity verification.
+* Basic health-check endpoints (`/health` and `/api/v1/health`).
+* Supabase client initialization through `backend/app/core/supabase.py` with lazy loading and HTTPS enforcement.
 * Initial database schema migration DDL located at `supabase/migrations/20260811000000_initial_schema.sql`.
+* User registration (`POST /api/v1/auth/register`) with email and password.
+* User authentication (`POST /api/v1/auth/login`) returning JWT session tokens.
+* Non-admin token-scoped user logout (`POST /api/v1/auth/logout`).
+* Authenticated user identification (`GET /api/v1/auth/me`) and reusable `get_current_user` dependency for protected routes.
+* Automated testing suite executed via Python's standard library `unittest` runner.
 
-CRUD API functionality, Row Level Security (RLS) policies, and authentication endpoints remain outside the scope of Issue #7.
+CRUD API functionality, Row Level Security (RLS) policies, and mobile auth UI remain outside the scope of Issue #9.
 
 ---
 
@@ -88,15 +94,16 @@ The next feature should be defined through the next GitHub Issue and approved im
 
 # Session Learnings
 
-The Issue #7 development cycle reinforced the project's AI-assisted engineering workflow.
+The Issue #9 development cycle reinforced the project's AI-assisted engineering workflow.
 
 Key practices established or reinforced:
 
 * The Product Owner is responsible for creating and managing Git branches.
 * Every implementation requires an approved implementation plan before coding begins.
 * AI agents must remain strictly within the scope of the assigned GitHub Issue.
-* Explicitly scope-defer items (e.g., RLS, Pydantic schemas, CRUD APIs) to maintain clean feature boundaries.
-* CodeRabbit recommendations are evaluated against issue scope; accepted data-integrity fixes are integrated and verified.
+* Shared singleton clients should avoid mutating session state; token-scoped operations (`_request` with `jwt`) ensure safe concurrency.
+* CodeRabbit recommendations on API scopes and response parsing (`no_resolve_json=True`) should be evaluated and verified with dedicated regression tests.
+* Python's standard library `unittest` runner allows complete automated testing without introducing unapproved third-party dependencies.
 * `docs/CURRENT_STATE.md` is updated upon feature completion to accurately document repository progress.
 
 ---
@@ -131,4 +138,5 @@ After implementation:
 
 ---
 
-**Last Updated:** Phase 1 — Project Bootstrapping (after completion of GitHub Issue #7)
+**Last Updated:** Phase 1 — Project Bootstrapping (after completion of GitHub Issue #9)
+
