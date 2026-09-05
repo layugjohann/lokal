@@ -1,0 +1,207 @@
+import React, { useEffect, useRef } from 'react';
+import {
+  StyleSheet,
+  View,
+  Text,
+  TouchableOpacity,
+  ActivityIndicator,
+} from 'react-native';
+import MapView, { Marker, Region } from 'react-native-maps';
+import { useLocation } from '../hooks/useLocation';
+
+const DEFAULT_REGION: Region = {
+  latitude: 14.5995,
+  longitude: 120.9842,
+  latitudeDelta: 0.05,
+  longitudeDelta: 0.05,
+};
+
+export default function LokalMapView() {
+  const {
+    location,
+    permissionStatus,
+    canAskAgain,
+    isLoading,
+    errorMessage,
+    retry,
+    openSettings,
+  } = useLocation();
+  const mapRef = useRef<MapView>(null);
+
+  useEffect(() => {
+    if (location && mapRef.current) {
+      mapRef.current.animateToRegion(
+        {
+          latitude: location.latitude,
+          longitude: location.longitude,
+          latitudeDelta: 0.015,
+          longitudeDelta: 0.015,
+        },
+        800
+      );
+    }
+  }, [location]);
+
+  return (
+    <View style={styles.container}>
+      <MapView
+        ref={mapRef}
+        style={styles.map}
+        initialRegion={DEFAULT_REGION}
+        showsUserLocation={permissionStatus === 'granted'}
+        showsMyLocationButton={permissionStatus === 'granted'}
+      >
+        {location && (
+          <Marker
+            coordinate={{
+              latitude: location.latitude,
+              longitude: location.longitude,
+            }}
+            title="Current Location"
+            description="You are here"
+          />
+        )}
+      </MapView>
+
+      {isLoading && (
+        <View style={styles.loadingBanner}>
+          <ActivityIndicator size="small" color="#4A2E18" />
+          <Text style={styles.loadingText}>Locating you...</Text>
+        </View>
+      )}
+
+      {errorMessage && !isLoading && (
+        <View style={styles.errorBanner}>
+          <Text style={styles.errorText}>{errorMessage}</Text>
+          {permissionStatus === 'denied' && !canAskAgain ? (
+            <View style={styles.buttonGroup}>
+              <TouchableOpacity
+                style={styles.secondaryButton}
+                onPress={retry}
+                activeOpacity={0.8}
+                accessibilityRole="button"
+                accessibilityLabel="Check location permission again"
+              >
+                <Text style={styles.secondaryButtonText}>Check Again</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.primaryButton}
+                onPress={openSettings}
+                activeOpacity={0.8}
+                accessibilityRole="button"
+                accessibilityLabel="Open device settings"
+              >
+                <Text style={styles.primaryButtonText}>Open Settings</Text>
+              </TouchableOpacity>
+            </View>
+          ) : permissionStatus === 'undetermined' ? (
+            <TouchableOpacity
+              style={styles.primaryButton}
+              onPress={retry}
+              activeOpacity={0.8}
+              accessibilityRole="button"
+              accessibilityLabel="Grant location permission"
+            >
+              <Text style={styles.primaryButtonText}>Grant Permission</Text>
+            </TouchableOpacity>
+          ) : (
+            <TouchableOpacity
+              style={styles.primaryButton}
+              onPress={retry}
+              activeOpacity={0.8}
+              accessibilityRole="button"
+              accessibilityLabel="Retry location request"
+            >
+              <Text style={styles.primaryButtonText}>Retry</Text>
+            </TouchableOpacity>
+          )}
+        </View>
+      )}
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: '#FAF8F5',
+  },
+  map: {
+    ...StyleSheet.absoluteFill,
+  },
+  loadingBanner: {
+    position: 'absolute',
+    top: 50,
+    alignSelf: 'center',
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(250, 248, 245, 0.95)',
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    borderRadius: 20,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.15,
+    shadowRadius: 4,
+    elevation: 3,
+    gap: 8,
+  },
+  loadingText: {
+    color: '#4A2E18',
+    fontSize: 14,
+    fontWeight: '500',
+  },
+  errorBanner: {
+    position: 'absolute',
+    bottom: 30,
+    left: 20,
+    right: 20,
+    backgroundColor: '#FFF',
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: 12,
+    flexDirection: 'column',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 6,
+    elevation: 4,
+    gap: 10,
+  },
+  errorText: {
+    color: '#6B5E55',
+    fontSize: 14,
+    lineHeight: 20,
+  },
+  buttonGroup: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    gap: 10,
+  },
+  primaryButton: {
+    backgroundColor: '#4A2E18',
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    borderRadius: 8,
+    alignSelf: 'flex-end',
+  },
+  primaryButtonText: {
+    color: '#FFF',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  secondaryButton: {
+    backgroundColor: 'transparent',
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#D4C8BE',
+  },
+  secondaryButtonText: {
+    color: '#4A2E18',
+    fontSize: 14,
+    fontWeight: '500',
+  },
+});
