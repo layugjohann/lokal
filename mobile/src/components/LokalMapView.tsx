@@ -17,8 +17,15 @@ const DEFAULT_REGION: Region = {
 };
 
 export default function LokalMapView() {
-  const { location, permissionStatus, isLoading, errorMessage, retry } =
-    useLocation();
+  const {
+    location,
+    permissionStatus,
+    canAskAgain,
+    isLoading,
+    errorMessage,
+    retry,
+    openSettings,
+  } = useLocation();
   const mapRef = useRef<MapView>(null);
 
   useEffect(() => {
@@ -66,15 +73,48 @@ export default function LokalMapView() {
       {errorMessage && !isLoading && (
         <View style={styles.errorBanner}>
           <Text style={styles.errorText}>{errorMessage}</Text>
-          <TouchableOpacity
-            style={styles.retryButton}
-            onPress={retry}
-            activeOpacity={0.8}
-            accessibilityRole="button"
-            accessibilityLabel="Retry location request"
-          >
-            <Text style={styles.retryButtonText}>Retry</Text>
-          </TouchableOpacity>
+          {permissionStatus === 'denied' && !canAskAgain ? (
+            <View style={styles.buttonGroup}>
+              <TouchableOpacity
+                style={styles.secondaryButton}
+                onPress={retry}
+                activeOpacity={0.8}
+                accessibilityRole="button"
+                accessibilityLabel="Check location permission again"
+              >
+                <Text style={styles.secondaryButtonText}>Check Again</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.primaryButton}
+                onPress={openSettings}
+                activeOpacity={0.8}
+                accessibilityRole="button"
+                accessibilityLabel="Open device settings"
+              >
+                <Text style={styles.primaryButtonText}>Open Settings</Text>
+              </TouchableOpacity>
+            </View>
+          ) : permissionStatus === 'undetermined' ? (
+            <TouchableOpacity
+              style={styles.primaryButton}
+              onPress={retry}
+              activeOpacity={0.8}
+              accessibilityRole="button"
+              accessibilityLabel="Grant location permission"
+            >
+              <Text style={styles.primaryButtonText}>Grant Permission</Text>
+            </TouchableOpacity>
+          ) : (
+            <TouchableOpacity
+              style={styles.primaryButton}
+              onPress={retry}
+              activeOpacity={0.8}
+              accessibilityRole="button"
+              accessibilityLabel="Retry location request"
+            >
+              <Text style={styles.primaryButtonText}>Retry</Text>
+            </TouchableOpacity>
+          )}
         </View>
       )}
     </View>
@@ -120,30 +160,48 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     paddingHorizontal: 16,
     borderRadius: 12,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
+    flexDirection: 'column',
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.2,
     shadowRadius: 6,
     elevation: 4,
+    gap: 10,
   },
   errorText: {
-    flex: 1,
     color: '#6B5E55',
     fontSize: 14,
-    marginRight: 12,
+    lineHeight: 20,
   },
-  retryButton: {
+  buttonGroup: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    gap: 10,
+  },
+  primaryButton: {
     backgroundColor: '#4A2E18',
     paddingVertical: 8,
     paddingHorizontal: 16,
     borderRadius: 8,
+    alignSelf: 'flex-end',
   },
-  retryButtonText: {
+  primaryButtonText: {
     color: '#FFF',
     fontSize: 14,
     fontWeight: '600',
+  },
+  secondaryButton: {
+    backgroundColor: 'transparent',
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#D4C8BE',
+  },
+  secondaryButtonText: {
+    color: '#4A2E18',
+    fontSize: 14,
+    fontWeight: '500',
   },
 });

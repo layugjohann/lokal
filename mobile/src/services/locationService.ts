@@ -1,33 +1,41 @@
 import * as Location from 'expo-location';
-import { LocationCoordinates, LocationPermissionStatus } from '../types/location';
+import {
+  LocationCoordinates,
+  LocationPermissionInfo,
+  LocationPermissionStatus,
+} from '../types/location';
+
+function normalizePermissionResponse(
+  response: Location.PermissionResponse
+): LocationPermissionInfo {
+  let status: LocationPermissionStatus = 'undetermined';
+  if (response.status === Location.PermissionStatus.GRANTED) {
+    status = 'granted';
+  } else if (response.status === Location.PermissionStatus.DENIED) {
+    status = 'denied';
+  }
+
+  return {
+    status,
+    canAskAgain: response.canAskAgain,
+  };
+}
 
 /**
  * Requests foreground location permission from the user.
- * Returns normalized permission status ('granted', 'denied', or 'undetermined').
+ * Returns normalized permission status and canAskAgain flag.
  */
-export async function requestForegroundPermission(): Promise<LocationPermissionStatus> {
-  const { status } = await Location.requestForegroundPermissionsAsync();
-  if (status === Location.PermissionStatus.GRANTED) {
-    return 'granted';
-  }
-  if (status === Location.PermissionStatus.DENIED) {
-    return 'denied';
-  }
-  return 'undetermined';
+export async function requestForegroundPermission(): Promise<LocationPermissionInfo> {
+  const response = await Location.requestForegroundPermissionsAsync();
+  return normalizePermissionResponse(response);
 }
 
 /**
  * Checks current foreground location permission status without triggering a system prompt.
  */
-export async function checkForegroundPermission(): Promise<LocationPermissionStatus> {
-  const { status } = await Location.getForegroundPermissionsAsync();
-  if (status === Location.PermissionStatus.GRANTED) {
-    return 'granted';
-  }
-  if (status === Location.PermissionStatus.DENIED) {
-    return 'denied';
-  }
-  return 'undetermined';
+export async function checkForegroundPermission(): Promise<LocationPermissionInfo> {
+  const response = await Location.getForegroundPermissionsAsync();
+  return normalizePermissionResponse(response);
 }
 
 /**
