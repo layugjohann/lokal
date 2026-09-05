@@ -8,7 +8,7 @@ This document provides a snapshot of the **current state of the `main` branch** 
 
 **Phase 1 — Project Bootstrapping**
 
-The engineering foundation, mobile application foundation, backend foundation, initial Supabase integration, database schema, and user authentication foundation have been established. The project is now ready for application feature development (such as coffee shop CRUD APIs, favorites, and map integrations).
+The engineering foundation, mobile application foundation, backend foundation, initial Supabase integration, database schema, user authentication foundation, and mobile maps/location foundation have been established. The project is now ready for application feature development (such as coffee shop CRUD APIs, discovery search, and favorites).
 
 ---
 
@@ -16,7 +16,9 @@ The engineering foundation, mobile application foundation, backend foundation, i
 
 🟢 **On Track**
 
-The development environment, engineering workflow, mobile application foundation, FastAPI backend, Supabase database schema, and authentication system are fully established and verified.
+The development environment, engineering workflow, mobile application foundation, FastAPI backend, Supabase database schema, authentication system, and interactive maps/location integration are fully established and verified.
+
+The mobile app provides location permission management, user coordinate acquisition, interactive map browsing, terminal permission denial handling with system settings navigation, and smooth user location rendering.
 
 The backend provides user registration, login, logout, and token-based authentication verification associating authenticated requests directly with Supabase `auth.users.id`.
 
@@ -26,39 +28,59 @@ The repository is ready for the next feature-development cycle.
 
 # Latest Completed Feature
 
-## GitHub Issue #9 — User Authentication with Supabase
+## GitHub Issue #11 — Maps & Location Integration
 
 **Status:** ✅ Completed
 
 ### Completed Work
 
-* Created Pydantic authentication request and response schemas (`RegisterRequest`, `LoginRequest`, `UserResponse`, `SessionResponse`, `AuthResponseSchema`, `MessageResponse`) in `backend/app/schemas/auth.py`.
-* Implemented reusable FastAPI dependency `get_current_user` in `backend/app/api/deps.py` to validate incoming Bearer tokens via Supabase Auth and extract `auth.users.id`.
-* Implemented `get_supabase` dependency wrapper providing clean HTTP 503 error handling when Supabase environment variables are missing.
-* Created authentication endpoints in `backend/app/api/v1/endpoints/auth.py`:
-  * `POST /api/v1/auth/register` (user account creation with email/password).
-  * `POST /api/v1/auth/login` (email/password authentication returning session tokens).
-  * `POST /api/v1/auth/logout` (token-scoped session revocation).
-  * `GET /api/v1/auth/me` (authenticated user profile retrieval returning `auth.users.id`).
-* Mounted auth router under `/api/v1/auth` in `backend/app/api/v1/router.py`.
-* Addressed CodeRabbit review findings for token-scoped non-admin session revocation with `no_resolve_json=True`.
-* Built comprehensive automated test suite with 26 unit and regression tests in `backend/tests/test_auth.py` executed via Python's built-in `unittest` runner.
-* Preserved backend `/health` and `/api/v1/health` endpoints without regressions.
+* Installed and configured Expo SDK 57 compatible `expo-location` (`~57.0.16`) and `react-native-maps` (`1.27.2`) native modules.
+* Configured iOS foreground location usage description (`NSLocationWhenInUseUsageDescription`) and Android permissions (`ACCESS_FINE_LOCATION`, `ACCESS_COARSE_LOCATION`) alongside the `expo-location` config plugin in `mobile/app.json`.
+* Defined location domain types (`LocationCoordinates`, `LocationPermissionStatus`, `LocationPermissionInfo`, `MapRegion`, `UseLocationResult`) in `mobile/src/types/location.ts`.
+* Implemented modular location service abstraction in `mobile/src/services/locationService.ts` normalizing Expo location permissions and coordinate retrieval with balanced accuracy.
+* Created custom React hook `useLocation` in `mobile/src/hooks/useLocation.ts` handling foreground permission requests, coordinate retrieval, loading state, non-crashing error state, retry handling, and system settings navigation via `Linking.openSettings()`.
+* Built interactive map component `LokalMapView` in `mobile/src/components/LokalMapView.tsx` displaying interactive `react-native-maps` `MapView` centered on user coordinates with camera region animation, fallback default region (Metro Manila), user location marker, and non-blocking state overlays.
+* Addressed CodeRabbit review findings for terminal permission denials:
+  * Preserved `canAskAgain` metadata from Expo's permission response through the service and hook.
+  * When denied with `canAskAgain: true`, provided the standard "Retry" action.
+  * When denied with `canAskAgain: false`, designated "Open Settings" as the primary action to redirect the user to device system settings, with a secondary "Check Again" option.
+  * Added distinct message and "Grant Permission" handling for the `undetermined` permission state.
+* Mounted `LokalMapView` into the root application entry point (`mobile/App.tsx`).
+* Verified clean static typing with TypeScript (`npx tsc --noEmit`), Expo bundler export checks across iOS and Android platforms, and backend regression test suite (26 passing tests).
 
 ---
 
 # Project Progress
 
-| Feature                                    | Status     |
-| ------------------------------------------ | ---------- |
+| Feature                                    | Status      |
+| ------------------------------------------ | ----------- |
 | Engineering Foundation                     | ✅ Complete |
 | Issue #1 — Initialize Mobile Application   | ✅ Complete |
 | Issue #3 — Initialize FastAPI Backend      | ✅ Complete |
 | Issue #5 — Initialize Supabase Integration | ✅ Complete |
 | Issue #7 — Database Schema                 | ✅ Complete |
 | Issue #9 — User Authentication             | ✅ Complete |
-| Maps Integration                           | ⏳ Planned  |
+| Issue #11 — Maps & Location Integration    | ✅ Complete |
+| Coffee Shop Discovery / CRUD APIs          | ⏳ Planned  |
 | AI Review Summaries                        | ⏳ Planned  |
+
+---
+
+# Current Mobile Capabilities
+
+The React Native (Expo) mobile application currently provides:
+
+* Interactive map visualization via `react-native-maps`.
+* Device foreground location permission requests via `expo-location`.
+* Automatic user coordinate acquisition and animated map re-centering.
+* Current user location representation via map marker and native user location indicators.
+* Sensible fallback region (Metro Manila) when location access is pending or unavailable.
+* Graceful, non-crashing permission denial handling with informative status banners.
+* Differentiated terminal denial handling (`canAskAgain: false`) providing direct system settings navigation via `Linking.openSettings()`.
+* Dedicated handling for undetermined permission states.
+* Zero external UI dependencies, adhering to scope discipline and clean architecture.
+
+Coffee shop search, markers, AI review summaries, and background location tracking remain outside the scope of Issue #11.
 
 ---
 
@@ -94,16 +116,15 @@ The next feature should be defined through the next GitHub Issue and approved im
 
 # Session Learnings
 
-The Issue #9 development cycle reinforced the project's AI-assisted engineering workflow.
+The Issue #11 development cycle reinforced the project's AI-assisted engineering workflow.
 
 Key practices established or reinforced:
 
-* The Product Owner is responsible for creating and managing Git branches.
-* Every implementation requires an approved implementation plan before coding begins.
-* AI agents must remain strictly within the scope of the assigned GitHub Issue.
-* Shared singleton clients should avoid mutating session state; token-scoped operations (`_request` with `jwt`) ensure safe concurrency.
-* CodeRabbit recommendations on API scopes and response parsing (`no_resolve_json=True`) should be evaluated and verified with dedicated regression tests.
-* Python's standard library `unittest` runner allows complete automated testing without introducing unapproved third-party dependencies.
+* Preserving native module permission metadata (such as Expo's `canAskAgain`) enables appropriate UX paths, differentiating between recoverable denials and permanent denials requiring system settings navigation.
+* Utilizing built-in platform capabilities (such as React Native's `Linking.openSettings()`) eliminates the need for unapproved third-party dependencies.
+* Maintaining a modular mobile architecture (`types`, `services`, `hooks`, `components`) keeps presentation components focused on rendering while encapsulating native APIs and state management.
+* Verifying both native export bundles (iOS and Android) alongside TypeScript type-checking ensures cross-platform bundler stability.
+* CodeRabbit recommendations regarding edge-case permission handling are evaluated and integrated cleanly within the issue scope.
 * `docs/CURRENT_STATE.md` is updated upon feature completion to accurately document repository progress.
 
 ---
@@ -138,5 +159,5 @@ After implementation:
 
 ---
 
-**Last Updated:** Phase 1 — Project Bootstrapping (after completion of GitHub Issue #9)
+**Last Updated:** Phase 1 — Project Bootstrapping (after completion of GitHub Issue #11)
 
