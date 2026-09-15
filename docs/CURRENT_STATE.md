@@ -28,25 +28,23 @@ The repository is ready for the next feature-development cycle.
 
 # Latest Completed Feature
 
-## GitHub Issue #11 — Maps & Location Integration
+## GitHub Issue #13 — Coffee Shop CRUD API
 
 **Status:** ✅ Completed
 
 ### Completed Work
 
-* Installed and configured Expo SDK 57 compatible `expo-location` (`~57.0.16`) and `react-native-maps` (`1.27.2`) native modules.
-* Configured iOS foreground location usage description (`NSLocationWhenInUseUsageDescription`) and Android permissions (`ACCESS_FINE_LOCATION`, `ACCESS_COARSE_LOCATION`) alongside the `expo-location` config plugin in `mobile/app.json`.
-* Defined location domain types (`LocationCoordinates`, `LocationPermissionStatus`, `LocationPermissionInfo`, `MapRegion`, `UseLocationResult`) in `mobile/src/types/location.ts`.
-* Implemented modular location service abstraction in `mobile/src/services/locationService.ts` normalizing Expo location permissions and coordinate retrieval with balanced accuracy.
-* Created custom React hook `useLocation` in `mobile/src/hooks/useLocation.ts` handling foreground permission requests, coordinate retrieval, loading state, non-crashing error state, retry handling, and system settings navigation via `Linking.openSettings()`.
-* Built interactive map component `LokalMapView` in `mobile/src/components/LokalMapView.tsx` displaying interactive `react-native-maps` `MapView` centered on user coordinates with camera region animation, fallback default region (Metro Manila), user location marker, and non-blocking state overlays.
-* Addressed CodeRabbit review findings for terminal permission denials:
-  * Preserved `canAskAgain` metadata from Expo's permission response through the service and hook.
-  * When denied with `canAskAgain: true`, provided the standard "Retry" action.
-  * When denied with `canAskAgain: false`, designated "Open Settings" as the primary action to redirect the user to device system settings, with a secondary "Check Again" option.
-  * Added distinct message and "Grant Permission" handling for the `undetermined` permission state.
-* Mounted `LokalMapView` into the root application entry point (`mobile/App.tsx`).
-* Verified clean static typing with TypeScript (`npx tsc --noEmit`), Expo bundler export checks across iOS and Android platforms, and backend regression test suite (26 passing tests).
+* Defined Pydantic models in `backend/app/schemas/shop.py` (`ShopBase`, `ShopCreate`, `ShopUpdate`, `ShopResponse`) enforcing validation constraints on coffee shop names, coordinate boundaries (`-90.0 <= latitude <= 90.0`, `-180.0 <= longitude <= 180.0`), rating boundaries (`0.0 <= rating <= 5.0`), and optional Google Places identifiers.
+* Implemented five authenticated REST endpoints in `backend/app/api/v1/endpoints/shops.py`:
+  * `POST /api/v1/shops` (`201 Created`): Creates a coffee shop record in Supabase PostgreSQL; maps duplicate `google_place_id` conflicts to `409 Conflict`.
+  * `GET /api/v1/shops` (`200 OK`): Lists coffee shops ordered by name with query pagination support (`limit` default 50, `offset` default 0).
+  * `GET /api/v1/shops/{shop_id}` (`200 OK`): Retrieves a single coffee shop by UUID with `404 Not Found` handling for nonexistent records and `422` for malformed UUIDs.
+  * `PATCH /api/v1/shops/{shop_id}` (`200 OK`): Sole update endpoint performing partial updates; rejects empty payloads with `400 Bad Request`, rejects explicit `null` on required fields with `422 Unprocessable Entity`, and maps duplicate place IDs to `409 Conflict`.
+  * `DELETE /api/v1/shops/{shop_id}` (`200 OK`): Deletes a coffee shop record by UUID and returns a standard confirmation message (`MessageResponse`).
+* Created request-scoped Supabase client `get_authenticated_supabase` in `backend/app/api/deps.py` backed by `create_scoped_supabase_client(token)` in `backend/app/core/supabase.py`. PostgREST queries carry the caller's verified Bearer JWT while preserving the global shared client instance without session mutation.
+* Sanitized backend error handling across all shop endpoints, logging full exception traces server-side while returning generic error messages to clients to prevent internal implementation disclosure.
+* Added comprehensive automated test suite in `backend/tests/test_shops.py` (36 tests) covering authentication enforcement, field boundaries, error mapping, CRUD workflows, and request-scoped client isolation.
+* Verified zero regressions across the entire backend suite (62 passing tests).
 
 ---
 
@@ -61,7 +59,8 @@ The repository is ready for the next feature-development cycle.
 | Issue #7 — Database Schema                 | ✅ Complete |
 | Issue #9 — User Authentication             | ✅ Complete |
 | Issue #11 — Maps & Location Integration    | ✅ Complete |
-| Coffee Shop Discovery / CRUD APIs          | ⏳ Planned  |
+| Issue #13 — Coffee Shop CRUD API           | ✅ Complete |
+| Coffee Shop Discovery / Search             | ⏳ Planned  |
 | AI Review Summaries                        | ⏳ Planned  |
 
 ---
@@ -90,21 +89,22 @@ The FastAPI backend currently provides:
 
 * Application configuration through environment variables.
 * Basic health-check endpoints (`/health` and `/api/v1/health`).
-* Supabase client initialization through `backend/app/core/supabase.py` with lazy loading and HTTPS enforcement.
+* Supabase client initialization through `backend/app/core/supabase.py` with lazy loading, HTTPS enforcement, and isolated request-scoped authenticated client instantiation (`create_scoped_supabase_client`).
 * Initial database schema migration DDL located at `supabase/migrations/20260811000000_initial_schema.sql`.
 * User registration (`POST /api/v1/auth/register`) with email and password.
 * User authentication (`POST /api/v1/auth/login`) returning JWT session tokens.
 * Non-admin token-scoped user logout (`POST /api/v1/auth/logout`).
 * Authenticated user identification (`GET /api/v1/auth/me`) and reusable `get_current_user` dependency for protected routes.
-* Automated testing suite executed via Python's standard library `unittest` runner.
-
-CRUD API functionality, Row Level Security (RLS) policies, and mobile auth UI remain outside the scope of Issue #9.
+* Authenticated coffee shop management via REST API (`POST`, `GET`, `PATCH`, `DELETE` at `/api/v1/shops`).
+* Request-scoped caller JWT propagation (`get_authenticated_supabase`) for secure PostgREST database queries.
+* Robust error handling distinguishing client input errors (`400`/`422`), missing records (`404`), unique constraint conflicts (`409`), service unavailability (`503`), and sanitized generic server failures (`500`).
+* Automated testing suite executed via Python's standard library `unittest` runner (62 passing tests).
 
 ---
 
 # Next Task
 
-The next feature should be defined through the next GitHub Issue and approved implementation plan before development begins.
+The next feature should be defined through the next GitHub Issue (such as mobile coffee shop integration or nearby shop discovery) and approved implementation plan before development begins.
 
 ---
 
@@ -116,16 +116,12 @@ The next feature should be defined through the next GitHub Issue and approved im
 
 # Session Learnings
 
-The Issue #11 development cycle reinforced the project's AI-assisted engineering workflow.
+The Issue #13 development cycle established key backend engineering practices:
 
-Key practices established or reinforced:
-
-* Preserving native module permission metadata (such as Expo's `canAskAgain`) enables appropriate UX paths, differentiating between recoverable denials and permanent denials requiring system settings navigation.
-* Utilizing built-in platform capabilities (such as React Native's `Linking.openSettings()`) eliminates the need for unapproved third-party dependencies.
-* Maintaining a modular mobile architecture (`types`, `services`, `hooks`, `components`) keeps presentation components focused on rendering while encapsulating native APIs and state management.
-* Verifying both native export bundles (iOS and Android) alongside TypeScript type-checking ensures cross-platform bundler stability.
-* CodeRabbit recommendations regarding edge-case permission handling are evaluated and integrated cleanly within the issue scope.
-* `docs/CURRENT_STATE.md` is updated upon feature completion to accurately document repository progress.
+* **Request-Scoped Supabase Client**: PostgREST queries should carry the caller's JWT rather than the anonymous client key so that future Row Level Security (RLS) policies can identify `auth.uid()`. Constructing a fresh client instance with the caller's Authorization header ensures query isolation without mutating global singleton clients.
+* **REST Semantic Discipline**: Distinguishing between client-caused validation errors (`422`), empty update requests (`400`), nonexistent resource requests (`404`), unique constraint violations (`409`), and unexpected server-side errors (`500`) yields predictable, standard API behavior.
+* **Information Disclosure Prevention**: Catching internal server errors, logging full exception details internally, and returning generic error details to API clients prevents leaking database structure or environment details.
+* **Pydantic Pre-Validation (`mode='before'`)**: Using `mode='before'` validators allows distinguishing between omitted optional fields in partial update payloads (`PATCH`) and explicit `null` values that violate non-null database constraints.
 
 ---
 
@@ -159,5 +155,6 @@ After implementation:
 
 ---
 
-**Last Updated:** Phase 1 — Project Bootstrapping (after completion of GitHub Issue #11)
+**Last Updated:** Phase 1 — Project Bootstrapping (after completion of GitHub Issue #13)
+
 

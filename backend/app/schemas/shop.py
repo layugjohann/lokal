@@ -17,6 +17,7 @@ class ShopBase(BaseModel):
     @field_validator("name")
     @classmethod
     def validate_name(cls, v: str) -> str:
+        """Validate and strip leading/trailing whitespace from coffee shop name."""
         v = v.strip()
         if not v:
             raise ValueError("Coffee shop name cannot be empty or whitespace.")
@@ -25,6 +26,7 @@ class ShopBase(BaseModel):
     @field_validator("address", "google_place_id")
     @classmethod
     def validate_optional_text(cls, v: Optional[str]) -> Optional[str]:
+        """Strip optional text fields and normalize empty strings to None."""
         if v is not None:
             v = v.strip()
             return v if v else None
@@ -48,6 +50,7 @@ class ShopUpdate(BaseModel):
     @field_validator("name", "latitude", "longitude", mode="before")
     @classmethod
     def reject_explicit_null(cls, v: Any, info: ValidationInfo) -> Any:
+        """Reject explicit null values for required non-nullable fields."""
         if v is None:
             raise ValueError(f"{info.field_name.capitalize()} cannot be null.")
         return v
@@ -55,7 +58,7 @@ class ShopUpdate(BaseModel):
     @field_validator("name")
     @classmethod
     def validate_name(cls, v: Optional[str]) -> Optional[str]:
-
+        """Validate and strip leading/trailing whitespace from coffee shop name if provided."""
         if v is not None:
             v = v.strip()
             if not v:
@@ -65,10 +68,12 @@ class ShopUpdate(BaseModel):
     @field_validator("address", "google_place_id")
     @classmethod
     def validate_optional_text(cls, v: Optional[str]) -> Optional[str]:
+        """Strip optional text fields and normalize empty strings to None."""
         if v is not None:
             v = v.strip()
             return v if v else None
         return None
+
 
 
 class ShopResponse(BaseModel):
