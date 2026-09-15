@@ -28,40 +28,59 @@ The repository is ready for the next feature-development cycle.
 
 # Latest Completed Feature
 
-## GitHub Issue #13 — Coffee Shop CRUD API
+## GitHub Issue #15 — Coffee Shop Discovery & Nearby Search
 
 **Status:** ✅ Completed
 
 ### Completed Work
 
-* Defined Pydantic models in `backend/app/schemas/shop.py` (`ShopBase`, `ShopCreate`, `ShopUpdate`, `ShopResponse`) enforcing validation constraints on coffee shop names, coordinate boundaries (`-90.0 <= latitude <= 90.0`, `-180.0 <= longitude <= 180.0`), rating boundaries (`0.0 <= rating <= 5.0`), and optional Google Places identifiers.
-* Implemented five authenticated REST endpoints in `backend/app/api/v1/endpoints/shops.py`:
-  * `POST /api/v1/shops` (`201 Created`): Creates a coffee shop record in Supabase PostgreSQL; maps duplicate `google_place_id` conflicts to `409 Conflict`.
-  * `GET /api/v1/shops` (`200 OK`): Lists coffee shops ordered by name with query pagination support (`limit` default 50, `offset` default 0).
-  * `GET /api/v1/shops/{shop_id}` (`200 OK`): Retrieves a single coffee shop by UUID with `404 Not Found` handling for nonexistent records and `422` for malformed UUIDs.
-  * `PATCH /api/v1/shops/{shop_id}` (`200 OK`): Sole update endpoint performing partial updates; rejects empty payloads with `400 Bad Request`, rejects explicit `null` on required fields with `422 Unprocessable Entity`, and maps duplicate place IDs to `409 Conflict`.
-  * `DELETE /api/v1/shops/{shop_id}` (`200 OK`): Deletes a coffee shop record by UUID and returns a standard confirmation message (`MessageResponse`).
-* Created request-scoped Supabase client `get_authenticated_supabase` in `backend/app/api/deps.py` backed by `create_scoped_supabase_client(token)` in `backend/app/core/supabase.py`. PostgREST queries carry the caller's verified Bearer JWT while preserving the global shared client instance without session mutation.
-* Sanitized backend error handling across all shop endpoints, logging full exception traces server-side while returning generic error messages to clients to prevent internal implementation disclosure.
-* Added comprehensive automated test suite in `backend/tests/test_shops.py` (36 tests) covering authentication enforcement, field boundaries, error mapping, CRUD workflows, and request-scoped client isolation.
-* Verified zero regressions across the entire backend suite (62 passing tests).
+* **Database Migration & SQL RPC**:
+  * Implemented `get_nearby_shops(...)` stored procedure in `supabase/migrations/20260916000000_nearby_shops_rpc.sql`.
+  * Utilizes a planar bounding-box prefilter (`lat_min` to `lat_max`, `lng_min` to `lng_max`) to query the existing `idx_shops_lat_lng` index on `shops (latitude, longitude)`.
+  * Calculates exact great-circle distance using the spherical Haversine formula with Earth radius `6,371,000.0` meters, returning `distance_meters`.
+  * Enforces deterministic offset pagination using a primary-key tie-breaker (`ORDER BY calc.distance_meters ASC, calc.id ASC`).
+  * Explicitly handles $\pm 180^\circ$ antimeridian crossing using split longitude interval logic and handles polar bounds ($|\text{latitude}| \ge 89.9^\circ$) with full longitude coverage (`spans_all_lng`).
+  * Declared with `SECURITY INVOKER` and `STABLE` to respect caller privileges and future Row Level Security policies.
+* **FastAPI Backend**:
+  * Defined `NearbyShopResponse` in `backend/app/schemas/shop.py` (and re-exported via `backend/app/schemas/__init__.py`), extending `ShopResponse` with `distance_meters: float`.
+  * Implemented `GET /api/v1/shops/nearby` in `backend/app/api/v1/endpoints/shops.py`, positioned before `/{shop_id}` to ensure unambiguous route resolution.
+  * Validates query parameters:
+    * `latitude`: `float` between `-90.0` and `90.0`
+    * `longitude`: `float` between `-180.0` and `180.0`
+    * `radius`: `float` between `0.0` and `50,000.0` meters (default `5,000.0`m)
+    * `limit`: `int` between `1` and `100` (default `50`)
+    * `offset`: `int` $\ge 0$ (default `0`)
+  * Enforces Bearer JWT authentication via `get_current_user` and request-scoped caller client `get_authenticated_supabase`.
+  * Sanitizes internal exceptions into generic client error responses while recording full diagnostic details in server logs.
+* **Mobile Client (React Native & Expo)**:
+  * Defined shared models in `mobile/src/types/shop.ts` (`Shop`, `NearbySearchParams`).
+  * Created `mobile/src/services/shopService.ts` providing backend communication (`fetchNearbyShops`) and formatting helpers (`formatDistance`, `formatRating`). Client routes all traffic through the FastAPI backend with zero direct Supabase access.
+  * Created custom hook `mobile/src/hooks/useNearbyShops.ts` managing nearby shop retrieval, loading indicators, API error states, and selection tracking.
+  * Mitigated asynchronous race conditions using a monotonic request identifier (`requestIdRef`) to ensure older inflight responses never overwrite newer coordinates.
+  * Built `mobile/src/components/NearbyShopsSheet.tsx` providing a bottom panel with shop count, loading spinners, error retry actions, empty result handling, and horizontal swipeable shop cards.
+  * Built `mobile/src/components/ShopDetailCard.tsx` presenting name, rating, distance, address, and dismiss interaction for the selected shop.
+  * Integrated coffee shop map markers into `mobile/src/components/LokalMapView.tsx` with coffee-brown pin styling and selected highlight state, while preserving device location acquisition, fallback regions, and permission denial banners.
+* **Automated Testing & Verification**:
+  * Added 21 backend tests in `backend/tests/test_nearby_shops.py` covering success states, custom parameters, distance ordering, empty results, boundary validations, authentication enforcement, database exception sanitization, route precedence, and geodesic math benchmarks.
+  * Added 10 mobile unit tests in `mobile/tests/` covering distance formatting, rating formatting, base URL resolution, request construction, unauthenticated headers, selection synchronization, and race condition handling.
+  * Verified 83 passing backend tests (zero regressions from 62 previous tests), 10 passing mobile tests, and clean TypeScript typecheck (`0` errors).
 
 ---
 
 # Project Progress
 
-| Feature                                    | Status      |
-| ------------------------------------------ | ----------- |
-| Engineering Foundation                     | ✅ Complete |
-| Issue #1 — Initialize Mobile Application   | ✅ Complete |
-| Issue #3 — Initialize FastAPI Backend      | ✅ Complete |
-| Issue #5 — Initialize Supabase Integration | ✅ Complete |
-| Issue #7 — Database Schema                 | ✅ Complete |
-| Issue #9 — User Authentication             | ✅ Complete |
-| Issue #11 — Maps & Location Integration    | ✅ Complete |
-| Issue #13 — Coffee Shop CRUD API           | ✅ Complete |
-| Coffee Shop Discovery / Search             | ⏳ Planned  |
-| AI Review Summaries                        | ⏳ Planned  |
+| Feature                                           | Status      |
+| ------------------------------------------------- | ----------- |
+| Engineering Foundation                            | ✅ Complete |
+| Issue #1 — Initialize Mobile Application          | ✅ Complete |
+| Issue #3 — Initialize FastAPI Backend             | ✅ Complete |
+| Issue #5 — Initialize Supabase Integration        | ✅ Complete |
+| Issue #7 — Database Schema                        | ✅ Complete |
+| Issue #9 — User Authentication                    | ✅ Complete |
+| Issue #11 — Maps & Location Integration           | ✅ Complete |
+| Issue #13 — Coffee Shop CRUD API                  | ✅ Complete |
+| Issue #15 — Coffee Shop Discovery & Nearby Search | ✅ Complete |
+| AI Review Summaries                               | ⏳ Planned  |
 
 ---
 
@@ -70,16 +89,18 @@ The repository is ready for the next feature-development cycle.
 The React Native (Expo) mobile application currently provides:
 
 * Interactive map visualization via `react-native-maps`.
-* Device foreground location permission requests via `expo-location`.
+* Foreground device location permission management via `expo-location`.
 * Automatic user coordinate acquisition and animated map re-centering.
-* Current user location representation via map marker and native user location indicators.
+* Current user location representation via native marker and map indicators.
 * Sensible fallback region (Metro Manila) when location access is pending or unavailable.
 * Graceful, non-crashing permission denial handling with informative status banners.
 * Differentiated terminal denial handling (`canAskAgain: false`) providing direct system settings navigation via `Linking.openSettings()`.
-* Dedicated handling for undetermined permission states.
+* Nearby independent coffee shop discovery requested exclusively through the FastAPI backend (`GET /api/v1/shops/nearby`).
+* Distinct coffee-themed map markers for nearby shops with active selection highlighting.
+* Bottom sheet results panel (`NearbyShopsSheet`) with shop count, horizontal swipeable cards, loading indicators, empty result notices, and API error/retry actions.
+* Shop detail card view (`ShopDetailCard`) with formatted distance, rating, physical address, and dismiss interaction.
+* Asynchronous request sequence protection discarding stale out-of-order responses.
 * Zero external UI dependencies, adhering to scope discipline and clean architecture.
-
-Coffee shop search, markers, AI review summaries, and background location tracking remain outside the scope of Issue #11.
 
 ---
 
@@ -90,21 +111,24 @@ The FastAPI backend currently provides:
 * Application configuration through environment variables.
 * Basic health-check endpoints (`/health` and `/api/v1/health`).
 * Supabase client initialization through `backend/app/core/supabase.py` with lazy loading, HTTPS enforcement, and isolated request-scoped authenticated client instantiation (`create_scoped_supabase_client`).
-* Initial database schema migration DDL located at `supabase/migrations/20260811000000_initial_schema.sql`.
+* Database schema migrations including initial tables and nearby search RPC:
+  * `supabase/migrations/20260811000000_initial_schema.sql`
+  * `supabase/migrations/20260916000000_nearby_shops_rpc.sql`
 * User registration (`POST /api/v1/auth/register`) with email and password.
 * User authentication (`POST /api/v1/auth/login`) returning JWT session tokens.
 * Non-admin token-scoped user logout (`POST /api/v1/auth/logout`).
 * Authenticated user identification (`GET /api/v1/auth/me`) and reusable `get_current_user` dependency for protected routes.
-* Authenticated coffee shop management via REST API (`POST`, `GET`, `PATCH`, `DELETE` at `/api/v1/shops`).
+* Authenticated coffee shop CRUD operations via REST API (`POST`, `GET`, `PATCH`, `DELETE` at `/api/v1/shops`).
+* Authenticated nearby coffee shop discovery (`GET /api/v1/shops/nearby`) supporting coordinate bounding-box prefiltering, spherical Haversine distance, antimeridian handling, polar edge case handling, and deterministic offset pagination (`distance_meters ASC, id ASC`).
 * Request-scoped caller JWT propagation (`get_authenticated_supabase`) for secure PostgREST database queries.
-* Robust error handling distinguishing client input errors (`400`/`422`), missing records (`404`), unique constraint conflicts (`409`), service unavailability (`503`), and sanitized generic server failures (`500`).
-* Automated testing suite executed via Python's standard library `unittest` runner (62 passing tests).
+* Robust error handling distinguishing client validation errors (`400`/`422`), missing records (`404`), unique constraint conflicts (`409`), service unavailability (`503`), and sanitized generic server failures (`500`).
+* Comprehensive automated testing suite executed via Python's standard library `unittest` runner (83 passing tests).
 
 ---
 
 # Next Task
 
-The next feature should be defined through the next GitHub Issue (such as mobile coffee shop integration or nearby shop discovery) and approved implementation plan before development begins.
+The next feature should be defined through the next GitHub Issue (such as AI-generated review summaries, favorites, or mobile authentication state management) and approved implementation plan before development begins.
 
 ---
 
@@ -116,12 +140,13 @@ The next feature should be defined through the next GitHub Issue (such as mobile
 
 # Session Learnings
 
-The Issue #13 development cycle established key backend engineering practices:
+The Issue #15 development cycle established key full-stack engineering practices:
 
-* **Request-Scoped Supabase Client**: PostgREST queries should carry the caller's JWT rather than the anonymous client key so that future Row Level Security (RLS) policies can identify `auth.uid()`. Constructing a fresh client instance with the caller's Authorization header ensures query isolation without mutating global singleton clients.
-* **REST Semantic Discipline**: Distinguishing between client-caused validation errors (`422`), empty update requests (`400`), nonexistent resource requests (`404`), unique constraint violations (`409`), and unexpected server-side errors (`500`) yields predictable, standard API behavior.
-* **Information Disclosure Prevention**: Catching internal server errors, logging full exception details internally, and returning generic error details to API clients prevents leaking database structure or environment details.
-* **Pydantic Pre-Validation (`mode='before'`)**: Using `mode='before'` validators allows distinguishing between omitted optional fields in partial update payloads (`PATCH`) and explicit `null` values that violate non-null database constraints.
+* **Bounding-Box Prefiltering with Spatial B-Tree Indexes**: Combining planar bounding-box prefiltering with Haversine distance enables efficient indexed spatial queries on standard B-Tree `(latitude, longitude)` indexes without requiring heavy spatial extensions like PostGIS.
+* **Deterministic Pagination in Geodesic Queries**: When sorting results by computed floating-point distances, tie-breaking on the primary key (`ORDER BY distance_meters ASC, id ASC`) prevents duplication or omission across paginated queries.
+* **Asynchronous Monotonic Request Tracking**: In mobile map applications where location updates can trigger overlapping fetch requests, tracking a monotonic request ID ref discards out-of-order responses and prevents stale coordinate results from overwriting newer user state.
+* **Decoupled Client Authentication Injection**: Components communicating with authenticated backend endpoints should accept explicit session tokens through props/hooks rather than relying on global public environment variables, ensuring clean architectural boundaries.
+* **Route Precedence in FastAPI**: Static or specialized sub-paths (`/nearby`) must be declared prior to dynamic parameterized sub-paths (`/{shop_id}`) to eliminate routing ambiguity and prevent valid string paths from triggering UUID path validation errors.
 
 ---
 
@@ -155,6 +180,7 @@ After implementation:
 
 ---
 
-**Last Updated:** Phase 1 — Project Bootstrapping (after completion of GitHub Issue #13)
+**Last Updated:** Phase 1 — Coffee Shop Discovery & Nearby Search (after implementation of GitHub Issue #15)
+
 
 
