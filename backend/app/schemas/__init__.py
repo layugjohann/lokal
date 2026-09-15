@@ -6,6 +6,12 @@ from .auth import (
     SessionResponse,
     UserResponse,
 )
+from .shop import (
+    ShopBase,
+    ShopCreate,
+    ShopResponse,
+    ShopUpdate,
+)
 
 __all__ = [
     "RegisterRequest",
@@ -14,4 +20,9 @@ __all__ = [
     "SessionResponse",
     "AuthResponseSchema",
     "MessageResponse",
+    "ShopBase",
+    "ShopCreate",
+    "ShopUpdate",
+    "ShopResponse",
 ]
+

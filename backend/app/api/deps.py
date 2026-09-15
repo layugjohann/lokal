@@ -5,7 +5,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from supabase import Client
 from supabase_auth.errors import AuthApiError, AuthError
 
-from ..core.supabase import get_supabase_client
+from ..core.supabase import create_scoped_supabase_client, get_supabase_client
 from ..schemas.auth import UserResponse
 
 logger = logging.getLogger(__name__)
@@ -28,6 +28,7 @@ def get_supabase() -> Client:
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=str(exc),
         )
+
 
 
 def get_current_user(
@@ -100,3 +101,33 @@ def get_current_user(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Unexpected error during authentication verification: {str(exc)}",
         )
+
+
+def get_authenticated_supabase(
+    credentials: Annotated[Optional[HTTPAuthorizationCredentials], Depends(security)],
+    _user: Annotated[UserResponse, Depends(get_current_user)],
+) -> Client:
+    """FastAPI dependency to obtain a request-scoped Supabase client authenticated with the caller's JWT.
+
+    Does not mutate the shared Supabase client instance.
+
+    Raises:
+        HTTPException: 401 Unauthorized if authentication token is missing.
+        HTTPException: 503 Service Unavailable if Supabase client cannot be initialized.
+    """
+    if not credentials or not credentials.credentials:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authentication token is missing.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    try:
+        return create_scoped_supabase_client(credentials.credentials)
+    except ValueError as exc:
+        logger.error(f"Scoped Supabase client initialization failed: {exc}")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=str(exc),
+        )
+
