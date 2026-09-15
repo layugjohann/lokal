@@ -90,3 +90,9 @@ class ShopResponse(BaseModel):
     google_place_id: Optional[str] = Field(None, description="Google Places identifier")
     created_at: Optional[Union[datetime, str]] = Field(None, description="Creation timestamp")
     updated_at: Optional[Union[datetime, str]] = Field(None, description="Last update timestamp")
+
+
+class NearbyShopResponse(ShopResponse):
+    """Response representation of a coffee shop with nearby distance."""
+    distance_meters: float = Field(..., ge=0.0, description="Distance from search origin in meters")
+

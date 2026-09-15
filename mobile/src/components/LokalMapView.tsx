@@ -8,6 +8,10 @@ import {
 } from 'react-native';
 import MapView, { Marker, Region } from 'react-native-maps';
 import { useLocation } from '../hooks/useLocation';
+import { useNearbyShops } from '../hooks/useNearbyShops';
+import NearbyShopsSheet from './NearbyShopsSheet';
+import { formatDistance } from '../services/shopService';
+import { Shop } from '../types/shop';
 
 const DEFAULT_REGION: Region = {
   latitude: 14.5995,
@@ -16,7 +20,11 @@ const DEFAULT_REGION: Region = {
   longitudeDelta: 0.05,
 };
 
-export default function LokalMapView() {
+export interface LokalMapViewProps {
+  authToken?: string | null;
+}
+
+export default function LokalMapView({ authToken }: LokalMapViewProps = {}) {
   const {
     location,
     permissionStatus,
@@ -26,6 +34,16 @@ export default function LokalMapView() {
     retry,
     openSettings,
   } = useLocation();
+
+  const {
+    shops,
+    isLoading: isLoadingNearby,
+    errorMessage: nearbyError,
+    selectedShop,
+    selectShop,
+    refetch: refetchShops,
+  } = useNearbyShops(location, authToken);
+
   const mapRef = useRef<MapView>(null);
 
   useEffect(() => {
@@ -42,6 +60,25 @@ export default function LokalMapView() {
     }
   }, [location]);
 
+  const handleSelectShop = (shop: Shop) => {
+    selectShop(shop);
+    if (mapRef.current) {
+      mapRef.current.animateToRegion(
+        {
+          latitude: shop.latitude,
+          longitude: shop.longitude,
+          latitudeDelta: 0.012,
+          longitudeDelta: 0.012,
+        },
+        500
+      );
+    }
+  };
+
+  const handleCloseDetail = () => {
+    selectShop(null);
+  };
+
   return (
     <View style={styles.container}>
       <MapView
@@ -50,6 +87,7 @@ export default function LokalMapView() {
         initialRegion={DEFAULT_REGION}
         showsUserLocation={permissionStatus === 'granted'}
         showsMyLocationButton={permissionStatus === 'granted'}
+        onPress={() => selectShop(null)}
       >
         {location && (
           <Marker
@@ -61,7 +99,34 @@ export default function LokalMapView() {
             description="You are here"
           />
         )}
+
+        {shops.map((shop) => (
+          <Marker
+            key={shop.id}
+            coordinate={{
+              latitude: shop.latitude,
+              longitude: shop.longitude,
+            }}
+            title={shop.name}
+            description={formatDistance(shop.distance_meters)}
+            pinColor={selectedShop?.id === shop.id ? '#D4A373' : '#4A2E18'}
+            onPress={() => handleSelectShop(shop)}
+          />
+        ))}
       </MapView>
+
+      {location && permissionStatus === 'granted' && !errorMessage && (
+        <NearbyShopsSheet
+          shops={shops}
+          isLoading={isLoadingNearby}
+          errorMessage={nearbyError}
+          selectedShop={selectedShop}
+          onSelectShop={handleSelectShop}
+          onCloseDetail={handleCloseDetail}
+          onRetry={refetchShops}
+        />
+      )}
+
 
       {isLoading && (
         <View style={styles.loadingBanner}>

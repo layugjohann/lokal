@@ -7,6 +7,7 @@ from .auth import (
     UserResponse,
 )
 from .shop import (
+    NearbyShopResponse,
     ShopBase,
     ShopCreate,
     ShopResponse,
@@ -24,5 +25,7 @@ __all__ = [
     "ShopCreate",
     "ShopUpdate",
     "ShopResponse",
+    "NearbyShopResponse",
 ]
+
 

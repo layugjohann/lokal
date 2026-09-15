@@ -6,11 +6,19 @@ from postgrest.exceptions import APIError
 from supabase import Client
 
 from ...deps import get_authenticated_supabase, get_current_user
-from ....schemas import MessageResponse, ShopCreate, ShopResponse, ShopUpdate, UserResponse
+from ....schemas import (
+    MessageResponse,
+    NearbyShopResponse,
+    ShopCreate,
+    ShopResponse,
+    ShopUpdate,
+    UserResponse,
+)
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
 
 
 @router.post(
@@ -88,6 +96,50 @@ def list_shops(
         raise
     except Exception as exc:
         logger.error(f"Unexpected error listing coffee shops: {exc}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An unexpected error occurred while processing the request.",
+        )
+
+
+@router.get(
+    "/nearby",
+    response_model=list[NearbyShopResponse],
+    status_code=status.HTTP_200_OK,
+    summary="Search nearby coffee shops",
+)
+def search_nearby_shops(
+    _current_user: Annotated[UserResponse, Depends(get_current_user)],
+    supabase: Annotated[Client, Depends(get_authenticated_supabase)],
+    latitude: float = Query(..., ge=-90.0, le=90.0, description="Latitude coordinate between -90.0 and 90.0"),
+    longitude: float = Query(..., ge=-180.0, le=180.0, description="Longitude coordinate between -180.0 and 180.0"),
+    radius: float = Query(default=5000.0, gt=0.0, le=50000.0, description="Search radius in meters (max 50,000m)"),
+    limit: int = Query(default=50, ge=1, le=100, description="Maximum number of shops to return"),
+    offset: int = Query(default=0, ge=0, description="Number of shops to skip"),
+) -> list[NearbyShopResponse]:
+    """Retrieve nearby coffee shops within a given radius using bounding box and Haversine distance."""
+    try:
+        result = supabase.rpc(
+            "get_nearby_shops",
+            {
+                "user_lat": latitude,
+                "user_lng": longitude,
+                "radius_meters": radius,
+                "result_limit": limit,
+                "result_offset": offset,
+            },
+        ).execute()
+        return result.data or []
+    except APIError as exc:
+        logger.error(f"Database error searching nearby coffee shops: {exc.message}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="A database error occurred while searching for nearby coffee shops.",
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error(f"Unexpected error searching nearby coffee shops: {exc}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="An unexpected error occurred while processing the request.",
