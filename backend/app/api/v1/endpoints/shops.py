@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from postgrest.exceptions import APIError
 from supabase import Client
 
-from ...deps import get_current_user, get_supabase
+from ...deps import get_authenticated_supabase, get_current_user
 from ....schemas import MessageResponse, ShopCreate, ShopResponse, ShopUpdate, UserResponse
 
 logger = logging.getLogger(__name__)
@@ -22,7 +22,7 @@ router = APIRouter()
 def create_shop(
     shop_in: ShopCreate,
     _current_user: Annotated[UserResponse, Depends(get_current_user)],
-    supabase: Annotated[Client, Depends(get_supabase)],
+    supabase: Annotated[Client, Depends(get_authenticated_supabase)],
 ) -> ShopResponse:
     """Create a new coffee shop record in the database."""
     payload = shop_in.model_dump(exclude_unset=True)
@@ -52,7 +52,7 @@ def create_shop(
         logger.error(f"Unexpected error creating coffee shop: {exc}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Unexpected error: {str(exc)}",
+            detail="An unexpected error occurred while processing the request.",
         )
 
 
@@ -64,7 +64,7 @@ def create_shop(
 )
 def list_shops(
     _current_user: Annotated[UserResponse, Depends(get_current_user)],
-    supabase: Annotated[Client, Depends(get_supabase)],
+    supabase: Annotated[Client, Depends(get_authenticated_supabase)],
     limit: int = Query(default=50, ge=1, le=100, description="Maximum number of shops to return"),
     offset: int = Query(default=0, ge=0, description="Number of shops to skip"),
 ) -> list[ShopResponse]:
@@ -90,7 +90,7 @@ def list_shops(
         logger.error(f"Unexpected error listing coffee shops: {exc}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Unexpected error: {str(exc)}",
+            detail="An unexpected error occurred while processing the request.",
         )
 
 
@@ -103,7 +103,7 @@ def list_shops(
 def get_shop(
     shop_id: UUID,
     _current_user: Annotated[UserResponse, Depends(get_current_user)],
-    supabase: Annotated[Client, Depends(get_supabase)],
+    supabase: Annotated[Client, Depends(get_authenticated_supabase)],
 ) -> ShopResponse:
     """Retrieve details for a specific coffee shop by its UUID."""
     try:
@@ -126,7 +126,7 @@ def get_shop(
         logger.error(f"Unexpected error retrieving coffee shop: {exc}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Unexpected error: {str(exc)}",
+            detail="An unexpected error occurred while processing the request.",
         )
 
 
@@ -140,7 +140,7 @@ def update_shop(
     shop_id: UUID,
     shop_in: ShopUpdate,
     _current_user: Annotated[UserResponse, Depends(get_current_user)],
-    supabase: Annotated[Client, Depends(get_supabase)],
+    supabase: Annotated[Client, Depends(get_authenticated_supabase)],
 ) -> ShopResponse:
     """Update fields of an existing coffee shop record."""
     update_data = shop_in.model_dump(exclude_unset=True)
@@ -180,7 +180,7 @@ def update_shop(
         logger.error(f"Unexpected error updating coffee shop: {exc}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Unexpected error: {str(exc)}",
+            detail="An unexpected error occurred while processing the request.",
         )
 
 
@@ -193,7 +193,7 @@ def update_shop(
 def delete_shop(
     shop_id: UUID,
     _current_user: Annotated[UserResponse, Depends(get_current_user)],
-    supabase: Annotated[Client, Depends(get_supabase)],
+    supabase: Annotated[Client, Depends(get_authenticated_supabase)],
 ) -> MessageResponse:
     """Delete an existing coffee shop record by ID."""
     try:
@@ -216,5 +216,5 @@ def delete_shop(
         logger.error(f"Unexpected error deleting coffee shop: {exc}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Unexpected error: {str(exc)}",
+            detail="An unexpected error occurred while processing the request.",
         )

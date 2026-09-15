@@ -13,7 +13,7 @@ from postgrest.exceptions import APIError
 from supabase_auth.errors import AuthApiError
 
 from app.main import app
-from app.api.deps import get_current_user, get_supabase
+from app.api.deps import get_authenticated_supabase, get_current_user, get_supabase
 from app.schemas.auth import UserResponse
 
 
@@ -78,10 +78,12 @@ class TestShopEndpoints(unittest.TestCase):
     def setUp(self):
         self.mock_supabase = MagicMock()
         app.dependency_overrides[get_supabase] = lambda: self.mock_supabase
+        app.dependency_overrides[get_authenticated_supabase] = lambda: self.mock_supabase
         self.client = TestClient(app)
         self.auth_headers = {"Authorization": "Bearer valid-mock-token"}
         # Default mock auth user response
         self.mock_supabase.auth.get_user.return_value = DummyUserResponse()
+
 
         self.sample_shop = {
             "id": "123e4567-e89b-12d3-a456-426614174000",
@@ -382,12 +384,26 @@ class TestShopEndpoints(unittest.TestCase):
         self.assertEqual(resp.status_code, 400)
         self.assertIn("At least one field must be provided for update", resp.json()["detail"])
 
+    def test_update_shop_null_name_rejected(self):
+        shop_id = self.sample_shop["id"]
+        resp = self.client.patch(f"/api/v1/shops/{shop_id}", json={"name": None}, headers=self.auth_headers)
+        self.assertEqual(resp.status_code, 422)
 
+    def test_update_shop_null_latitude_rejected(self):
+        shop_id = self.sample_shop["id"]
+        resp = self.client.patch(f"/api/v1/shops/{shop_id}", json={"latitude": None}, headers=self.auth_headers)
+        self.assertEqual(resp.status_code, 422)
+
+    def test_update_shop_null_longitude_rejected(self):
+        shop_id = self.sample_shop["id"]
+        resp = self.client.patch(f"/api/v1/shops/{shop_id}", json={"longitude": None}, headers=self.auth_headers)
+        self.assertEqual(resp.status_code, 422)
 
     def test_update_shop_blank_name_rejected(self):
         shop_id = self.sample_shop["id"]
         resp = self.client.patch(f"/api/v1/shops/{shop_id}", json={"name": "   "}, headers=self.auth_headers)
         self.assertEqual(resp.status_code, 422)
+
 
     def test_update_shop_not_found(self):
         builder = MockQueryBuilder(data=[])
@@ -467,15 +483,43 @@ class TestShopEndpoints(unittest.TestCase):
         self.assertIn("A database error occurred", resp.json()["detail"])
 
 
+    def test_shops_unexpected_exception_generic_message(self):
+        builder = MockQueryBuilder()
+        builder.mock_execute.side_effect = RuntimeError("Sensitive DB internal error")
+        self.mock_supabase.table.return_value = builder
+
+        payload = {"name": "Test Cafe", "latitude": 14.5, "longitude": 121.0}
+        resp = self.client.post("/api/v1/shops", json=payload, headers=self.auth_headers)
+        self.assertEqual(resp.status_code, 500)
+        self.assertEqual(resp.json()["detail"], "An unexpected error occurred while processing the request.")
+        self.assertNotIn("Sensitive DB internal error", resp.text)
+
     # --- Unconfigured Supabase Dependency Test ---
     def test_shops_supabase_unconfigured(self):
         def raise_503():
             raise HTTPException(status_code=503, detail="Supabase not configured.")
 
-        app.dependency_overrides[get_supabase] = raise_503
+        app.dependency_overrides[get_authenticated_supabase] = raise_503
         resp = self.client.get("/api/v1/shops", headers=self.auth_headers)
         self.assertEqual(resp.status_code, 503)
 
 
+class TestScopedSupabaseClient(unittest.TestCase):
+    def test_create_scoped_client_sets_caller_jwt_and_preserves_shared(self):
+        from unittest.mock import patch
+        from app.core.supabase import create_scoped_supabase_client, get_supabase_client
+        from app.core.config import settings
+
+        with patch.object(settings, "SUPABASE_URL", "https://test.supabase.co"), \
+             patch.object(settings, "SUPABASE_ANON_KEY", "anon-key-test"):
+            shared_client = get_supabase_client()
+            scoped_client = create_scoped_supabase_client("custom-caller-token-123")
+
+            self.assertNotEqual(id(shared_client), id(scoped_client))
+            self.assertEqual(scoped_client.postgrest.headers.get("authorization"), "Bearer custom-caller-token-123")
+            self.assertEqual(shared_client.postgrest.headers.get("authorization"), "Bearer anon-key-test")
+
+
 if __name__ == '__main__':
     unittest.main()
+

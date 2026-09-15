@@ -1,6 +1,6 @@
 import logging
 import httpx
-from supabase import create_client, Client
+from supabase import create_client, Client, ClientOptions
 from .config import settings
 
 logger = logging.getLogger(__name__)
@@ -31,6 +31,32 @@ def get_supabase_client() -> Client:
 
     _supabase_client = create_client(settings.SUPABASE_URL, settings.SUPABASE_ANON_KEY)
     return _supabase_client
+
+
+def create_scoped_supabase_client(token: str) -> Client:
+    """Create a new request-scoped Supabase client instance authenticated with the caller's bearer JWT.
+
+    Does not mutate the shared Supabase client instance.
+
+    Raises:
+        ValueError: If SUPABASE_URL or SUPABASE_ANON_KEY environment variables are not set,
+                    or if SUPABASE_URL does not begin with https://.
+    """
+    if not settings.SUPABASE_URL or not settings.SUPABASE_ANON_KEY:
+        raise ValueError(
+            "SUPABASE_URL and SUPABASE_ANON_KEY environment variables must be configured."
+        )
+
+    if not settings.SUPABASE_URL.lower().startswith("https://"):
+        raise ValueError(
+            "SUPABASE_URL must begin with https:// to ensure secure communication."
+        )
+
+    options = ClientOptions(headers={"Authorization": f"Bearer {token}"})
+    client = create_client(settings.SUPABASE_URL, settings.SUPABASE_ANON_KEY, options=options)
+    client.postgrest.auth(token)
+    return client
+
 
 
 def verify_supabase_connection() -> dict:
