@@ -56,9 +56,8 @@ export async function fetchNearbyShops(
     Accept: 'application/json',
   };
 
-  const token = authToken || process.env.EXPO_PUBLIC_AUTH_TOKEN;
-  if (token) {
-    headers['Authorization'] = `Bearer ${token}`;
+  if (authToken) {
+    headers['Authorization'] = `Bearer ${authToken}`;
   }
 
   const response = await fetch(url, {

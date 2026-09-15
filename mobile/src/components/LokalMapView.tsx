@@ -20,7 +20,11 @@ const DEFAULT_REGION: Region = {
   longitudeDelta: 0.05,
 };
 
-export default function LokalMapView() {
+export interface LokalMapViewProps {
+  authToken?: string | null;
+}
+
+export default function LokalMapView({ authToken }: LokalMapViewProps = {}) {
   const {
     location,
     permissionStatus,
@@ -38,7 +42,7 @@ export default function LokalMapView() {
     selectedShop,
     selectShop,
     refetch: refetchShops,
-  } = useNearbyShops(location);
+  } = useNearbyShops(location, authToken);
 
   const mapRef = useRef<MapView>(null);
 

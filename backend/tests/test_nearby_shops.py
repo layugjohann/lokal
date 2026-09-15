@@ -34,6 +34,7 @@ class DummyUserResponse:
 
 class TestNearbyShopEndpoints(unittest.TestCase):
     def setUp(self):
+        """Configure mock dependencies and test client before each test."""
         self.mock_supabase = MagicMock()
         app.dependency_overrides[get_supabase] = lambda: self.mock_supabase
         app.dependency_overrides[get_authenticated_supabase] = lambda: self.mock_supabase
@@ -69,6 +70,7 @@ class TestNearbyShopEndpoints(unittest.TestCase):
         ]
 
     def tearDown(self):
+        """Clean up FastAPI dependency overrides after each test."""
         app.dependency_overrides.clear()
 
     def test_nearby_search_success(self):
@@ -380,6 +382,7 @@ class TestGeodesicAndBoundingBoxMath(unittest.TestCase):
     EARTH_RADIUS = 6371000.0
 
     def _haversine(self, lat1, lon1, lat2, lon2):
+        """Calculate the geodesic great-circle distance between two points in meters using Haversine formula."""
         r_lat1 = math.radians(lat1)
         r_lon1 = math.radians(lon1)
         r_lat2 = math.radians(lat2)

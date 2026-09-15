@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { Shop } from '../types/shop';
 import { LocationCoordinates } from '../types/location';
 import { fetchNearbyShops } from '../services/shopService';
@@ -20,6 +20,7 @@ export function useNearbyShops(
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [selectedShop, setSelectedShop] = useState<Shop | null>(null);
+  const requestIdRef = useRef<number>(0);
 
   const fetchShops = useCallback(async () => {
     if (!location) {
@@ -28,6 +29,7 @@ export function useNearbyShops(
       return;
     }
 
+    const currentRequestId = ++requestIdRef.current;
     setIsLoading(true);
     setErrorMessage(null);
 
@@ -39,23 +41,34 @@ export function useNearbyShops(
         },
         authToken
       );
-      setShops(data);
-      if (selectedShop) {
-        const found = data.find((s) => s.id === selectedShop.id);
-        if (found) {
-          setSelectedShop(found);
-        }
+
+      if (currentRequestId !== requestIdRef.current) {
+        return;
       }
+
+      setShops(data);
+      setSelectedShop((prev) => {
+        if (!prev) {
+          return null;
+        }
+        const found = data.find((s) => s.id === prev.id);
+        return found || null;
+      });
     } catch (err) {
+      if (currentRequestId !== requestIdRef.current) {
+        return;
+      }
       const message =
         err instanceof Error
           ? err.message
           : 'Unable to load nearby coffee shops.';
       setErrorMessage(message);
     } finally {
-      setIsLoading(false);
+      if (currentRequestId === requestIdRef.current) {
+        setIsLoading(false);
+      }
     }
-  }, [location?.latitude, location?.longitude, authToken, selectedShop]);
+  }, [location?.latitude, location?.longitude, authToken]);
 
   useEffect(() => {
     if (location) {
@@ -65,7 +78,7 @@ export function useNearbyShops(
       setSelectedShop(null);
       setErrorMessage(null);
     }
-  }, [location?.latitude, location?.longitude]);
+  }, [location?.latitude, location?.longitude, authToken, fetchShops]);
 
   return {
     shops,

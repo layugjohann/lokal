@@ -153,7 +153,7 @@ BEGIN
         calc.distance_meters
     FROM calculated_shops calc
     WHERE calc.distance_meters <= radius_meters
-    ORDER BY calc.distance_meters ASC
+    ORDER BY calc.distance_meters ASC, calc.id ASC
     LIMIT result_limit
     OFFSET result_offset;
 END;

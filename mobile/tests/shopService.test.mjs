@@ -37,7 +37,11 @@ test('getApiBaseUrl returns default or env override', () => {
     process.env.EXPO_PUBLIC_API_URL = 'https://api.lokal.ph';
     assert.strictEqual(getApiBaseUrl(), 'https://api.lokal.ph');
   } finally {
-    process.env.EXPO_PUBLIC_API_URL = originalEnv;
+    if (originalEnv === undefined) {
+      delete process.env.EXPO_PUBLIC_API_URL;
+    } else {
+      process.env.EXPO_PUBLIC_API_URL = originalEnv;
+    }
   }
 });
 
@@ -91,6 +95,27 @@ test('fetchNearbyShops constructs request and returns data on success', async ()
     globalThis.fetch = originalFetch;
   }
 });
+
+test('fetchNearbyShops does not set Authorization header when authToken is not provided', async () => {
+  const originalFetch = globalThis.fetch;
+  let requestedHeaders = {};
+
+  globalThis.fetch = async (input, init) => {
+    requestedHeaders = init?.headers || {};
+    return {
+      ok: true,
+      json: async () => [],
+    };
+  };
+
+  try {
+    await fetchNearbyShops({ latitude: 14.5, longitude: 121.0 });
+    assert.strictEqual(requestedHeaders['Authorization'], undefined);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 
 test('fetchNearbyShops throws descriptive error when backend fails with detail', async () => {
   const originalFetch = globalThis.fetch;

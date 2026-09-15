@@ -19,7 +19,7 @@
     "android": "expo start --android",
     "ios": "expo start --ios",
     "web": "expo start --web",
-    "test": "node --test --experimental-strip-types tests/shopService.test.mjs"
+    "test": "node --test --experimental-strip-types tests/*.test.mjs"
   },
   "private": true
 }
