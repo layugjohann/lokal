@@ -26,7 +26,7 @@ class UnifiedReview(BaseModel):
 
     id: str = Field(..., description="Provider-neutral unique review identifier")
     source: ReviewSource = Field(..., description="Originating source of the review")
-    rating: int = Field(..., ge=1, le=5, description="Review rating from 1 to 5 stars")
+    rating: float = Field(..., ge=1, le=5, description="Review rating from 1 to 5 stars")
     text: Optional[str] = Field(None, description="Review body text (localized)")
     original_text: Optional[str] = Field(None, description="Original untranslated review body text")
     language: Optional[str] = Field(None, description="Language code of the review text")

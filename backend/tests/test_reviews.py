@@ -232,6 +232,33 @@ class TestGooglePlacesReviewProvider(unittest.IsolatedAsyncioTestCase):
 
         self.assertIn("Google Places API returned an invalid response", str(ctx.exception))
 
+    async def test_fetch_reviews_fractional_rating_success(self):
+        fractional_response = {
+            "reviews": [
+                {
+                    "name": "places/ChIJxyz/reviews/fractional",
+                    "rating": 4.5,
+                    "text": {"text": "Very good pour-over, nearly perfect."},
+                    "authorAttribution": {"displayName": "Coffee Enthusiast"},
+                }
+            ]
+        }
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = fractional_response
+
+        with patch("httpx.AsyncClient.get", new_callable=AsyncMock) as mock_get:
+            mock_get.return_value = mock_resp
+            reviews, attribution, avg_rating, count = await self.provider.fetch_reviews("ChIJxyz")
+
+        self.assertEqual(len(reviews), 1)
+        review = reviews[0]
+        self.assertEqual(review.id, "google:places/ChIJxyz/reviews/fractional")
+        self.assertEqual(review.rating, 4.5)
+        self.assertIsInstance(review.rating, float)
+        self.assertEqual(review.text, "Very good pour-over, nearly perfect.")
+
+
 
 
 class TestReviewService(unittest.IsolatedAsyncioTestCase):
