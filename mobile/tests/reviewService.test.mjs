@@ -55,30 +55,34 @@ test('fetchShopReviews constructs request with auth token and returns data on su
   }
 });
 
-test('fetchShopReviews does not include Authorization header when authToken is not provided', async () => {
-  const originalFetch = globalThis.fetch;
-  let requestedHeaders = {};
+test('fetchShopReviews throws error when authToken is missing or whitespace', async () => {
+  await assert.rejects(
+    async () => {
+      await fetchShopReviews('shop-123', '');
+    },
+    (err) => {
+      assert.ok(err instanceof Error);
+      assert.strictEqual(
+        err.message,
+        'Authentication token is required to fetch reviews.'
+      );
+      return true;
+    }
+  );
 
-  globalThis.fetch = async (_input, init) => {
-    requestedHeaders = init?.headers || {};
-    return {
-      ok: true,
-      status: 200,
-      json: async () => ({
-        shop_id: 'shop-123',
-        reviews: [],
-        attributions: [],
-        has_more: false,
-      }),
-    };
-  };
-
-  try {
-    await fetchShopReviews('shop-123');
-    assert.strictEqual(requestedHeaders['Authorization'], undefined);
-  } finally {
-    globalThis.fetch = originalFetch;
-  }
+  await assert.rejects(
+    async () => {
+      await fetchShopReviews('shop-123', '   ');
+    },
+    (err) => {
+      assert.ok(err instanceof Error);
+      assert.strictEqual(
+        err.message,
+        'Authentication token is required to fetch reviews.'
+      );
+      return true;
+    }
+  );
 });
 
 test('fetchShopReviews throws descriptive error when backend fails with JSON detail', async () => {
@@ -95,7 +99,7 @@ test('fetchShopReviews throws descriptive error when backend fails with JSON det
   try {
     await assert.rejects(
       async () => {
-        await fetchShopReviews('nonexistent-id');
+        await fetchShopReviews('nonexistent-id', 'test-token');
       },
       (err) => {
         assert.ok(err instanceof Error);
@@ -125,7 +129,7 @@ test('fetchShopReviews handles 502 Bad Gateway from external review provider fai
   try {
     await assert.rejects(
       async () => {
-        await fetchShopReviews('shop-upstream-fail');
+        await fetchShopReviews('shop-upstream-fail', 'test-token');
       },
       (err) => {
         assert.ok(err instanceof Error);
@@ -158,7 +162,7 @@ test('fetchShopReviews fallback error when response is non-JSON', async () => {
   try {
     await assert.rejects(
       async () => {
-        await fetchShopReviews('shop-error');
+        await fetchShopReviews('shop-error', 'test-token');
       },
       (err) => {
         assert.ok(err instanceof Error);

@@ -11,21 +11,23 @@ export function getApiBaseUrl(): string {
 
 /**
  * Retrieves normalized reviews and provider attributions for a coffee shop from FastAPI.
+ * Requires a valid authenticated caller JWT.
  */
 export async function fetchShopReviews(
   shopId: string,
-  authToken?: string | null
+  authToken: string
 ): Promise<ShopReviewsResponse> {
+  if (!authToken || !authToken.trim()) {
+    throw new Error('Authentication token is required to fetch reviews.');
+  }
+
   const baseUrl = getApiBaseUrl();
   const url = `${baseUrl}/api/v1/shops/${encodeURIComponent(shopId)}/reviews`;
 
   const headers: Record<string, string> = {
     Accept: 'application/json',
+    Authorization: `Bearer ${authToken.trim()}`,
   };
-
-  if (authToken) {
-    headers['Authorization'] = `Bearer ${authToken}`;
-  }
 
   const response = await fetch(url, {
     method: 'GET',

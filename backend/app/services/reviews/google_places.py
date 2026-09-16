@@ -2,6 +2,7 @@ import logging
 from datetime import datetime
 from typing import Optional, Tuple
 import httpx
+from pydantic import ValidationError
 
 from ...core.config import settings
 from ...schemas.review import (
@@ -77,8 +78,17 @@ class GooglePlacesReviewProvider(BaseReviewProvider):
                     f"Google Places API returned HTTP {response.status_code}"
                 )
 
-            data = response.json()
-            return self._normalize_response(data, external_id)
+            try:
+                data = response.json()
+                return self._normalize_response(data, external_id)
+            except (ValueError, TypeError, AttributeError, ValidationError) as exc:
+                logger.warning(
+                    f"Google Places API returned an invalid response for '{external_id}': {exc}",
+                    exc_info=True,
+                )
+                raise ExternalProviderError(
+                    "Google Places API returned an invalid response."
+                ) from exc
 
         except httpx.RequestError as exc:
             logger.error(

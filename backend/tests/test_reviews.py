@@ -200,6 +200,39 @@ class TestGooglePlacesReviewProvider(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(review.author.avatar_url)
         self.assertIsNone(review.author.profile_url)
 
+    async def test_fetch_reviews_malformed_json_raises_external_provider_error(self):
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.side_effect = ValueError("Expecting value: line 1 column 1 (char 0)")
+
+        with patch("httpx.AsyncClient.get", new_callable=AsyncMock) as mock_get:
+            mock_get.return_value = mock_resp
+            with self.assertRaises(ExternalProviderError) as ctx:
+                await self.provider.fetch_reviews("ChIJN1t_tDeuEmsRUsoyG83frY4")
+
+        self.assertIn("Google Places API returned an invalid response", str(ctx.exception))
+
+    async def test_fetch_reviews_invalid_schema_raises_external_provider_error(self):
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        # Rating out of bounds (rating must be between 1 and 5)
+        mock_resp.json.return_value = {
+            "reviews": [
+                {
+                    "name": "places/ChIJxyz/reviews/invalid",
+                    "rating": 10,
+                }
+            ]
+        }
+
+        with patch("httpx.AsyncClient.get", new_callable=AsyncMock) as mock_get:
+            mock_get.return_value = mock_resp
+            with self.assertRaises(ExternalProviderError) as ctx:
+                await self.provider.fetch_reviews("ChIJxyz")
+
+        self.assertIn("Google Places API returned an invalid response", str(ctx.exception))
+
+
 
 class TestReviewService(unittest.IsolatedAsyncioTestCase):
     def setUp(self):

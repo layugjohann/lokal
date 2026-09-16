@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 import {
   StyleSheet,
   View,
@@ -27,24 +27,43 @@ export default function ShopDetailCard({ shop, onClose, authToken }: ShopDetailC
   const [reviewsData, setReviewsData] = useState<ShopReviewsResponse | null>(null);
   const [isLoadingReviews, setIsLoadingReviews] = useState<boolean>(true);
   const [reviewsError, setReviewsError] = useState<string | null>(null);
+  const currentRequestId = useRef<number>(0);
 
   const loadReviews = useCallback(async () => {
+    if (!authToken) {
+      setIsLoadingReviews(false);
+      setReviewsData(null);
+      setReviewsError(null);
+      return;
+    }
+
+    const requestId = ++currentRequestId.current;
     setIsLoadingReviews(true);
     setReviewsError(null);
+
     try {
       const data = await fetchShopReviews(shop.id, authToken);
-      setReviewsData(data);
+      if (requestId === currentRequestId.current) {
+        setReviewsData(data);
+      }
     } catch (err) {
-      const message =
-        err instanceof Error ? err.message : 'Unable to load reviews right now.';
-      setReviewsError(message);
+      if (requestId === currentRequestId.current) {
+        const message =
+          err instanceof Error ? err.message : 'Unable to load reviews right now.';
+        setReviewsError(message);
+      }
     } finally {
-      setIsLoadingReviews(false);
+      if (requestId === currentRequestId.current) {
+        setIsLoadingReviews(false);
+      }
     }
   }, [shop.id, authToken]);
 
   useEffect(() => {
     loadReviews();
+    return () => {
+      currentRequestId.current += 1;
+    };
   }, [loadReviews]);
 
   const handleOpenUrl = async (url?: string | null) => {
@@ -118,15 +137,21 @@ export default function ShopDetailCard({ shop, onClose, authToken }: ShopDetailC
           </View>
 
           {googleAttribution ? (
-            <TouchableOpacity
-              onPress={() => handleOpenUrl(googleAttribution.source_url)}
-              activeOpacity={0.7}
-              style={styles.providerBadge}
-              accessibilityRole="link"
-              accessibilityLabel="View on Google Maps"
-            >
-              <Text style={styles.providerBadgeText}>Google Maps</Text>
-            </TouchableOpacity>
+            googleAttribution.source_url ? (
+              <TouchableOpacity
+                onPress={() => handleOpenUrl(googleAttribution.source_url)}
+                activeOpacity={0.7}
+                style={styles.providerBadge}
+                accessibilityRole="link"
+                accessibilityLabel="View on Google Maps"
+              >
+                <Text style={styles.providerBadgeText}>Google Maps</Text>
+              </TouchableOpacity>
+            ) : (
+              <View style={styles.providerBadge}>
+                <Text style={styles.providerBadgeText}>Google Maps</Text>
+              </View>
+            )
           ) : null}
         </View>
 
@@ -243,12 +268,14 @@ export default function ShopDetailCard({ shop, onClose, authToken }: ShopDetailC
                   </Text>
                 </TouchableOpacity>
               ) : null}
-
-              <Text style={styles.attributionNotice}>
-                {googleAttribution?.required_notice || 'Reviews provided by Google Maps'}
-              </Text>
             </View>
           )}
+
+        {!isLoadingReviews && !reviewsError && googleAttribution && (
+          <Text style={styles.attributionNotice}>
+            {googleAttribution.required_notice || 'Reviews provided by Google Maps'}
+          </Text>
+        )}
       </ScrollView>
     </View>
   );
@@ -510,7 +537,7 @@ const styles = StyleSheet.create({
     fontSize: 10,
     color: '#A4988F',
     textAlign: 'center',
-    marginTop: 2,
+    marginTop: 6,
     fontStyle: 'italic',
   },
 });
