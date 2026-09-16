@@ -6,6 +6,13 @@ from .auth import (
     SessionResponse,
     UserResponse,
 )
+from .review import (
+    ProviderAttribution,
+    ReviewAuthor,
+    ReviewSource,
+    ShopReviewsResponse,
+    UnifiedReview,
+)
 from .shop import (
     NearbyShopResponse,
     ShopBase,
@@ -26,6 +33,11 @@ __all__ = [
     "ShopUpdate",
     "ShopResponse",
     "NearbyShopResponse",
+    "ReviewSource",
+    "ReviewAuthor",
+    "UnifiedReview",
+    "ProviderAttribution",
+    "ShopReviewsResponse",
 ]
 
 
