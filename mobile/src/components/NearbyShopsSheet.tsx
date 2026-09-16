@@ -19,6 +19,7 @@ interface NearbyShopsSheetProps {
   onSelectShop: (shop: Shop) => void;
   onCloseDetail: () => void;
   onRetry: () => void;
+  authToken?: string | null;
 }
 
 export default function NearbyShopsSheet({
@@ -29,11 +30,12 @@ export default function NearbyShopsSheet({
   onSelectShop,
   onCloseDetail,
   onRetry,
+  authToken,
 }: NearbyShopsSheetProps) {
   if (selectedShop) {
     return (
       <View style={styles.container}>
-        <ShopDetailCard shop={selectedShop} onClose={onCloseDetail} />
+        <ShopDetailCard shop={selectedShop} onClose={onCloseDetail} authToken={authToken} />
       </View>
     );
   }

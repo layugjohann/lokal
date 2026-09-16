@@ -1,0 +1,58 @@
+from datetime import datetime
+from enum import Enum
+from typing import Optional, Union
+from uuid import UUID
+from pydantic import BaseModel, ConfigDict, Field
+
+
+class ReviewSource(str, Enum):
+    """Enumeration of supported review sources."""
+    GOOGLE = "google"
+    LOKAL = "lokal"
+
+
+class ReviewAuthor(BaseModel):
+    """Author attribution details for a review."""
+    model_config = ConfigDict(from_attributes=True)
+
+    display_name: str = Field(..., description="Public display name of the reviewer")
+    avatar_url: Optional[str] = Field(None, description="URL of reviewer's avatar image")
+    profile_url: Optional[str] = Field(None, description="URL to reviewer's public profile")
+
+
+class UnifiedReview(BaseModel):
+    """Provider-neutral representation of a coffee shop review."""
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str = Field(..., description="Provider-neutral unique review identifier")
+    source: ReviewSource = Field(..., description="Originating source of the review")
+    rating: float = Field(..., ge=1, le=5, description="Review rating from 1 to 5 stars")
+    text: Optional[str] = Field(None, description="Review body text (localized)")
+    original_text: Optional[str] = Field(None, description="Original untranslated review body text")
+    language: Optional[str] = Field(None, description="Language code of the review text")
+    author: ReviewAuthor = Field(..., description="Reviewer profile and attribution details")
+    published_at: Optional[datetime] = Field(None, description="Publication timestamp")
+    relative_time: Optional[str] = Field(None, description="Human-readable relative time description")
+    report_url: Optional[str] = Field(None, description="URL to report or flag review content")
+
+
+class ProviderAttribution(BaseModel):
+    """Provider-mandated attribution and source metadata."""
+    model_config = ConfigDict(from_attributes=True)
+
+    provider: ReviewSource = Field(..., description="Source provider identifier")
+    display_name: str = Field(..., description="Provider display label, e.g. 'Google Maps'")
+    source_url: Optional[str] = Field(None, description="Direct URL to shop's place page on provider")
+    required_notice: str = Field(..., description="Required legal display notice")
+
+
+class ShopReviewsResponse(BaseModel):
+    """Response payload containing normalized reviews and provider attribution."""
+    model_config = ConfigDict(from_attributes=True)
+
+    shop_id: Union[UUID, str] = Field(..., description="LOKAL coffee shop identifier")
+    average_rating: Optional[float] = Field(None, description="Aggregated rating from provider")
+    total_reviews_count: Optional[int] = Field(None, description="Total count of reviews on provider")
+    reviews: list[UnifiedReview] = Field(default_factory=list, description="List of normalized reviews")
+    attributions: list[ProviderAttribution] = Field(default_factory=list, description="Provider attribution items")
+    has_more: bool = Field(False, description="Whether additional reviews can be paginated")

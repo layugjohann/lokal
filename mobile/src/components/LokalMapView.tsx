@@ -124,6 +124,7 @@ export default function LokalMapView({ authToken }: LokalMapViewProps = {}) {
           onSelectShop={handleSelectShop}
           onCloseDetail={handleCloseDetail}
           onRetry={refetchShops}
+          authToken={authToken}
         />
       )}
 
