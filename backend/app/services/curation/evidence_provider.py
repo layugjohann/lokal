@@ -52,7 +52,7 @@ class GooglePlacesEvidenceProvider(BaseEvidenceProvider):
     """Evidence provider implementing Google Places API (New) Text Search."""
 
     def __init__(self, api_key: Optional[str] = None, timeout: float = 6.0) -> None:
-        self.api_key = api_key or settings.GOOGLE_PLACES_API_KEY
+        self.api_key = settings.GOOGLE_PLACES_API_KEY if api_key is None else api_key
         self.timeout = timeout
 
     async def search_locations(
@@ -99,9 +99,15 @@ class GooglePlacesEvidenceProvider(BaseEvidenceProvider):
                 raw_places = data.get("places", [])
                 if not isinstance(raw_places, list):
                     raise ValueError("'places' field in provider response is not a list.")
-                next_token = data.get("nextPageToken")
-                if next_token is not None and not isinstance(next_token, str):
-                    next_token = None
+
+                next_token: Optional[str] = None
+                if "nextPageToken" in data and data["nextPageToken"] is not None:
+                    raw_token = data["nextPageToken"]
+                    if not isinstance(raw_token, str) or not raw_token.strip():
+                        raise ValueError(
+                            "Provider returned malformed 'nextPageToken': must be a non-empty string when present."
+                        )
+                    next_token = raw_token.strip()
 
                 candidate_places: list[CandidatePlace] = []
                 for item in raw_places:

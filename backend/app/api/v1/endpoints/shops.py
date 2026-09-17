@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from postgrest.exceptions import APIError
 from supabase import Client
 
-from ...deps import get_authenticated_supabase, get_current_user
+from ...deps import get_authenticated_supabase, get_current_user, get_supabase
 from ....schemas import (
     MessageResponse,
     NearbyShopResponse,
@@ -20,7 +20,6 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
-
 @router.post(
     "",
     response_model=ShopResponse,
@@ -31,6 +30,7 @@ def create_shop(
     shop_in: ShopCreate,
     _current_user: Annotated[UserResponse, Depends(get_current_user)],
     supabase: Annotated[Client, Depends(get_authenticated_supabase)],
+    backend_supabase: Annotated[Client, Depends(get_supabase)],
 ) -> ShopResponse:
     """Create a new coffee shop record in the database."""
     payload = shop_in.model_dump(exclude_unset=True)
@@ -43,9 +43,9 @@ def create_shop(
                 detail="Failed to create coffee shop record.",
             )
         new_shop = result.data[0]
-        # Initialize curation status as PENDING_REVIEW
+        # Initialize curation status as PENDING_REVIEW via trusted backend client
         try:
-            curation_res = supabase.table("shop_curation").insert({
+            curation_res = backend_supabase.table("shop_curation").insert({
                 "shop_id": new_shop["id"],
                 "status": "PENDING_REVIEW",
                 "confidence": "LOW",

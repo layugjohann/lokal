@@ -7,6 +7,7 @@ from postgrest.exceptions import APIError
 from supabase import Client
 
 from ...schemas.curation import (
+    CurationConfidence,
     CurationEvaluationResponse,
     ShopCurationResponse,
     ShopEligibilityStatus,
@@ -129,29 +130,6 @@ class CurationService:
 
         now_iso = datetime.now(timezone.utc).isoformat()
 
-        # Check concurrency: ensure manual override was not applied while classification ran
-        if not force:
-            latest_check = (
-                supabase.table("shop_curation")
-                .select("is_manual_override, status, location_count")
-                .eq("shop_id", str(shop_id))
-                .execute()
-            )
-            if latest_check.data and latest_check.data[0].get("is_manual_override"):
-                logger.warning(
-                    f"Shop {shop_id} was manually overridden while classification ran. Preserving manual state."
-                )
-                return CurationEvaluationResponse(
-                    shop_id=str(shop_id),
-                    status=ShopEligibilityStatus(latest_check.data[0]["status"]),
-                    location_count=latest_check.data[0].get("location_count"),
-                    evidence_source="manual",
-                    confidence=CurationConfidence.HIGH,
-                    is_manual_override=True,
-                    evaluated_at=now_iso,
-                    message="Manual override applied during evaluation was preserved.",
-                )
-
         curation_payload = {
             "shop_id": str(shop_id),
             "status": decision.status.value,
@@ -164,9 +142,59 @@ class CurationService:
             "evaluated_at": now_iso,
         }
 
-        # 4. Persist updated curation state
+        # 4. Persist updated curation state with concurrency protection
         try:
-            supabase.table("shop_curation").upsert(curation_payload).execute()
+            if not force:
+                # Conditional update: only update if is_manual_override is currently FALSE.
+                # This guarantees that if a curator applies an override while classification
+                # was running, this automated update affects 0 rows and will not overwrite it.
+                update_res = (
+                    supabase.table("shop_curation")
+                    .update(curation_payload)
+                    .eq("shop_id", str(shop_id))
+                    .eq("is_manual_override", False)
+                    .execute()
+                )
+                if not update_res.data:
+                    # 0 rows updated: check if manual override was applied concurrently
+                    latest_res = (
+                        supabase.table("shop_curation")
+                        .select("*")
+                        .eq("shop_id", str(shop_id))
+                        .execute()
+                    )
+                    if latest_res.data and latest_res.data[0].get("is_manual_override"):
+                        latest_record = latest_res.data[0]
+                        logger.warning(
+                            f"Shop {shop_id} was manually overridden while evaluation was running. Preserving manual state."
+                        )
+                        return CurationEvaluationResponse(
+                            shop_id=str(shop_id),
+                            status=ShopEligibilityStatus(latest_record["status"]),
+                            location_count=latest_record.get("location_count"),
+                            evidence_source=latest_record.get("evidence_source") or "manual",
+                            confidence=CurationConfidence(latest_record.get("confidence", "HIGH")),
+                            is_manual_override=True,
+                            evaluated_at=latest_record.get("evaluated_at") or now_iso,
+                            message="Manual override applied during evaluation was preserved.",
+                        )
+                    # If row didn't exist initially, upsert it
+                    upsert_res = supabase.table("shop_curation").upsert(curation_payload).execute()
+                    if not upsert_res.data:
+                        raise HTTPException(
+                            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                            detail="Failed to save curation evaluation results.",
+                        )
+            else:
+                # force=True: Curator-authorized path replaces any active manual override
+                upsert_res = supabase.table("shop_curation").upsert(curation_payload).execute()
+                if not upsert_res.data:
+                    raise HTTPException(
+                        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                        detail="Failed to save forced curation evaluation results.",
+                    )
+        except HTTPException:
+            raise
         except Exception as exc:
             logger.error(f"Failed to update curation for shop {shop_id}: {exc}")
             raise HTTPException(

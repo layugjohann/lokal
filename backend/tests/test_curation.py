@@ -52,6 +52,7 @@ class MockQueryBuilder:
         self.all_inserted = []
         self.last_updated = None
         self.last_eq = None
+        self.eq_filters = []
         self.mock_execute = MagicMock()
         mock_resp = MagicMock()
         mock_resp.data = data
@@ -76,6 +77,7 @@ class MockQueryBuilder:
 
     def eq(self, col, val):
         self.last_eq = (col, val)
+        self.eq_filters.append((col, val))
         return self
 
     def execute(self):
@@ -324,6 +326,20 @@ class TestEligibilityClassifier(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(decision.confidence, CurationConfidence.LOW)
         self.assertEqual(decision.location_count, 0)
 
+    async def test_classifier_fails_closed_on_provider_malformed_continuation_token(self):
+        mock_provider = AsyncMock()
+        mock_provider.search_locations.side_effect = ExternalProviderError(
+            "Google Places API returned an invalid response."
+        )
+
+        classifier = EligibilityClassifier(provider=mock_provider)
+        decision = await classifier.classify("Independent Roasters")
+
+        self.assertEqual(decision.status, ShopEligibilityStatus.PENDING_REVIEW)
+        self.assertEqual(decision.confidence, CurationConfidence.LOW)
+        self.assertIsNone(decision.location_count)
+        self.assertIn("Evidence provider unavailable", decision.reason)
+
 
 class TestCurationEndpoints(unittest.TestCase):
     """Integration tests for Curation API endpoints and authorization."""
@@ -541,6 +557,73 @@ class TestCurationEndpoints(unittest.TestCase):
         self.assertTrue(data["is_manual_override"])
         self.assertIn("locked under manual curation override", data["message"])
 
+    @patch("app.services.curation.service.GooglePlacesEvidenceProvider.search_locations")
+    def test_evaluate_shop_preserves_concurrent_manual_override(self, mock_search):
+        # 1 candidate place found by provider
+        mock_search.return_value = ProviderSearchResult(
+            places=[
+                CandidatePlace(place_id="ChIJ_1", display_name="Local Cafe", formatted_address="10 Makati Ave, Makati"),
+            ],
+            next_page_token=None,
+            has_more=False,
+        )
+        shop_data = [{"id": self.shop_id, "name": "Local Cafe", "google_place_id": "ChIJ_1"}]
+        # Initial curation check before classification returns non-override state
+        initial_curation = [{
+            "shop_id": self.shop_id,
+            "status": "PENDING_REVIEW",
+            "is_manual_override": False,
+            "confidence": "LOW",
+        }]
+        # Manual override applied concurrently while search was running
+        concurrent_override = [{
+            "shop_id": self.shop_id,
+            "status": "EXCLUDED",
+            "location_count": 8,
+            "is_manual_override": True,
+            "confidence": "HIGH",
+            "evidence_source": "manual",
+            "curator_notes": "Manually excluded by curator",
+            "evaluated_at": "2026-09-18T00:00:00Z",
+        }]
+
+        call_idx = {"curation_select": 0}
+
+        def table_router(table_name):
+            builder = MockQueryBuilder()
+            if table_name == "shops":
+                builder._data = shop_data
+                builder.mock_execute.return_value.data = shop_data
+            elif table_name == "shop_curation":
+                def dynamic_execute():
+                    resp = MagicMock()
+                    if builder.last_updated is not None:
+                        # Conditional update: if is_manual_override=False is checked,
+                        # simulate that the row was updated to is_manual_override=True,
+                        # so the update matches 0 rows!
+                        resp.data = []
+                        return resp
+                    # Select query
+                    if call_idx["curation_select"] == 0:
+                        call_idx["curation_select"] += 1
+                        resp.data = initial_curation
+                    else:
+                        resp.data = concurrent_override
+                    return resp
+
+                builder.mock_execute = dynamic_execute
+            return builder
+
+        self.mock_supabase.table.side_effect = table_router
+
+        resp = self.client.post(f"/api/v1/shops/{self.shop_id}/curation/evaluate")
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertEqual(data["status"], "EXCLUDED")
+        self.assertTrue(data["is_manual_override"])
+        self.assertEqual(data["confidence"], "HIGH")
+        self.assertIn("Manual override applied during evaluation was preserved", data["message"])
+
     def test_evaluate_shop_not_found(self):
         builder = MockQueryBuilder(data=[])
         self.mock_supabase.table.return_value = builder
@@ -691,10 +774,50 @@ class TestGooglePlacesEvidenceProvider(unittest.IsolatedAsyncioTestCase):
             await provider.search_locations("Test Cafe")
         self.assertIn("HTTP 500", str(ctx.exception))
 
+    @patch.object(settings, "GOOGLE_PLACES_API_KEY", "")
     async def test_search_locations_missing_api_key(self):
         provider = GooglePlacesEvidenceProvider(api_key="")
         with self.assertRaises(ExternalProviderError) as ctx:
             await provider.search_locations("Test Cafe")
         self.assertIn("not configured", str(ctx.exception))
+
+    @patch("httpx.AsyncClient.post")
+    async def test_search_locations_malformed_next_page_token_non_string(self, mock_post):
+        invalid_tokens = [123, True, {"token": "abc"}, ["tok1", "tok2"]]
+        for invalid_token in invalid_tokens:
+            mock_resp = MagicMock()
+            mock_resp.status_code = 200
+            mock_resp.json.return_value = {
+                "places": [
+                    {"id": "ChIJ_1", "displayName": {"text": "Cafe"}, "formattedAddress": "Makati"}
+                ],
+                "nextPageToken": invalid_token,
+            }
+            mock_post.return_value = mock_resp
+
+            provider = GooglePlacesEvidenceProvider(api_key="test-key")
+            with self.assertRaises(ExternalProviderError) as ctx:
+                await provider.search_locations("Test Cafe")
+            self.assertIn("invalid response", str(ctx.exception))
+
+    @patch("httpx.AsyncClient.post")
+    async def test_search_locations_malformed_next_page_token_empty_string(self, mock_post):
+        empty_tokens = ["", "   "]
+        for empty_token in empty_tokens:
+            mock_resp = MagicMock()
+            mock_resp.status_code = 200
+            mock_resp.json.return_value = {
+                "places": [
+                    {"id": "ChIJ_1", "displayName": {"text": "Cafe"}, "formattedAddress": "Makati"}
+                ],
+                "nextPageToken": empty_token,
+            }
+            mock_post.return_value = mock_resp
+
+            provider = GooglePlacesEvidenceProvider(api_key="test-key")
+            with self.assertRaises(ExternalProviderError) as ctx:
+                await provider.search_locations("Test Cafe")
+            self.assertIn("invalid response", str(ctx.exception))
+
 
 

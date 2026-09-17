@@ -228,20 +228,9 @@ ALTER TABLE shop_curation_audit ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "Allow public read access on shop_curation" ON shop_curation
     FOR SELECT USING (true);
 
--- Authenticated users (and backend client) can insert and update shop curation records
-CREATE POLICY "Allow authenticated users to insert initial shop_curation" ON shop_curation
-    FOR INSERT TO authenticated WITH CHECK (true);
-
-CREATE POLICY "Allow authenticated users to update shop_curation" ON shop_curation
-    FOR UPDATE TO authenticated USING (true) WITH CHECK (true);
-
--- Service role has full access
+-- Service role full access for trusted backend operations
 CREATE POLICY "Allow service role full access on shop_curation" ON shop_curation
     TO service_role USING (true) WITH CHECK (true);
-
--- Authenticated callers can append audit logs during evaluation or overrides
-CREATE POLICY "Allow authenticated users to insert shop_curation_audit" ON shop_curation_audit
-    FOR INSERT TO authenticated WITH CHECK (true);
 
 -- Only curators/admins can inspect the curation audit trail directly
 CREATE POLICY "Allow curator read access on shop_curation_audit" ON shop_curation_audit
@@ -249,6 +238,6 @@ CREATE POLICY "Allow curator read access on shop_curation_audit" ON shop_curatio
         (auth.jwt() -> 'app_metadata' ->> 'role') IN ('curator', 'admin')
     );
 
+-- Service role full access on audit table for trusted backend operations
 CREATE POLICY "Allow service role full access on shop_curation_audit" ON shop_curation_audit
     TO service_role USING (true) WITH CHECK (true);
-
