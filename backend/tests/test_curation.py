@@ -1,0 +1,492 @@
+import os
+import sys
+import unittest
+from unittest.mock import AsyncMock, MagicMock, patch
+from uuid import uuid4
+
+# Ensure backend directory is in sys.path
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+
+from fastapi.testclient import TestClient
+from app.main import app
+from app.api.deps import get_authenticated_supabase, get_current_user, get_supabase
+from app.core.config import settings
+from app.schemas.auth import UserResponse
+from app.schemas.curation import (
+    CurationConfidence,
+    CurationOverrideRequest,
+    ShopEligibilityStatus,
+)
+from app.services.curation import (
+    BrandNormalizer,
+    CandidatePlace,
+    CurationService,
+    EligibilityClassifier,
+    ExternalProviderError,
+    GooglePlacesEvidenceProvider,
+    LocationDeduplicator,
+    ProviderSearchResult,
+)
+
+
+class DummyUser:
+    def __init__(self, user_id="11111111-2222-3333-4444-555555555555", email="curator@lokal.ph", role="user"):
+        self.id = user_id
+        self.email = email
+        self.created_at = "2026-08-28T12:00:00Z"
+        self.user_metadata = {"role": role}
+
+
+class MockQueryBuilder:
+    def __init__(self, data=None):
+        self._data = data
+        self.last_inserted = None
+        self.all_inserted = []
+        self.last_updated = None
+        self.last_eq = None
+        self.mock_execute = MagicMock()
+        mock_resp = MagicMock()
+        mock_resp.data = data
+        self.mock_execute.return_value = mock_resp
+
+    def insert(self, payload):
+        self.last_inserted = payload
+        self.all_inserted.append(payload)
+        return self
+
+    def upsert(self, payload):
+        self.last_inserted = payload
+        self.all_inserted.append(payload)
+        return self
+
+    def select(self, cols="*"):
+        return self
+
+    def update(self, payload):
+        self.last_updated = payload
+        return self
+
+    def eq(self, col, val):
+        self.last_eq = (col, val)
+        return self
+
+    def execute(self):
+        return self.mock_execute()
+
+
+class TestBrandNormalizer(unittest.TestCase):
+    """Unit tests for brand name normalization and distinctiveness checks."""
+
+    def test_extract_brand_strips_branch_delimiters(self):
+        cases = [
+            ("Yardstick Coffee - Legazpi Village", "Yardstick Coffee"),
+            ("Starbucks (SM Megamall)", "Starbucks"),
+            ("Blue Bottle Coffee @ Shibuya", "Blue Bottle Coffee"),
+            ("Toby's Estate, Makati", "Toby's Estate"),
+            ("Single Origin | BGC", "Single Origin"),
+        ]
+        for raw, expected in cases:
+            res = BrandNormalizer.extract_brand(raw)
+            self.assertEqual(res.normalized_brand, expected)
+            self.assertTrue(res.is_distinctive)
+
+    def test_extract_brand_detects_generic_names(self):
+        generics = [
+            "The Coffee Shop",
+            "Cafe",
+            "Espresso Bar",
+            "Corner Cafe",
+            "Daily Brew",
+            "Coffee House",
+        ]
+        for name in generics:
+            res = BrandNormalizer.extract_brand(name)
+            self.assertFalse(res.is_distinctive, f"Expected '{name}' to be classified as non-distinctive")
+
+    def test_candidate_matching(self):
+        brand = "Yardstick Coffee"
+        self.assertTrue(BrandNormalizer.is_candidate_match("Yardstick Coffee Legazpi", brand))
+        self.assertTrue(BrandNormalizer.is_candidate_match("Yardstick Coffee - Esteban", brand))
+        self.assertFalse(BrandNormalizer.is_candidate_match("Starbucks Reserve", brand))
+        self.assertFalse(BrandNormalizer.is_candidate_match("Local Cafe Near Yardstick", brand))
+
+
+class TestLocationDeduplicator(unittest.TestCase):
+    """Unit tests for Place ID and physical address deduplication."""
+
+    def test_deduplicate_by_place_id(self):
+        candidates = [
+            CandidatePlace(place_id="ChIJ_1", display_name="Cafe A", formatted_address="123 Main St, Makati"),
+            CandidatePlace(place_id="ChIJ_1", display_name="Cafe A Branch", formatted_address="123 Main St, Makati"),
+            CandidatePlace(place_id="ChIJ_2", display_name="Cafe B", formatted_address="456 Other St, Makati"),
+        ]
+        deduped = LocationDeduplicator.deduplicate(candidates)
+        self.assertEqual(len(deduped), 2)
+        self.assertEqual({d.place_id for d in deduped}, {"ChIJ_1", "ChIJ_2"})
+
+    def test_deduplicate_by_same_physical_address(self):
+        # Two different Place IDs at the exact same physical building / suite
+        candidates = [
+            CandidatePlace(
+                place_id="ChIJ_1",
+                display_name="Kape Roastery",
+                formatted_address="Unit 101, 106 Esteban St, Legazpi Village, Makati",
+            ),
+            CandidatePlace(
+                place_id="ChIJ_2",
+                display_name="Kape Cafe & Takeout",
+                formatted_address="Unit 102, 106 Esteban St, Legazpi Village, Makati",
+            ),
+            CandidatePlace(
+                place_id="ChIJ_3",
+                display_name="Kape Branch 2",
+                formatted_address="250 Salcedo St, Legazpi Village, Makati",
+            ),
+        ]
+        deduped = LocationDeduplicator.deduplicate(candidates)
+        # Esteban St addresses should collapse into 1 physical location
+        self.assertEqual(len(deduped), 2)
+        place_ids = {d.place_id for d in deduped}
+        self.assertIn("ChIJ_1", place_ids)
+        self.assertIn("ChIJ_3", place_ids)
+
+
+class TestEligibilityClassifier(unittest.IsolatedAsyncioTestCase):
+    """Unit tests for asymmetric fail-closed eligibility classifier."""
+
+    async def test_six_or_more_distinct_locations_classified_excluded(self):
+        # 6 qualifying distinct locations
+        places = [
+            CandidatePlace(place_id=f"ChIJ_{i}", display_name=f"BigChain Branch {i}", formatted_address=f"Street {i}, Makati")
+            for i in range(1, 7)
+        ]
+        mock_provider = AsyncMock()
+        mock_provider.search_locations.return_value = ProviderSearchResult(
+            places=places, next_page_token="tok_page2", has_more=True
+        )
+
+        classifier = EligibilityClassifier(provider=mock_provider)
+        decision = await classifier.classify("BigChain Coffee - Main")
+
+        self.assertEqual(decision.status, ShopEligibilityStatus.EXCLUDED)
+        self.assertEqual(decision.confidence, CurationConfidence.HIGH)
+        self.assertEqual(decision.location_count, 6)
+        self.assertTrue(decision.is_short_circuit)
+
+    async def test_duplicate_place_ids_do_not_inflate_location_count(self):
+        # 5 physical locations duplicated across 8 items
+        places = [
+            CandidatePlace(place_id="ChIJ_1", display_name="LocalCraft A", formatted_address="10 St, Makati"),
+            CandidatePlace(place_id="ChIJ_1", display_name="LocalCraft A", formatted_address="10 St, Makati"),
+            CandidatePlace(place_id="ChIJ_2", display_name="LocalCraft B", formatted_address="20 St, Makati"),
+            CandidatePlace(place_id="ChIJ_3", display_name="LocalCraft C", formatted_address="30 St, Makati"),
+            CandidatePlace(place_id="ChIJ_4", display_name="LocalCraft D", formatted_address="40 St, Makati"),
+            CandidatePlace(place_id="ChIJ_5", display_name="LocalCraft E", formatted_address="50 St, Makati"),
+            CandidatePlace(place_id="ChIJ_5", display_name="LocalCraft E duplicate", formatted_address="50 St, Makati"),
+        ]
+        mock_provider = AsyncMock()
+        mock_provider.search_locations.return_value = ProviderSearchResult(
+            places=places, next_page_token=None, has_more=False
+        )
+
+        classifier = EligibilityClassifier(provider=mock_provider)
+        decision = await classifier.classify("LocalCraft Coffee")
+
+        self.assertEqual(decision.status, ShopEligibilityStatus.APPROVED)
+        self.assertEqual(decision.confidence, CurationConfidence.HIGH)
+        self.assertEqual(decision.location_count, 5)
+
+    async def test_one_to_five_locations_terminal_classified_approved(self):
+        places = [
+            CandidatePlace(place_id="ChIJ_1", display_name="Yardstick Coffee", formatted_address="106 Esteban St, Makati, Metro Manila"),
+            CandidatePlace(place_id="ChIJ_2", display_name="Yardstick Coffee MoA", formatted_address="Mall of Asia, Pasay, Metro Manila"),
+        ]
+        mock_provider = AsyncMock()
+        mock_provider.search_locations.return_value = ProviderSearchResult(
+            places=places, next_page_token=None, has_more=False
+        )
+
+        classifier = EligibilityClassifier(provider=mock_provider)
+        decision = await classifier.classify("Yardstick Coffee")
+
+        self.assertEqual(decision.status, ShopEligibilityStatus.APPROVED)
+        self.assertEqual(decision.confidence, CurationConfidence.HIGH)
+        self.assertEqual(decision.location_count, 2)
+
+    async def test_one_to_five_locations_non_terminal_fails_closed_to_pending(self):
+        places = [
+            CandidatePlace(place_id="ChIJ_1", display_name="GrowingChain Coffee", formatted_address="10 St, Makati"),
+            CandidatePlace(place_id="ChIJ_2", display_name="GrowingChain Coffee B", formatted_address="20 St, Taguig"),
+        ]
+        mock_provider = AsyncMock()
+        # Non-terminal: has_more=True with next_page_token
+        mock_provider.search_locations.return_value = ProviderSearchResult(
+            places=places, next_page_token="tok_more_pages", has_more=True
+        )
+
+        classifier = EligibilityClassifier(provider=mock_provider)
+        decision = await classifier.classify("GrowingChain Coffee")
+
+        self.assertEqual(decision.status, ShopEligibilityStatus.PENDING_REVIEW)
+        self.assertEqual(decision.confidence, CurationConfidence.MEDIUM)
+        self.assertEqual(decision.location_count, 2)
+        self.assertIn("continuation token", decision.reason)
+
+    async def test_regional_sprawl_fails_closed_to_pending(self):
+        # 3 locations across 3 completely disparate island regions
+        places = [
+            CandidatePlace(place_id="ChIJ_1", display_name="SprawlCafe Manila", formatted_address="Makati, Metro Manila"),
+            CandidatePlace(place_id="ChIJ_2", display_name="SprawlCafe Cebu", formatted_address="Cebu City, Cebu"),
+            CandidatePlace(place_id="ChIJ_3", display_name="SprawlCafe Davao", formatted_address="Davao City, Davao"),
+        ]
+        mock_provider = AsyncMock()
+        mock_provider.search_locations.return_value = ProviderSearchResult(
+            places=places, next_page_token=None, has_more=False
+        )
+
+        classifier = EligibilityClassifier(provider=mock_provider)
+        decision = await classifier.classify("SprawlCafe")
+
+        self.assertEqual(decision.status, ShopEligibilityStatus.PENDING_REVIEW)
+        self.assertEqual(decision.confidence, CurationConfidence.MEDIUM)
+        self.assertIn("multiple distant metropolitan regions", decision.reason)
+
+    async def test_generic_name_fails_closed_to_pending_without_provider_call(self):
+        mock_provider = AsyncMock()
+        classifier = EligibilityClassifier(provider=mock_provider)
+
+        decision = await classifier.classify("The Coffee Shop - Ground Floor")
+
+        self.assertEqual(decision.status, ShopEligibilityStatus.PENDING_REVIEW)
+        self.assertEqual(decision.confidence, CurationConfidence.LOW)
+        self.assertIsNone(decision.location_count)
+        # External provider must not even be called for generic names
+        mock_provider.search_locations.assert_not_called()
+
+    async def test_provider_error_fails_closed_to_pending(self):
+        mock_provider = AsyncMock()
+        mock_provider.search_locations.side_effect = ExternalProviderError("Network timeout")
+
+        classifier = EligibilityClassifier(provider=mock_provider)
+        decision = await classifier.classify("Artisan Beans")
+
+        self.assertEqual(decision.status, ShopEligibilityStatus.PENDING_REVIEW)
+        self.assertEqual(decision.confidence, CurationConfidence.LOW)
+        self.assertIsNone(decision.location_count)
+        self.assertIn("unavailable", decision.reason)
+
+    async def test_zero_results_fails_closed_to_pending(self):
+        mock_provider = AsyncMock()
+        mock_provider.search_locations.return_value = ProviderSearchResult(
+            places=[], next_page_token=None, has_more=False
+        )
+
+        classifier = EligibilityClassifier(provider=mock_provider)
+        decision = await classifier.classify("Hidden Gem Coffee")
+
+        self.assertEqual(decision.status, ShopEligibilityStatus.PENDING_REVIEW)
+        self.assertEqual(decision.confidence, CurationConfidence.LOW)
+        self.assertEqual(decision.location_count, 0)
+
+
+class TestCurationEndpoints(unittest.TestCase):
+    """Integration tests for Curation API endpoints and authorization."""
+
+    def setUp(self):
+        self.mock_supabase = MagicMock()
+        self.dummy_user = DummyUser(role="user")
+        self.curator_user = DummyUser(user_id="22222222-3333-4444-5555-666666666666", email="curator@lokal.ph", role="curator")
+
+        app.dependency_overrides[get_supabase] = lambda: self.mock_supabase
+        app.dependency_overrides[get_authenticated_supabase] = lambda: self.mock_supabase
+        app.dependency_overrides[get_current_user] = lambda: UserResponse(
+            id=self.dummy_user.id,
+            email=self.dummy_user.email,
+            created_at=self.dummy_user.created_at,
+            user_metadata=self.dummy_user.user_metadata,
+        )
+
+        # Set curator email in settings for testing
+        settings.CURATOR_EMAILS = ["curator@lokal.ph"]
+        self.client = TestClient(app)
+        self.shop_id = str(uuid4())
+
+    def tearDown(self):
+        app.dependency_overrides.clear()
+
+    def test_get_curation_success(self):
+        record = {
+            "shop_id": self.shop_id,
+            "status": "APPROVED",
+            "location_count": 2,
+            "evidence_source": "google_places_text_search",
+            "confidence": "HIGH",
+            "is_manual_override": False,
+            "curator_id": None,
+            "curator_notes": "Verified 2 locations",
+            "evaluated_at": "2026-09-18T00:00:00Z",
+            "created_at": "2026-09-18T00:00:00Z",
+            "updated_at": "2026-09-18T00:00:00Z",
+        }
+        builder = MockQueryBuilder(data=[record])
+        self.mock_supabase.table.return_value = builder
+
+        resp = self.client.get(f"/api/v1/shops/{self.shop_id}/curation")
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertEqual(data["status"], "APPROVED")
+        self.assertEqual(data["location_count"], 2)
+
+    def test_override_forbidden_for_regular_user(self):
+        # Current user is a regular user (role="user", email="user@lokal.ph")
+        regular_user = DummyUser(email="regular@example.com", role="user")
+        app.dependency_overrides[get_current_user] = lambda: UserResponse(
+            id=regular_user.id,
+            email=regular_user.email,
+            created_at=regular_user.created_at,
+            user_metadata=regular_user.user_metadata,
+        )
+
+        payload = {"status": "APPROVED", "reason": "Curator override"}
+        resp = self.client.post(f"/api/v1/shops/{self.shop_id}/curation/override", json=payload)
+        self.assertEqual(resp.status_code, 403)
+        self.assertIn("Insufficient permissions", resp.json()["detail"])
+
+    def test_override_allowed_for_curator(self):
+        # Override current user with curator
+        app.dependency_overrides[get_current_user] = lambda: UserResponse(
+            id=self.curator_user.id,
+            email=self.curator_user.email,
+            created_at=self.curator_user.created_at,
+            user_metadata=self.curator_user.user_metadata,
+        )
+
+        shop_data = [{"id": self.shop_id, "name": "Curated Cafe"}]
+        curation_data = [{
+            "shop_id": self.shop_id,
+            "status": "APPROVED",
+            "location_count": 1,
+            "confidence": "HIGH",
+            "is_manual_override": True,
+            "curator_id": self.curator_user.id,
+            "curator_notes": "Personally verified solo branch",
+            "evaluated_at": "2026-09-18T00:00:00Z",
+            "created_at": "2026-09-18T00:00:00Z",
+            "updated_at": "2026-09-18T00:00:00Z",
+        }]
+
+        builder = MockQueryBuilder(data=curation_data)
+        # Return shop_data on first table call, curation_data on subsequent
+        self.mock_supabase.table.return_value = builder
+
+        payload = {"status": "APPROVED", "reason": "Personally verified solo branch"}
+        resp = self.client.post(f"/api/v1/shops/{self.shop_id}/curation/override", json=payload)
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertEqual(data["status"], "APPROVED")
+        self.assertTrue(data["is_manual_override"])
+        self.assertEqual(data["curator_notes"], "Personally verified solo branch")
+
+    def test_override_validation_rejects_pending_review(self):
+        app.dependency_overrides[get_current_user] = lambda: UserResponse(
+            id=self.curator_user.id,
+            email=self.curator_user.email,
+            created_at=self.curator_user.created_at,
+            user_metadata=self.curator_user.user_metadata,
+        )
+        payload = {"status": "PENDING_REVIEW", "reason": "Resetting"}
+        resp = self.client.post(f"/api/v1/shops/{self.shop_id}/curation/override", json=payload)
+        self.assertEqual(resp.status_code, 422)
+
+    def test_override_validation_rejects_empty_reason(self):
+        app.dependency_overrides[get_current_user] = lambda: UserResponse(
+            id=self.curator_user.id,
+            email=self.curator_user.email,
+            created_at=self.curator_user.created_at,
+            user_metadata=self.curator_user.user_metadata,
+        )
+        payload = {"status": "APPROVED", "reason": "   "}
+        resp = self.client.post(f"/api/v1/shops/{self.shop_id}/curation/override", json=payload)
+        self.assertEqual(resp.status_code, 422)
+
+    @patch("app.services.curation.service.GooglePlacesEvidenceProvider.search_locations")
+    def test_evaluate_shop_success_approved(self, mock_search):
+        mock_search.return_value = ProviderSearchResult(
+            places=[
+                CandidatePlace(place_id="ChIJ_1", display_name="Single Batch Roasters", formatted_address="10 Makati Ave, Makati"),
+            ],
+            next_page_token=None,
+            has_more=False,
+        )
+        shop_data = [{"id": self.shop_id, "name": "Single Batch Roasters", "google_place_id": "ChIJ_1"}]
+        builder = MockQueryBuilder(data=shop_data)
+        self.mock_supabase.table.return_value = builder
+
+        resp = self.client.post(f"/api/v1/shops/{self.shop_id}/curation/evaluate")
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertEqual(data["status"], "APPROVED")
+        self.assertEqual(data["location_count"], 1)
+        self.assertEqual(data["confidence"], "HIGH")
+
+    @patch("app.services.curation.service.GooglePlacesEvidenceProvider.search_locations")
+    def test_evaluate_growing_chain_transitions_approved_to_excluded(self, mock_search):
+        # 6 locations returned for a brand previously approved
+        places = [
+            CandidatePlace(place_id=f"ChIJ_{i}", display_name=f"RapidGrow Coffee Branch {i}", formatted_address=f"St {i}, Makati")
+            for i in range(1, 7)
+        ]
+        mock_search.return_value = ProviderSearchResult(
+            places=places, next_page_token=None, has_more=False
+        )
+        shop_data = [{"id": self.shop_id, "name": "RapidGrow Coffee"}]
+        builder = MockQueryBuilder(data=shop_data)
+        self.mock_supabase.table.return_value = builder
+
+        resp = self.client.post(f"/api/v1/shops/{self.shop_id}/curation/evaluate")
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertEqual(data["status"], "EXCLUDED")
+        self.assertEqual(data["location_count"], 6)
+        self.assertEqual(data["confidence"], "HIGH")
+
+    def test_evaluate_shop_locked_when_manual_override_active(self):
+        shop_data = [{"id": self.shop_id, "name": "Protected Cafe"}]
+        curation_data = [{
+            "shop_id": self.shop_id,
+            "status": "APPROVED",
+            "location_count": 1,
+            "is_manual_override": True,
+            "evidence_source": "manual",
+            "confidence": "HIGH",
+            "evaluated_at": "2026-09-01T00:00:00Z",
+        }]
+
+        # Return shop on first call, curation on second
+        call_count = [0]
+        def table_router(table_name):
+            builder = MockQueryBuilder()
+            if table_name == "shops":
+                builder._data = shop_data
+                builder.mock_execute.return_value.data = shop_data
+            elif table_name == "shop_curation":
+                builder._data = curation_data
+                builder.mock_execute.return_value.data = curation_data
+            return builder
+
+        self.mock_supabase.table.side_effect = table_router
+
+        resp = self.client.post(f"/api/v1/shops/{self.shop_id}/curation/evaluate")
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertEqual(data["status"], "APPROVED")
+        self.assertTrue(data["is_manual_override"])
+        self.assertIn("locked under manual curation override", data["message"])
+
+    def test_evaluate_shop_not_found(self):
+        builder = MockQueryBuilder(data=[])
+        self.mock_supabase.table.return_value = builder
+
+        resp = self.client.post(f"/api/v1/shops/{self.shop_id}/curation/evaluate")
+        self.assertEqual(resp.status_code, 404)
+

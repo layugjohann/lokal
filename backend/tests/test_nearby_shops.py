@@ -375,6 +375,37 @@ class TestNearbyShopEndpoints(unittest.TestCase):
         self.assertEqual(single_response.status_code, 200)
         self.assertEqual(single_response.json()["id"], target_id)
 
+    def test_nearby_search_eligibility_filter_omits_non_approved_shops(self):
+        """Verify nearby discovery reflects approved-only shops returned by RPC."""
+        # When RPC applies 'WHERE sc.status = APPROVED', non-approved shops are omitted
+        approved_shop = dict(self.sample_nearby_shops[0], name="Approved Independent Coffee")
+        mock_execute = MagicMock()
+        mock_execute.return_value.data = [approved_shop]
+        self.mock_supabase.rpc.return_value.execute = mock_execute
+
+        response = self.client.get(
+            "/api/v1/shops/nearby?latitude=14.5995&longitude=120.9842",
+            headers=self.auth_headers,
+        )
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertEqual(len(data), 1)
+        self.assertEqual(data[0]["name"], "Approved Independent Coffee")
+        self.assertEqual(data[0]["distance_meters"], 120.5)
+
+    def test_nearby_search_empty_when_no_approved_shops(self):
+        """When all nearby candidates are EXCLUDED or PENDING_REVIEW, RPC returns empty list."""
+        mock_execute = MagicMock()
+        mock_execute.return_value.data = []
+        self.mock_supabase.rpc.return_value.execute = mock_execute
+
+        response = self.client.get(
+            "/api/v1/shops/nearby?latitude=14.5995&longitude=120.9842",
+            headers=self.auth_headers,
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), [])
+
 
 class TestGeodesicAndBoundingBoxMath(unittest.TestCase):
     """Unit tests verifying the geodesic haversine formula and bounding box calculation."""

@@ -5,6 +5,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from supabase import Client
 from supabase_auth.errors import AuthApiError, AuthError
 
+from ..core.config import settings
 from ..core.supabase import create_scoped_supabase_client, get_supabase_client
 from ..schemas.auth import UserResponse
 
@@ -130,4 +131,29 @@ def get_authenticated_supabase(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=str(exc),
         )
+
+
+def require_curator(
+    current_user: Annotated[UserResponse, Depends(get_current_user)],
+) -> UserResponse:
+    """Verify that the authenticated user possesses curator authorization.
+
+    Checks:
+    1. User's email is in settings.CURATOR_EMAILS, OR
+    2. User's metadata contains role 'curator' or 'admin'.
+
+    Raises:
+        HTTPException: 403 Forbidden if user is not authorized.
+    """
+    user_email = (current_user.email or "").strip().lower()
+    is_email_curator = bool(user_email and user_email in settings.CURATOR_EMAILS)
+    user_role = (current_user.user_metadata or {}).get("role", "").strip().lower()
+    is_role_curator = user_role in ("curator", "admin")
+
+    if not (is_email_curator or is_role_curator):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Insufficient permissions to perform manual curation.",
+        )
+    return current_user
 

@@ -42,7 +42,18 @@ def create_shop(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="Failed to create coffee shop record.",
             )
-        return result.data[0]
+        new_shop = result.data[0]
+        # Initialize curation status as PENDING_REVIEW (non-blocking)
+        try:
+            supabase.table("shop_curation").insert({
+                "shop_id": new_shop["id"],
+                "status": "PENDING_REVIEW",
+                "confidence": "LOW",
+                "is_manual_override": False,
+            }).execute()
+        except Exception as exc:
+            logger.warning(f"Failed to auto-initialize shop_curation for {new_shop.get('id')}: {exc}")
+        return new_shop
     except APIError as exc:
         logger.warning(f"Database error creating coffee shop: {exc.message}")
         if exc.code == "23505":
