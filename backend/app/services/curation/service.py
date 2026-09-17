@@ -33,11 +33,20 @@ class CurationService:
         }
         try:
             res = supabase.table("shop_curation").upsert(payload).execute()
-            return res.data[0] if res.data else payload
+            if not res.data:
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail="Failed to initialize shop curation record.",
+                )
+            return res.data[0]
+        except HTTPException:
+            raise
         except Exception as exc:
             logger.error(f"Failed to initialize curation for shop {shop_id}: {exc}")
-            # Non-blocking for shop creation; return fallback
-            return payload
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="A database error occurred while initializing shop curation.",
+            ) from exc
 
     def get_curation(self, shop_id: UUID, supabase: Client) -> ShopCurationResponse:
         """Retrieve the current curation and eligibility state for a coffee shop."""
@@ -119,12 +128,38 @@ class CurationService:
         )
 
         now_iso = datetime.now(timezone.utc).isoformat()
+
+        # Check concurrency: ensure manual override was not applied while classification ran
+        if not force:
+            latest_check = (
+                supabase.table("shop_curation")
+                .select("is_manual_override, status, location_count")
+                .eq("shop_id", str(shop_id))
+                .execute()
+            )
+            if latest_check.data and latest_check.data[0].get("is_manual_override"):
+                logger.warning(
+                    f"Shop {shop_id} was manually overridden while classification ran. Preserving manual state."
+                )
+                return CurationEvaluationResponse(
+                    shop_id=str(shop_id),
+                    status=ShopEligibilityStatus(latest_check.data[0]["status"]),
+                    location_count=latest_check.data[0].get("location_count"),
+                    evidence_source="manual",
+                    confidence=CurationConfidence.HIGH,
+                    is_manual_override=True,
+                    evaluated_at=now_iso,
+                    message="Manual override applied during evaluation was preserved.",
+                )
+
         curation_payload = {
             "shop_id": str(shop_id),
             "status": decision.status.value,
             "location_count": decision.location_count,
             "evidence_source": decision.evidence_source,
             "confidence": decision.confidence.value,
+            "is_manual_override": False,
+            "curator_id": None,
             "curator_notes": decision.reason,
             "evaluated_at": now_iso,
         }
@@ -137,7 +172,7 @@ class CurationService:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="A database error occurred while saving evaluation results.",
-            )
+            ) from exc
 
         # 5. Log audit record
         audit_payload = {
@@ -153,7 +188,11 @@ class CurationService:
         try:
             supabase.table("shop_curation_audit").insert(audit_payload).execute()
         except Exception as exc:
-            logger.warning(f"Failed to log curation audit for shop {shop_id}: {exc}")
+            logger.error(f"Failed to log curation audit for shop {shop_id}: {exc}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="A database error occurred while recording curation audit trail.",
+            ) from exc
 
         return CurationEvaluationResponse(
             shop_id=str(shop_id),
@@ -225,6 +264,10 @@ class CurationService:
         try:
             supabase.table("shop_curation_audit").insert(audit_payload).execute()
         except Exception as exc:
-            logger.warning(f"Failed to write curation audit log for shop {shop_id}: {exc}")
+            logger.error(f"Failed to write curation audit log for shop {shop_id}: {exc}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="A database error occurred while recording curation audit trail.",
+            ) from exc
 
         return ShopCurationResponse.model_validate(updated_record)

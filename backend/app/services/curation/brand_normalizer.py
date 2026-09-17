@@ -60,6 +60,17 @@ class BrandNormalizer:
     """Extracts base brand name from raw shop names and checks distinctiveness."""
 
     @classmethod
+    def tokenize(cls, text: str) -> list[str]:
+        """Unicode-aware tokenization using casefolded alphanumeric word segments."""
+        if not text:
+            return []
+        return [
+            t.casefold()
+            for t in re.findall(r"[^\W_]+", text, flags=re.UNICODE)
+            if len(t) > 0
+        ]
+
+    @classmethod
     def extract_brand(cls, raw_name: str) -> BrandExtractionResult:
         """Extract the core brand name from a raw shop name.
 
@@ -88,12 +99,8 @@ class BrandNormalizer:
         if not brand_candidate:
             brand_candidate = cleaned
 
-        # Tokenize and evaluate distinctiveness
-        tokens = [
-            t.lower()
-            for t in re.findall(r"[A-Za-z0-9]+", brand_candidate)
-            if len(t) > 0
-        ]
+        # Tokenize and evaluate distinctiveness using Unicode-aware tokenizer
+        tokens = cls.tokenize(brand_candidate)
 
         distinctive_tokens = [
             t for t in tokens if t not in GENERIC_COFFEE_TOKENS and len(t) > 2
@@ -118,23 +125,15 @@ class BrandNormalizer:
         if not candidate_display_name or not brand_name:
             return False
 
-        norm_candidate = candidate_display_name.lower().strip()
-        norm_brand = brand_name.lower().strip()
+        norm_candidate = candidate_display_name.strip().casefold()
+        norm_brand = brand_name.strip().casefold()
 
         if norm_candidate == norm_brand:
             return True
 
-        # Extract tokens
-        brand_tokens = [
-            t.lower()
-            for t in re.findall(r"[A-Za-z0-9]+", norm_brand)
-            if len(t) > 0
-        ]
-        candidate_tokens = set(
-            t.lower()
-            for t in re.findall(r"[A-Za-z0-9]+", norm_candidate)
-            if len(t) > 0
-        )
+        # Extract tokens using Unicode-aware tokenizer
+        brand_tokens = cls.tokenize(norm_brand)
+        candidate_tokens = set(cls.tokenize(norm_candidate))
 
         if not brand_tokens:
             return False

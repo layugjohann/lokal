@@ -42,11 +42,13 @@ def get_shop_curation(
 )
 async def evaluate_shop_curation(
     shop_id: UUID,
-    _current_user: Annotated[UserResponse, Depends(get_current_user)],
+    current_user: Annotated[UserResponse, Depends(get_current_user)],
     supabase: Annotated[Client, Depends(get_authenticated_supabase)],
     force: bool = Query(default=False, description="Re-evaluate even if manual override is active"),
 ) -> CurationEvaluationResponse:
     """Run automated location-count evidence collection and update eligibility status."""
+    if force:
+        require_curator(current_user)
     return await curation_service.evaluate_shop(shop_id=shop_id, supabase=supabase, force=force)
 
 

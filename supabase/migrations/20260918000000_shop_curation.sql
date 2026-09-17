@@ -219,3 +219,36 @@ BEGIN
     OFFSET result_offset;
 END;
 $$;
+
+-- 5. Row Level Security (RLS)
+ALTER TABLE shop_curation ENABLE ROW LEVEL SECURITY;
+ALTER TABLE shop_curation_audit ENABLE ROW LEVEL SECURITY;
+
+-- Public can view shop curation status (e.g., in client apps)
+CREATE POLICY "Allow public read access on shop_curation" ON shop_curation
+    FOR SELECT USING (true);
+
+-- Authenticated users (and backend client) can insert and update shop curation records
+CREATE POLICY "Allow authenticated users to insert initial shop_curation" ON shop_curation
+    FOR INSERT TO authenticated WITH CHECK (true);
+
+CREATE POLICY "Allow authenticated users to update shop_curation" ON shop_curation
+    FOR UPDATE TO authenticated USING (true) WITH CHECK (true);
+
+-- Service role has full access
+CREATE POLICY "Allow service role full access on shop_curation" ON shop_curation
+    TO service_role USING (true) WITH CHECK (true);
+
+-- Authenticated callers can append audit logs during evaluation or overrides
+CREATE POLICY "Allow authenticated users to insert shop_curation_audit" ON shop_curation_audit
+    FOR INSERT TO authenticated WITH CHECK (true);
+
+-- Only curators/admins can inspect the curation audit trail directly
+CREATE POLICY "Allow curator read access on shop_curation_audit" ON shop_curation_audit
+    FOR SELECT TO authenticated USING (
+        (auth.jwt() -> 'app_metadata' ->> 'role') IN ('curator', 'admin')
+    );
+
+CREATE POLICY "Allow service role full access on shop_curation_audit" ON shop_curation_audit
+    TO service_role USING (true) WITH CHECK (true);
+

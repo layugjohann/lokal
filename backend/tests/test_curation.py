@@ -30,11 +30,19 @@ from app.services.curation import (
 
 
 class DummyUser:
-    def __init__(self, user_id="11111111-2222-3333-4444-555555555555", email="curator@lokal.ph", role="user"):
+    def __init__(
+        self,
+        user_id="11111111-2222-3333-4444-555555555555",
+        email="curator@lokal.ph",
+        role="user",
+        app_role=None,
+    ):
         self.id = user_id
         self.email = email
         self.created_at = "2026-08-28T12:00:00Z"
         self.user_metadata = {"role": role}
+        self.app_metadata = {"role": app_role if app_role is not None else role}
+
 
 
 class MockQueryBuilder:
@@ -103,6 +111,17 @@ class TestBrandNormalizer(unittest.TestCase):
             res = BrandNormalizer.extract_brand(name)
             self.assertFalse(res.is_distinctive, f"Expected '{name}' to be classified as non-distinctive")
 
+    def test_extract_brand_detects_accented_generic_names(self):
+        accented_generics = [
+            "Café",
+            "Le Café",
+            "Café Bar",
+            "Espresso Café",
+        ]
+        for name in accented_generics:
+            res = BrandNormalizer.extract_brand(name)
+            self.assertFalse(res.is_distinctive, f"Expected '{name}' to be classified as non-distinctive")
+
     def test_candidate_matching(self):
         brand = "Yardstick Coffee"
         self.assertTrue(BrandNormalizer.is_candidate_match("Yardstick Coffee Legazpi", brand))
@@ -149,6 +168,23 @@ class TestLocationDeduplicator(unittest.TestCase):
         place_ids = {d.place_id for d in deduped}
         self.assertIn("ChIJ_1", place_ids)
         self.assertIn("ChIJ_3", place_ids)
+
+    def test_deduplicate_preserves_street_numbers(self):
+        candidates = [
+            CandidatePlace(
+                place_id="ChIJ_1",
+                display_name="Cafe 1000",
+                formatted_address="1000 Main St, Makati, 1229 Metro Manila",
+            ),
+            CandidatePlace(
+                place_id="ChIJ_2",
+                display_name="Cafe 2000",
+                formatted_address="2000 Main St, Makati, 1229 Metro Manila",
+            ),
+        ]
+        deduped = LocationDeduplicator.deduplicate(candidates)
+        self.assertEqual(len(deduped), 2)
+
 
 
 class TestEligibilityClassifier(unittest.IsolatedAsyncioTestCase):
@@ -304,6 +340,7 @@ class TestCurationEndpoints(unittest.TestCase):
             email=self.dummy_user.email,
             created_at=self.dummy_user.created_at,
             user_metadata=self.dummy_user.user_metadata,
+            app_metadata=self.dummy_user.app_metadata,
         )
 
         # Set curator email in settings for testing
@@ -345,9 +382,29 @@ class TestCurationEndpoints(unittest.TestCase):
             email=regular_user.email,
             created_at=regular_user.created_at,
             user_metadata=regular_user.user_metadata,
+            app_metadata=regular_user.app_metadata,
         )
 
         payload = {"status": "APPROVED", "reason": "Curator override"}
+        resp = self.client.post(f"/api/v1/shops/{self.shop_id}/curation/override", json=payload)
+        self.assertEqual(resp.status_code, 403)
+        self.assertIn("Insufficient permissions", resp.json()["detail"])
+
+    def test_override_forbidden_when_role_only_in_user_metadata(self):
+        # Prevent privilege escalation via client-editable user_metadata (CWE-863)
+        escalation_user = DummyUser(
+            email="attacker@example.com",
+            role="curator",
+            app_role="user",
+        )
+        app.dependency_overrides[get_current_user] = lambda: UserResponse(
+            id=escalation_user.id,
+            email=escalation_user.email,
+            created_at=escalation_user.created_at,
+            user_metadata=escalation_user.user_metadata,
+            app_metadata=escalation_user.app_metadata,
+        )
+        payload = {"status": "APPROVED", "reason": "Self grant"}
         resp = self.client.post(f"/api/v1/shops/{self.shop_id}/curation/override", json=payload)
         self.assertEqual(resp.status_code, 403)
         self.assertIn("Insufficient permissions", resp.json()["detail"])
@@ -359,6 +416,7 @@ class TestCurationEndpoints(unittest.TestCase):
             email=self.curator_user.email,
             created_at=self.curator_user.created_at,
             user_metadata=self.curator_user.user_metadata,
+            app_metadata=self.curator_user.app_metadata,
         )
 
         shop_data = [{"id": self.shop_id, "name": "Curated Cafe"}]
@@ -489,4 +547,154 @@ class TestCurationEndpoints(unittest.TestCase):
 
         resp = self.client.post(f"/api/v1/shops/{self.shop_id}/curation/evaluate")
         self.assertEqual(resp.status_code, 404)
+
+    def test_evaluate_force_forbidden_for_regular_user(self):
+        # Regular user cannot use force=True to bypass manual override locks (CWE-862)
+        regular_user = DummyUser(email="regular@example.com", role="user", app_role="user")
+        app.dependency_overrides[get_current_user] = lambda: UserResponse(
+            id=regular_user.id,
+            email=regular_user.email,
+            created_at=regular_user.created_at,
+            user_metadata=regular_user.user_metadata,
+            app_metadata=regular_user.app_metadata,
+        )
+        resp = self.client.post(f"/api/v1/shops/{self.shop_id}/curation/evaluate?force=true")
+        self.assertEqual(resp.status_code, 403)
+        self.assertIn("Insufficient permissions", resp.json()["detail"])
+
+    @patch("app.services.curation.service.GooglePlacesEvidenceProvider.search_locations")
+    def test_evaluate_force_allowed_for_curator(self, mock_search):
+        mock_search.return_value = ProviderSearchResult(
+            places=[CandidatePlace(place_id="ChIJ_1", display_name="Cafe", formatted_address="Makati")],
+            next_page_token=None,
+            has_more=False,
+        )
+        app.dependency_overrides[get_current_user] = lambda: UserResponse(
+            id=self.curator_user.id,
+            email=self.curator_user.email,
+            created_at=self.curator_user.created_at,
+            user_metadata=self.curator_user.user_metadata,
+            app_metadata=self.curator_user.app_metadata,
+        )
+        shop_data = [{"id": self.shop_id, "name": "Cafe"}]
+        builder = MockQueryBuilder(data=shop_data)
+        self.mock_supabase.table.return_value = builder
+
+        resp = self.client.post(f"/api/v1/shops/{self.shop_id}/curation/evaluate?force=true")
+        self.assertEqual(resp.status_code, 200)
+
+    def test_override_audit_failure_raises_500(self):
+        # Audit logging failure must propagate 500 error instead of silently swallowing
+        app.dependency_overrides[get_current_user] = lambda: UserResponse(
+            id=self.curator_user.id,
+            email=self.curator_user.email,
+            created_at=self.curator_user.created_at,
+            user_metadata=self.curator_user.user_metadata,
+            app_metadata=self.curator_user.app_metadata,
+        )
+        shop_data = [{"id": self.shop_id, "name": "Curated Cafe"}]
+        curation_data = [{
+            "shop_id": self.shop_id,
+            "status": "APPROVED",
+            "location_count": 1,
+            "confidence": "HIGH",
+            "is_manual_override": True,
+            "curator_id": self.curator_user.id,
+            "curator_notes": "Verified",
+            "evaluated_at": "2026-09-18T00:00:00Z",
+            "created_at": "2026-09-18T00:00:00Z",
+            "updated_at": "2026-09-18T00:00:00Z",
+        }]
+
+        def table_router(table_name):
+            builder = MockQueryBuilder()
+            if table_name == "shops":
+                builder._data = shop_data
+                builder.mock_execute.return_value.data = shop_data
+            elif table_name == "shop_curation":
+                builder._data = curation_data
+                builder.mock_execute.return_value.data = curation_data
+            elif table_name == "shop_curation_audit":
+                builder.mock_execute.side_effect = Exception("Audit DB disk error")
+            return builder
+
+        self.mock_supabase.table.side_effect = table_router
+
+        payload = {"status": "APPROVED", "reason": "Curator override"}
+        resp = self.client.post(f"/api/v1/shops/{self.shop_id}/curation/override", json=payload)
+        self.assertEqual(resp.status_code, 500)
+        self.assertIn("recording curation audit trail", resp.json()["detail"])
+
+
+class TestGooglePlacesEvidenceProvider(unittest.IsolatedAsyncioTestCase):
+    """Unit tests for Google Places evidence provider network handling and validation."""
+
+    @patch("httpx.AsyncClient.post")
+    async def test_search_locations_success(self, mock_post):
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {
+            "places": [
+                {
+                    "id": "ChIJ_test1",
+                    "displayName": {"text": "Test Cafe"},
+                    "formattedAddress": "123 Street, Makati",
+                }
+            ],
+            "nextPageToken": "token123",
+        }
+        mock_post.return_value = mock_resp
+
+        provider = GooglePlacesEvidenceProvider(api_key="test-key")
+        result = await provider.search_locations("Test Cafe")
+
+        self.assertEqual(len(result.places), 1)
+        self.assertEqual(result.places[0].place_id, "ChIJ_test1")
+        self.assertEqual(result.places[0].display_name, "Test Cafe")
+        self.assertEqual(result.places[0].formatted_address, "123 Street, Makati")
+        self.assertEqual(result.next_page_token, "token123")
+        self.assertTrue(result.has_more)
+
+    @patch("httpx.AsyncClient.post")
+    async def test_search_locations_malformed_json_non_dict(self, mock_post):
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = ["not", "a", "dict"]
+        mock_post.return_value = mock_resp
+
+        provider = GooglePlacesEvidenceProvider(api_key="test-key")
+        with self.assertRaises(ExternalProviderError) as ctx:
+            await provider.search_locations("Test Cafe")
+        self.assertIn("invalid response", str(ctx.exception))
+
+    @patch("httpx.AsyncClient.post")
+    async def test_search_locations_malformed_places_not_list(self, mock_post):
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {"places": "invalid"}
+        mock_post.return_value = mock_resp
+
+        provider = GooglePlacesEvidenceProvider(api_key="test-key")
+        with self.assertRaises(ExternalProviderError) as ctx:
+            await provider.search_locations("Test Cafe")
+        self.assertIn("invalid response", str(ctx.exception))
+
+    @patch("httpx.AsyncClient.post")
+    async def test_search_locations_http_error(self, mock_post):
+        mock_resp = MagicMock()
+        mock_resp.status_code = 500
+        mock_resp.text = "Internal Server Error"
+        mock_post.return_value = mock_resp
+
+        provider = GooglePlacesEvidenceProvider(api_key="test-key")
+        with self.assertRaises(ExternalProviderError) as ctx:
+            await provider.search_locations("Test Cafe")
+        self.assertIn("HTTP 500", str(ctx.exception))
+
+    async def test_search_locations_missing_api_key(self):
+        provider = GooglePlacesEvidenceProvider(api_key="")
+        with self.assertRaises(ExternalProviderError) as ctx:
+            await provider.search_locations("Test Cafe")
+        self.assertIn("not configured", str(ctx.exception))
+
 

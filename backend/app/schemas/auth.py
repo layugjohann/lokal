@@ -38,6 +38,7 @@ class UserResponse(BaseModel):
     email: Optional[str] = Field(None, description="User email address")
     created_at: Optional[Union[datetime, str]] = Field(None, description="Account creation timestamp")
     user_metadata: Optional[dict[str, Any]] = Field(default_factory=dict, description="User metadata dictionary")
+    app_metadata: Optional[dict[str, Any]] = Field(default_factory=dict, description="Server-controlled application metadata")
 
 
 class SessionResponse(BaseModel):

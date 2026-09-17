@@ -46,9 +46,13 @@ class LocationDeduplicator:
             flags=re.IGNORECASE,
         )
 
-        # Remove postal codes and common country names for cleaner street matching
-        cleaned = re.sub(r"\b\d{4,6}\b", "", cleaned)
-        cleaned = re.sub(r"\b(philippines|ph|usa|us)\b", "", cleaned)
+        # Remove country names
+        cleaned = re.sub(r"\b(?:philippines|ph|usa|us)\b", "", cleaned, flags=re.IGNORECASE)
+
+        # Remove postal codes only when preceded by comma/city or at the end of an address segment
+        # Preserves numeric street numbers (e.g. "1000 Main St", "106 Esteban")
+        cleaned = re.sub(r",\s*\d{4,6}\b", "", cleaned)
+        cleaned = re.sub(r"\s+\d{4,6}(?:\s*|\s*,\s*)", " ", cleaned)
 
         # Clean punctuation and extra whitespace
         cleaned = re.sub(r"[,.\-_/]+", " ", cleaned)

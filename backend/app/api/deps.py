@@ -73,6 +73,7 @@ def get_current_user(
             email=user.email,
             created_at=user.created_at,
             user_metadata=user.user_metadata or {},
+            app_metadata=getattr(user, "app_metadata", None) or {},
         )
     except AuthApiError as exc:
         logger.warning(f"Supabase Auth API error during token validation: {exc.message}")
@@ -147,8 +148,8 @@ def require_curator(
     """
     user_email = (current_user.email or "").strip().lower()
     is_email_curator = bool(user_email and user_email in settings.CURATOR_EMAILS)
-    user_role = (current_user.user_metadata or {}).get("role", "").strip().lower()
-    is_role_curator = user_role in ("curator", "admin")
+    app_role = (current_user.app_metadata or {}).get("role", "").strip().lower()
+    is_role_curator = app_role in ("curator", "admin")
 
     if not (is_email_curator or is_role_curator):
         raise HTTPException(

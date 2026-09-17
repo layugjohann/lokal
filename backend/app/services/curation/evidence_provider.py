@@ -92,33 +92,51 @@ class GooglePlacesEvidenceProvider(BaseEvidenceProvider):
                     f"Google Places API returned HTTP {response.status_code}"
                 )
 
-            data = response.json()
-            raw_places = data.get("places", [])
-            next_token = data.get("nextPageToken")
+            try:
+                data = response.json()
+                if not isinstance(data, dict):
+                    raise ValueError("Provider response body is not a JSON object.")
+                raw_places = data.get("places", [])
+                if not isinstance(raw_places, list):
+                    raise ValueError("'places' field in provider response is not a list.")
+                next_token = data.get("nextPageToken")
+                if next_token is not None and not isinstance(next_token, str):
+                    next_token = None
 
-            candidate_places: list[CandidatePlace] = []
-            for item in raw_places:
-                place_id = item.get("id")
-                if not place_id:
-                    continue
+                candidate_places: list[CandidatePlace] = []
+                for item in raw_places:
+                    if not isinstance(item, dict):
+                        continue
+                    place_id = item.get("id")
+                    if not place_id or not isinstance(place_id, str):
+                        continue
 
-                display_name_obj = item.get("displayName") or {}
-                display_name = display_name_obj.get("text", "")
-                formatted_address = item.get("formattedAddress")
+                    display_name_obj = item.get("displayName")
+                    display_name = ""
+                    if isinstance(display_name_obj, dict):
+                        display_name = str(display_name_obj.get("text", "") or "")
+                    formatted_address = item.get("formattedAddress")
+                    if formatted_address is not None and not isinstance(formatted_address, str):
+                        formatted_address = str(formatted_address)
 
-                candidate_places.append(
-                    CandidatePlace(
-                        place_id=place_id,
-                        display_name=display_name,
-                        formatted_address=formatted_address,
+                    candidate_places.append(
+                        CandidatePlace(
+                            place_id=place_id,
+                            display_name=display_name,
+                            formatted_address=formatted_address,
+                        )
                     )
-                )
 
-            return ProviderSearchResult(
-                places=candidate_places,
-                next_page_token=next_token,
-                has_more=bool(next_token),
-            )
+                return ProviderSearchResult(
+                    places=candidate_places,
+                    next_page_token=next_token,
+                    has_more=bool(next_token),
+                )
+            except (ValueError, TypeError, KeyError, AttributeError) as exc:
+                logger.warning(f"Google Places Text Search returned malformed response: {exc}")
+                raise ExternalProviderError(
+                    "Google Places API returned an invalid response."
+                ) from exc
 
         except httpx.RequestError as exc:
             logger.error(f"Network error querying Google Places Text Search for '{query}': {exc}")
