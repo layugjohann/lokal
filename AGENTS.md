@@ -39,17 +39,34 @@ ChatGPT does **not** directly implement production code unless explicitly reques
 
 ---
 
-## Primary AI Implementation Agent (Antigravity CLI)
+## Primary AI Implementation Agent (Antigravity CLI / Agy)
 
 Responsible for:
 
-* Implementing GitHub Issues
-* Refactoring code
+* Reviewing assigned GitHub Issues
+* Reviewing project documentation
+* Formulating implementation plans
+* Implementing approved GitHub Issues
+* Refactoring code when explicitly within approved scope
 * Writing tests
 * Updating documentation when appropriate
-* Following repository architecture and standards
+* Running builds, tests, type checks, linting, and other relevant verification
+* Reporting completed work, assumptions, risks, trade-offs, and limitations
 
-The implementation agent must remain within the scope of the assigned GitHub Issue.
+Agy must remain strictly within the scope of the assigned GitHub Issue and the Product Owner-approved implementation plan.
+
+Agy does **not** own repository management or Git history.
+
+Agy must not:
+
+* create Git branches,
+* commit changes,
+* push changes,
+* create Pull Requests,
+* merge Pull Requests,
+* rewrite Git history,
+* force push,
+* modify unrelated branches.
 
 ---
 
@@ -182,16 +199,48 @@ AI implementation agents must not:
 - merge Pull Requests
 - delete branches
 
+## Post-Implementation Verification
+
+After implementation, Agy must:
+
+1. Verify the application builds successfully.
+2. Run all relevant automated tests.
+3. Run type checking where applicable.
+4. Run linting where applicable.
+5. Perform relevant local/manual verification where practical.
+6. Confirm the implementation satisfies the approved acceptance criteria.
+7. Check for unintended regressions.
+8. Summarize the completed work.
+9. Report assumptions made.
+10. Report risks, trade-offs, or limitations discovered.
+
+Agy must not claim successful verification without actually performing it.
+
+Verification results must clearly distinguish:
+
+* passed checks,
+* failed checks,
+* skipped checks,
+* known limitations.
+
 ## Definition of Done
 
-A GitHub Issue is considered complete only when:
+Implementation is considered ready for Product Owner review when:
 
-- Acceptance criteria are satisfied.
+- Approved scope has been implemented.
+- Acceptance criteria have been addressed.
 - The application builds successfully.
 - Relevant tests pass.
-- Documentation is updated (if required).
-- Changes remain within the issue scope.
-- The Product Owner approves the implementation.
+- Relevant type checks and linting pass.
+- Manual verification has been performed where appropriate.
+- No known unintended regressions remain.
+- Documentation has been updated when required by the approved scope.
+- Assumptions and limitations have been reported.
+- Changes remain within the approved GitHub Issue and implementation plan.
+
+Implementation readiness does **not** mean the issue is complete.
+
+The Product Owner determines final completion after reviewing the implementation and managing the repository workflow.
 
 Implementation alone does not mean the issue is complete.
 
@@ -268,4 +317,4 @@ Never guess on architectural or product decisions.
 
 The objective is not simply to generate code.
 
-The objective is to help build a maintainable, production-quality software project through disciplined engineering practices.
+The objective is to help build a maintainable, production-quality software project through disciplined AI-assisted engineering while keeping engineering judgment and repository control with the Product Owner.
