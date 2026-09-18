@@ -2,7 +2,7 @@
 
 The Product Owner has approved the implementation plan.
 
-Implement **only** the work described in the assigned GitHub Issue and the approved implementation plan.
+Implement only the work described in the assigned GitHub Issue and the approved implementation plan.
 
 ## Scope Discipline
 
@@ -42,7 +42,7 @@ Report verification results clearly, including:
 
 ## Final Report
 
-After verification, provide the Product Owner with:
+After verification, provide:
 
 - a concise summary of completed work,
 - important implementation decisions,
@@ -53,23 +53,31 @@ After verification, provide the Product Owner with:
 
 Implementation is ready for Product Owner review only after the above verification and reporting are complete.
 
-## Git & Repository Restrictions
+## Git Workflow
 
-Agy is responsible for implementation and verification only.
+Agy may perform repository operations required to complete the approved implementation workflow, including:
 
-**Do not:**
+- creating the approved feature branch,
+- committing implementation work,
+- pushing to the feature branch,
+- creating the Pull Request.
 
-- create branches,
-- rename branches,
-- commit changes,
-- push changes,
-- create Pull Requests,
+Agy must not:
+
 - merge Pull Requests,
-- delete branches,
+- modify unrelated branches,
 - rewrite Git history,
 - force push,
-- modify unrelated branches.
+- bypass the review process.
 
-Leave the implementation changes available for Product Owner review.
+## Review Process
 
-The Product Owner owns all repository management and Git history.
+1. Product Owner / ChatGPT defines and approves the GitHub Issue.
+2. Agy reviews documentation and produces an implementation plan.
+3. Product Owner approves the implementation plan.
+4. Agy creates the feature branch, implements the work, verifies the implementation, commits, pushes, and opens the Pull Request.
+5. CodeRabbit performs automated review.
+6. Agy addresses approved review findings and re-verifies.
+7. Product Owner performs the final review and merge decision.
+
+Final merge authority belongs to the Product Owner.
