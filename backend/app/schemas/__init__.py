@@ -6,6 +6,13 @@ from .auth import (
     SessionResponse,
     UserResponse,
 )
+from .curation import (
+    CurationConfidence,
+    CurationEvaluationResponse,
+    CurationOverrideRequest,
+    ShopCurationResponse,
+    ShopEligibilityStatus,
+)
 from .review import (
     ProviderAttribution,
     ReviewAuthor,
@@ -38,6 +45,11 @@ __all__ = [
     "UnifiedReview",
     "ProviderAttribution",
     "ShopReviewsResponse",
+    "ShopEligibilityStatus",
+    "CurationConfidence",
+    "ShopCurationResponse",
+    "CurationOverrideRequest",
+    "CurationEvaluationResponse",
 ]
 
 

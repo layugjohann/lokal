@@ -19,9 +19,9 @@ def get_supabase_client() -> Client:
     if _supabase_client is not None:
         return _supabase_client
 
-    if not settings.SUPABASE_URL or not settings.SUPABASE_ANON_KEY:
+    if not settings.SUPABASE_URL or not (settings.SUPABASE_SERVICE_ROLE_KEY or settings.SUPABASE_ANON_KEY):
         raise ValueError(
-            "SUPABASE_URL and SUPABASE_ANON_KEY environment variables must be configured."
+            "SUPABASE_URL and either SUPABASE_SERVICE_ROLE_KEY or SUPABASE_ANON_KEY must be configured."
         )
 
     if not settings.SUPABASE_URL.lower().startswith("https://"):
@@ -29,7 +29,8 @@ def get_supabase_client() -> Client:
             "SUPABASE_URL must begin with https:// to ensure secure communication."
         )
 
-    _supabase_client = create_client(settings.SUPABASE_URL, settings.SUPABASE_ANON_KEY)
+    key = settings.SUPABASE_SERVICE_ROLE_KEY or settings.SUPABASE_ANON_KEY
+    _supabase_client = create_client(settings.SUPABASE_URL, key)
     return _supabase_client
 
 

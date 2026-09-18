@@ -37,6 +37,7 @@ class MockQueryBuilder:
     def __init__(self, data=None):
         self._data = data
         self.last_inserted = None
+        self.all_inserted = []
         self.last_updated = None
         self.last_eq = None
         self.last_range = None
@@ -47,6 +48,7 @@ class MockQueryBuilder:
 
     def insert(self, payload):
         self.last_inserted = payload
+        self.all_inserted.append(payload)
         return self
 
     def select(self, cols="*"):
@@ -149,12 +151,13 @@ class TestShopEndpoints(unittest.TestCase):
         self.assertEqual(data["name"], "Kape Lokal")
         self.assertEqual(data["latitude"], 14.6488)
         self.assertEqual(data["longitude"], 121.0734)
-
-        self.mock_supabase.table.assert_called_with("shops")
+        self.mock_supabase.table.assert_any_call("shops")
+        self.mock_supabase.table.assert_any_call("shop_curation")
         # Verify fields were trimmed in payload sent to insert
-        self.assertEqual(builder.last_inserted["name"], "Kape Lokal")
-        self.assertEqual(builder.last_inserted["address"], "123 Katipunan Ave, Quezon City")
-        self.assertEqual(builder.last_inserted["google_place_id"], "ChIJN1t_tDeuEmsRUsoyG83frY4")
+        self.assertEqual(builder.all_inserted[0]["name"], "Kape Lokal")
+        self.assertEqual(builder.all_inserted[0]["address"], "123 Katipunan Ave, Quezon City")
+        self.assertEqual(builder.all_inserted[0]["google_place_id"], "ChIJN1t_tDeuEmsRUsoyG83frY4")
+        self.assertEqual(builder.all_inserted[1]["status"], "PENDING_REVIEW")
 
     def test_create_shop_minimal_fields_success(self):
         minimal_shop = {
