@@ -26,7 +26,9 @@ Before starting any feature:
 14. Open Pull Request for CodeRabbit review
 15. Evaluate and resolve CodeRabbit findings iteratively
 16. Product Owner performs final review and merges Pull Request
-17. Synchronize local `main` and update `docs/CURRENT_STATE.md`
+17. Product Owner merges the Pull Request and manages branch deletion
+18. Agy updates `docs/CURRENT_STATE.md` using the documentation workflow
+19. Product Owner synchronizes local `main` and confirms the working tree is clean
 
 ---
 
@@ -53,7 +55,7 @@ Idea
 GitHub Issue
     │
     ▼
-Architecture Review (if required)
+Architecture / Product Review (if required)
     │
     ▼
 Implementation Planning
@@ -352,9 +354,9 @@ Do not update `CURRENT_STATE.md` during an unmerged feature implementation unles
 
 * Defines product requirements and roadmap.
 * Creates and prioritizes GitHub Issues.
-* Reviews system architecture and trade-offs.
+* Reviews architecture and trade-offs.
 * Approves implementation plans and scope adjustments.
-* Performs final Pull Request code review.
+* Performs final Pull Request review.
 * Merges Pull Requests into `main`.
 * Deletes feature branches after merge.
 * Decides when a feature is complete.
@@ -370,6 +372,7 @@ Do not update `CURRENT_STATE.md` during an unmerged feature implementation unles
 * Creates focused, conventional commits.
 * Pushes feature branches to GitHub.
 * Opens Pull Requests with comprehensive descriptions.
+* Updates `docs/CURRENT_STATE.md` after merge through the documentation workflow.
 * Evaluates CodeRabbit review comments critically.
 * Fixes valid actionable findings and adds test coverage.
 * Pushes review fixes to the active Pull Request.
