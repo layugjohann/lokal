@@ -85,12 +85,26 @@ export default function ShopDetailCard({ shop, onClose, authToken }: ShopDetailC
   }, [shop.id, authToken]);
 
   useEffect(() => {
+    currentRequestId.current += 1;
+    currentMutationId.current += 1;
+
+    setIsFormOpen(false);
+    setFormRating(5);
+    setFormContent('');
+    setIsSubmitting(false);
+    setIsDeleting(false);
+    setFormError(null);
+    setDeleteError(null);
+    setMyReview(null);
+    setReviewsData(null);
+    setReviewsError(null);
+
     loadReviews();
     return () => {
       currentRequestId.current += 1;
       currentMutationId.current += 1;
     };
-  }, [loadReviews]);
+  }, [shop.id, authToken, loadReviews]);
 
   const handleOpenUrl = async (url?: string | null) => {
     if (!url) return;

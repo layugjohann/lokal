@@ -35,7 +35,12 @@ export default function NearbyShopsSheet({
   if (selectedShop) {
     return (
       <View style={styles.container}>
-        <ShopDetailCard shop={selectedShop} onClose={onCloseDetail} authToken={authToken} />
+        <ShopDetailCard
+          key={`${selectedShop.id}:${authToken || 'anon'}`}
+          shop={selectedShop}
+          onClose={onCloseDetail}
+          authToken={authToken}
+        />
       </View>
     );
   }

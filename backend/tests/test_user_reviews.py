@@ -116,6 +116,80 @@ class MockQueryBuilder:
         return self.mock_execute()
 
 
+class MockRpcBuilder:
+    def __init__(self, test_case):
+        self.test_case = test_case
+        self.last_rpc_name = None
+        self.last_rpc_params = None
+
+    def __call__(self, rpc_name, params):
+        self.last_rpc_name = rpc_name
+        self.last_rpc_params = params
+        mock_obj = MagicMock()
+
+        if rpc_name == "create_user_review":
+            author_name = "LOKAL User"
+            try:
+                user_resp = self.test_case.mock_supabase.auth.get_user()
+                if user_resp and user_resp.user and user_resp.user.user_metadata:
+                    metadata = user_resp.user.user_metadata
+                    for field in ("full_name", "display_name"):
+                        cand = metadata.get(field)
+                        if isinstance(cand, str) and cand.strip():
+                            author_name = cand.strip()
+                            break
+            except Exception:
+                pass
+
+            created_row = {
+                "id": "22222222-3333-4444-5555-666666666666",
+                "shop_id": params.get("p_shop_id"),
+                "user_id": self.test_case.user_id,
+                "author_name": author_name,
+                "rating": params.get("p_rating"),
+                "content": params.get("p_content"),
+                "source": "lokal",
+                "created_at": "2026-09-19T02:00:00Z",
+                "updated_at": "2026-09-19T02:00:00Z",
+            }
+            self.test_case.reviews_builder.last_inserted = created_row
+            mock_resp = MagicMock()
+            mock_resp.data = [created_row]
+            mock_obj.execute.return_value = mock_resp
+
+        elif rpc_name == "update_user_review":
+            rating = params.get("p_rating")
+            if rating is None:
+                rating = 4
+            content = params.get("p_content") if params.get("p_update_content") else "Updated content"
+            updated_row = {
+                "id": "22222222-3333-4444-5555-666666666666",
+                "shop_id": params.get("p_shop_id"),
+                "user_id": self.test_case.user_id,
+                "author_name": "Maria Santos",
+                "rating": rating,
+                "content": content,
+                "source": "lokal",
+                "created_at": "2026-09-19T02:00:00Z",
+                "updated_at": "2026-09-19T02:30:00Z",
+            }
+            last_up = {}
+            if params.get("p_rating") is not None:
+                last_up["rating"] = params.get("p_rating")
+            if params.get("p_update_content"):
+                last_up["content"] = params.get("p_content")
+            self.test_case.reviews_builder.last_updated = last_up
+            mock_resp = MagicMock()
+            mock_resp.data = [updated_row]
+            mock_obj.execute.return_value = mock_resp
+        else:
+            mock_resp = MagicMock()
+            mock_resp.data = []
+            mock_obj.execute.return_value = mock_resp
+
+        return mock_obj
+
+
 class TestUserReviewEndpoints(unittest.TestCase):
     def setUp(self):
         self.mock_supabase = MagicMock()
@@ -141,6 +215,8 @@ class TestUserReviewEndpoints(unittest.TestCase):
             return MockQueryBuilder(data=[])
 
         self.mock_supabase.table.side_effect = table_router
+        self.mock_rpc = MockRpcBuilder(self)
+        self.mock_supabase.rpc.side_effect = self.mock_rpc
         self.mock_supabase.auth.get_user.return_value = DummyUserResponse()
 
         app.dependency_overrides[get_supabase] = lambda: self.mock_supabase
@@ -317,13 +393,12 @@ class TestUserReviewEndpoints(unittest.TestCase):
         self.assertIn("not approved for public discovery", response.json()["detail"])
 
     def test_create_review_duplicate_conflict_409(self):
-        self.reviews_builder.insert = MagicMock()
         mock_exec = MagicMock()
         mock_exec.execute.side_effect = APIError({
             "message": "duplicate key value violates unique constraint",
             "code": "23505",
         })
-        self.reviews_builder.insert.return_value = mock_exec
+        self.mock_supabase.rpc = MagicMock(return_value=mock_exec)
 
         payload = {"rating": 5}
         response = self.client.post(
@@ -574,6 +649,87 @@ class TestUserReviewEndpoints(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 404)
         self.assertEqual(response.json()["detail"], "Coffee shop not found.")
+
+
+    # --- 6. Controlled RPC Security & Parameter Verification Tests ---
+
+    def test_create_review_invokes_rpc_with_strictly_unforgeable_parameters(self):
+        payload = {"rating": 5, "content": "Delicious flat white!"}
+        response = self.client.post(
+            f"/api/v1/shops/{self.shop_id}/reviews",
+            json=payload,
+            headers=self.auth_headers,
+        )
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(self.mock_rpc.last_rpc_name, "create_user_review")
+        self.assertEqual(self.mock_rpc.last_rpc_params["p_shop_id"], self.shop_id)
+        self.assertEqual(self.mock_rpc.last_rpc_params["p_rating"], 5)
+        self.assertEqual(self.mock_rpc.last_rpc_params["p_content"], "Delicious flat white!")
+        # Verify forbidden/unforgeable fields are NEVER passed to RPC
+        for unforgeable_field in ("user_id", "author_name", "source", "created_at", "updated_at"):
+            self.assertNotIn(unforgeable_field, self.mock_rpc.last_rpc_params)
+
+    def test_update_review_invokes_rpc_with_strictly_unforgeable_parameters(self):
+        existing_row = {
+            "id": "22222222-3333-4444-5555-666666666666",
+            "shop_id": self.shop_id,
+            "user_id": self.user_id,
+            "author_name": "Maria Santos",
+            "rating": 5,
+        }
+        self.reviews_builder = MockQueryBuilder(data=[existing_row])
+
+        response = self.client.patch(
+            f"/api/v1/shops/{self.shop_id}/reviews/mine",
+            json={"rating": 4},
+            headers=self.auth_headers,
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(self.mock_rpc.last_rpc_name, "update_user_review")
+        self.assertEqual(self.mock_rpc.last_rpc_params["p_shop_id"], self.shop_id)
+        self.assertEqual(self.mock_rpc.last_rpc_params["p_rating"], 4)
+        self.assertFalse(self.mock_rpc.last_rpc_params["p_update_content"])
+        for unforgeable_field in ("user_id", "author_name", "source", "created_at", "updated_at"):
+            self.assertNotIn(unforgeable_field, self.mock_rpc.last_rpc_params)
+
+    def test_create_review_handles_rpc_curation_error_p0001(self):
+        mock_exec = MagicMock()
+        mock_exec.execute.side_effect = APIError({
+            "message": "Cannot review a coffee shop that is not approved for public discovery.",
+            "code": "P0001",
+        })
+        self.mock_supabase.rpc = MagicMock(return_value=mock_exec)
+
+        payload = {"rating": 5}
+        response = self.client.post(
+            f"/api/v1/shops/{self.shop_id}/reviews",
+            json=payload,
+            headers=self.auth_headers,
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("not approved for public discovery", response.json()["detail"])
+
+    def test_update_review_handles_rpc_curation_error_p0001(self):
+        existing_row = {
+            "id": "22222222-3333-4444-5555-666666666666",
+            "shop_id": self.shop_id,
+            "user_id": self.user_id,
+        }
+        self.reviews_builder = MockQueryBuilder(data=[existing_row])
+        mock_exec = MagicMock()
+        mock_exec.execute.side_effect = APIError({
+            "message": "Cannot edit reviews for a coffee shop that is not approved for public discovery.",
+            "code": "P0001",
+        })
+        self.mock_supabase.rpc = MagicMock(return_value=mock_exec)
+
+        response = self.client.patch(
+            f"/api/v1/shops/{self.shop_id}/reviews/mine",
+            json={"rating": 4},
+            headers=self.auth_headers,
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("not approved for public discovery", response.json()["detail"])
 
 
 if __name__ == "__main__":

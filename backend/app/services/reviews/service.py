@@ -258,29 +258,38 @@ class ReviewService:
                 break
         author_name = raw_name if raw_name else "LOKAL User"
 
-        insert_payload = {
-            "shop_id": str_shop_id,
-            "user_id": user.id,
-            "author_name": author_name,
-            "rating": review_in.rating,
-            "content": review_in.content,
-            "source": "lokal",
+        # Invoke secure database RPC with strictly unforgeable server-side fields
+        rpc_params = {
+            "p_shop_id": str_shop_id,
+            "p_rating": review_in.rating,
+            "p_content": review_in.content,
         }
 
         try:
-            result = supabase.table("reviews").insert(insert_payload).execute()
+            result = supabase.rpc("create_user_review", rpc_params).execute()
             if not result.data:
                 raise HTTPException(
                     status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                     detail="Failed to persist review record.",
                 )
-            return _row_to_unified_review(result.data[0])
+            row = result.data if isinstance(result.data, dict) else result.data[0]
+            return _row_to_unified_review(row)
         except APIError as exc:
             logger.warning(f"Database error inserting review for shop {shop_id}: {exc.message}")
-            if exc.code == "23505":
+            if exc.code == "23505" or "already reviewed" in (exc.message or ""):
                 raise HTTPException(
                     status_code=status.HTTP_409_CONFLICT,
                     detail="You have already reviewed this coffee shop. You can edit your existing review.",
+                )
+            if exc.code == "P0001" or "not approved" in (exc.message or ""):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Cannot review a coffee shop that is not approved for public discovery.",
+                )
+            if exc.code == "P0002" or "not found" in (exc.message or ""):
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Coffee shop not found.",
                 )
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -412,29 +421,42 @@ class ReviewService:
                 detail="A database error occurred while verifying your review.",
             )
 
-        # Perform partial update
+        # Invoke secure database RPC for partial update
+        has_content_update = "content" in update_fields
+        rpc_params = {
+            "p_shop_id": str_shop_id,
+            "p_rating": update_fields.get("rating"),
+            "p_content": update_fields.get("content"),
+            "p_update_content": has_content_update,
+        }
+
         try:
-            result = (
-                supabase.table("reviews")
-                .update(update_fields)
-                .eq("shop_id", str_shop_id)
-                .eq("user_id", user.id)
-                .execute()
-            )
+            result = supabase.rpc("update_user_review", rpc_params).execute()
             if not result.data:
                 raise HTTPException(
                     status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                     detail="Failed to update review record.",
                 )
-            return _row_to_unified_review(result.data[0])
-        except HTTPException:
-            raise
+            row = result.data if isinstance(result.data, dict) else result.data[0]
+            return _row_to_unified_review(row)
         except APIError as exc:
-            logger.error(f"Database error updating review for shop {shop_id}: {exc.message}")
+            logger.warning(f"Database error updating review for shop {shop_id}: {exc.message}")
+            if exc.code == "P0001" or "not approved" in (exc.message or ""):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Cannot edit reviews for a coffee shop that is not approved for public discovery.",
+                )
+            if exc.code == "P0002" or "not reviewed" in (exc.message or "") or "not found" in (exc.message or ""):
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="You have not reviewed this coffee shop.",
+                )
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="A database error occurred while updating your review.",
             )
+        except HTTPException:
+            raise
         except Exception as exc:
             logger.error(f"Unexpected error updating review for shop {shop_id}: {exc}")
             raise HTTPException(
