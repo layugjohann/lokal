@@ -10,7 +10,7 @@ This document provides a snapshot of the **current state of the `main` branch** 
 
 The project bootstrapping phase is complete. The mobile application foundation, FastAPI backend, Supabase integration, database schema, user authentication, maps/location integration, coffee shop CRUD API, nearby coffee shop discovery, and external review data layer are established.
 
-The project is now building application-level features that provide the foundation for LOKAL's future AI capabilities.
+The project is now building application-level features that provide the foundation for LOKAL's future AI capabilities, including independent/local business eligibility and curation.
 
 ---
 
@@ -18,9 +18,9 @@ The project is now building application-level features that provide the foundati
 
 🟢 **On Track**
 
-The core application stack is operational. The latest completed feature, **External Review Data Layer & Unified Review Architecture (GitHub Issue #19)**, establishes a provider-neutral review layer spanning the mobile application, FastAPI backend, and Google Places API (New).
+The core application stack is operational. The latest completed feature, **Independent Business Eligibility & Shop Curation (GitHub Issue #22)**, establishes a provider-neutral curation layer that determines whether discovered coffee shops are eligible for public LOKAL discovery.
 
-The mobile app can now request and display externally sourced reviews for supported coffee shops, including provider attribution and source/report links. The backend normalizes external review data into a unified provider-neutral model while keeping external review content transient rather than persisting it in Supabase.
+The backend now evaluates business eligibility using observable location-count evidence, persists curation state and audit history, supports curator-only manual overrides, and exposes only approved shops through nearby discovery. External review retrieval remains available through the separate provider-neutral review layer, with external review content kept transient rather than persisted in Supabase.
 
 The engineering workflow is formalized as the **AI-Assisted Engineering Workflow**, including implementation planning, Product Owner approval, dedicated feature branches, automated verification, CodeRabbit review, iterative review resolution, and human-controlled merging.
 
@@ -30,34 +30,26 @@ The next feature cycle should begin only after the current state is synchronized
 
 # Latest Completed Feature
 
-## GitHub Issue #19 — External Review Data Layer & Unified Review Architecture
+## GitHub Issue #22 — Independent Business Eligibility & Shop Curation
 
 **Status:** ✅ Completed
 
 ### Completed Work
 
-* Added a provider-neutral `UnifiedReview` domain model with review source, rating, text, original text, language, author attribution, publication time, relative time, and report URL fields.
-* Added provider-neutral attribution metadata through `ProviderAttribution` and `ShopReviewsResponse`.
-* Added a Google Places API (New) review provider using Place Details and an explicit field mask for review and attribution fields.
-* Added authenticated `GET /api/v1/shops/{shop_id}/reviews` endpoint for retrieving external reviews through the FastAPI review layer.
-* Kept the Google Places API key exclusively on the backend; the mobile application does not call Google Places directly.
-* Used each shop's existing `google_place_id` as the external provider identifier.
-* Added graceful handling for shops without a `google_place_id`, returning an empty successful response rather than treating the absence as a provider failure.
-* Added sanitized provider failure handling with `502 Bad Gateway` semantics for external API failures.
-* Added malformed/invalid provider-response handling so unexpected JSON or normalization failures are converted into sanitized provider errors rather than leaking as generic server errors.
-* Preserved fractional review ratings such as `4.5` through the unified schema and added regression coverage.
-* Added mobile review retrieval and display in the coffee shop detail experience.
-* Added provider attribution notices and source/report navigation for externally sourced reviews.
-* Added conditional non-interactive provider attribution when a source URL is unavailable.
-* Added request sequencing to prevent stale review responses from overwriting the currently selected coffee shop's review state.
-* Required authenticated access tokens for review requests and propagated authentication through the mobile review service.
-* Intentionally did **not** persist Google review content or author information in Supabase.
-* Intentionally did **not** add caching because the applicable external-data policy was not sufficiently clear to justify persistence or caching.
-* Kept AI summarization and Must-Try recommendation generation outside the implementation scope; the review layer now provides the architectural boundary for those future capabilities.
-* Kept independent-business eligibility, chain detection, and shop curation outside the review layer and reserved them for a separate future feature.
-* Completed verification with **101 backend tests passing**, **15 mobile tests passing**, and **TypeScript type checking passing with zero errors**.
+* Added provider-neutral business curation states: `APPROVED`, `EXCLUDED`, and `PENDING_REVIEW`.
+* Implemented fail-closed eligibility classification: businesses with six or more locations are excluded, businesses proven to have five or fewer locations are approved, and insufficient or ambiguous evidence remains pending review.
+* Added Google Places API (New) provider integration for business-location evidence using a minimal explicit field mask.
+* Added deduplication using provider `places.id` and normalized physical addresses so multiple provider results do not inflate location counts.
+* Added curation persistence and audit history with protected access controls.
+* Added authenticated shop evaluation and curator-only manual override flows with audit logging.
+* Initialized newly created shops as `PENDING_REVIEW` without performing a synchronous provider call.
+* Updated nearby discovery to expose only `APPROVED` shops and avoid runtime provider calls during public discovery.
+* Added concurrency protection so stale evaluations cannot overwrite newer curation decisions.
+* Added robust handling for malformed provider pagination data and test isolation when provider credentials are unavailable.
+* Kept business eligibility and curation separate from the provider-neutral external review architecture.
+* Completed verification with **22 backend curation tests**, **2 nearby-discovery tests**, **125 backend regression tests passing**, **15 mobile tests passing**, and **TypeScript type checking passing with zero errors**.
 * CodeRabbit findings were evaluated and the actionable findings were resolved before the Pull Request was merged.
-* Pull Request #20 was successfully merged into `main`, closed, and its feature branch was deleted.
+* Pull Request #23 was successfully merged into `main`, closed, and its feature branch was deleted.
 
 ---
 
@@ -75,8 +67,8 @@ The next feature cycle should begin only after the current state is synchronized
 | Issue #13 — Coffee Shop CRUD API                 | ✅ Complete |
 | Issue #15 — Coffee Shop Discovery & Search       | ✅ Complete |
 | Issue #19 — External Review Data Layer            | ✅ Complete |
+| Issue #22 — Independent Business Eligibility & Shop Curation | ✅ Complete |
 | AI-Assisted Engineering Workflow                 | ✅ Complete |
-| Independent Business Eligibility & Shop Curation | ⏳ Planned  |
 | LOKAL User Reviews                               | ⏳ Planned  |
 | AI Review Summaries                              | ⏳ Planned  |
 | AI Must-Try Recommendations                      | ⏳ Planned  |
@@ -107,7 +99,7 @@ The React Native (Expo) mobile application currently provides:
 * Non-blocking review loading and retry behavior.
 * Zero external UI dependencies, maintaining scope discipline and clean architecture.
 
-AI review summaries, Must-Try recommendations, LOKAL user reviews, independent-business curation, and background location tracking remain outside the current implementation scope.
+AI review summaries, Must-Try recommendations, LOKAL user reviews, and background location tracking remain outside the current implementation scope.
 
 ---
 
@@ -134,7 +126,7 @@ The FastAPI backend currently provides:
 * Sanitized external-provider error handling with `502 Bad Gateway` semantics.
 * No persistence or caching of Google review content or author information.
 * Robust error handling distinguishing client input errors (`400`/`422`), missing records (`404`), unique constraint conflicts (`409`), external provider failures (`502`), service unavailability (`503`), and sanitized generic server failures (`500`).
-* Automated backend regression testing with **101 passing tests**.
+* Automated backend regression testing with **125 passing tests**, including dedicated curation and nearby-discovery coverage.
 
 ---
 
@@ -163,34 +155,23 @@ The review domain is provider-neutral so that future LOKAL-owned reviews can coe
 
 The AI layer remains a future consumer of the unified review domain. AI implementation is intentionally deferred until the applicable external-data and AI-processing requirements are established.
 
-Independent-business eligibility and chain detection are intentionally separate from the review provider architecture. The review layer should not determine whether a coffee shop is considered independent or local.
+Independent-business eligibility and curation are implemented as a separate application concern. The curation layer determines public discovery eligibility without coupling business classification to the review provider.
 
 ---
 
 # Next Task
 
-The next feature should be defined through the next GitHub Issue after reviewing the current application state and the requirements for independent/local business discovery.
+The next feature should be defined through the next GitHub Issue after reviewing the current application state and the completed curation architecture.
 
-The next planned capability is **Independent Business Eligibility & Shop Curation**, which should establish how LOKAL distinguishes supported independent/local coffee businesses from larger chains and how inclusion/exclusion decisions are represented without coupling them to a specific review provider.
-
-The future feature should consider:
-
-1. Observable criteria for independent/local business classification.
-2. Chain and regional-chain detection without relying on a hardcoded name list.
-3. Provider-neutral eligibility/curation state.
-4. Manual overrides where automated classification is uncertain.
-5. A clear distinction between review-provider availability and business eligibility.
-6. How shop owners could eventually claim or request inclusion for their businesses.
-7. How curated eligibility interacts with nearby discovery and future search/filtering.
+The next capability should build on the now-established distinction between **business eligibility**, **external review data**, and **future AI processing**.
 
 Before implementation:
 
-1. Review the current database schema, coffee shop model, review layer, and existing APIs.
-2. Define the independent/local business requirements and observable criteria.
-3. Determine what eligibility/curation state should be persisted.
-4. Review implications for nearby discovery and future search/filtering.
-5. Create and approve the next GitHub Issue.
-6. Review the implementation plan before any branch is created or code is written.
+1. Review the current database schema, coffee shop model, curation layer, review layer, and existing APIs.
+2. Define the next product requirement and observable acceptance criteria.
+3. Review implications for nearby discovery, search/filtering, and future AI capabilities.
+4. Create and approve the next GitHub Issue.
+5. Review the implementation plan before any branch is created or code is written.
 
 ---
 
@@ -198,7 +179,7 @@ Before implementation:
 
 **None.**
 
-Google Places integration is currently implemented through the external review layer. AI processing of external review content remains a future architectural/policy consideration, not a current blocker.
+Google Places integrations are currently implemented through separate business-curation and external-review provider layers. AI processing of external review content remains a future architectural/policy consideration, not a current blocker.
 
 ---
 
@@ -216,6 +197,8 @@ The recent development cycles established the following engineering practices:
 * **External Data Policy Discipline**: External review content should not be persisted or cached unless the provider's current policies clearly permit those behaviors.
 * **Fractional Rating Support**: External review ratings should preserve the provider's numeric precision rather than assuming integer-only ratings.
 * **Review-Driven Iteration**: CodeRabbit findings must be evaluated critically, classified, fixed when actionable, and re-verified until no actionable findings remain.
+* **Fail-Closed Eligibility**: Business eligibility should default to hidden/pending when evidence is insufficient rather than risk exposing unsupported businesses.
+* **Curation State Separation**: Business eligibility is an independent domain concern and should not be inferred from review-provider availability.
 * **Human-Controlled Merge**: Agy prepares and validates changes, while the Product Owner performs the final review and merge.
 * **Current-State Discipline**: `CURRENT_STATE.md` describes `main` only and is updated after changes are merged.
 
@@ -256,4 +239,4 @@ After implementation:
 
 ---
 
-**Last Updated:** Phase 2 — Core Application Features (after completion of GitHub Issue #19 and merge of PR #20)
+**Last Updated:** Phase 2 — Core Application Features (after completion of GitHub Issue #22 and merge of PR #23)
