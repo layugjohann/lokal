@@ -213,6 +213,49 @@ class TestUserReviewEndpoints(unittest.TestCase):
         data = response.json()
         self.assertEqual(data["author"]["display_name"], "LOKAL User")
 
+    def test_create_review_fallback_author_name_when_metadata_is_none(self):
+        dummy_user = DummyUser()
+        dummy_user.user_metadata = None
+        self.mock_supabase.auth.get_user.return_value = DummyUserResponse(user=dummy_user)
+
+        payload = {"rating": 5}
+        response = self.client.post(
+            f"/api/v1/shops/{self.shop_id}/reviews",
+            json=payload,
+            headers=self.auth_headers,
+        )
+        self.assertEqual(response.status_code, 201)
+        data = response.json()
+        self.assertEqual(data["author"]["display_name"], "LOKAL User")
+
+    def test_create_review_fallback_author_name_when_metadata_has_non_string_values(self):
+        dummy_user = DummyUser(user_metadata={"full_name": 12345, "display_name": ["Not", "A", "String"]})
+        self.mock_supabase.auth.get_user.return_value = DummyUserResponse(user=dummy_user)
+
+        payload = {"rating": 5}
+        response = self.client.post(
+            f"/api/v1/shops/{self.shop_id}/reviews",
+            json=payload,
+            headers=self.auth_headers,
+        )
+        self.assertEqual(response.status_code, 201)
+        data = response.json()
+        self.assertEqual(data["author"]["display_name"], "LOKAL User")
+
+    def test_create_review_uses_display_name_when_full_name_is_empty(self):
+        dummy_user = DummyUser(user_metadata={"full_name": "   ", "display_name": "Barista Fan"})
+        self.mock_supabase.auth.get_user.return_value = DummyUserResponse(user=dummy_user)
+
+        payload = {"rating": 5}
+        response = self.client.post(
+            f"/api/v1/shops/{self.shop_id}/reviews",
+            json=payload,
+            headers=self.auth_headers,
+        )
+        self.assertEqual(response.status_code, 201)
+        data = response.json()
+        self.assertEqual(data["author"]["display_name"], "Barista Fan")
+
     def test_create_review_invalid_rating_below_one(self):
         payload = {"rating": 0}
         response = self.client.post(

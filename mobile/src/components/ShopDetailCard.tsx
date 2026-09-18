@@ -36,6 +36,7 @@ export default function ShopDetailCard({ shop, onClose, authToken }: ShopDetailC
   const [isLoadingReviews, setIsLoadingReviews] = useState<boolean>(true);
   const [reviewsError, setReviewsError] = useState<string | null>(null);
   const currentRequestId = useRef<number>(0);
+  const currentMutationId = useRef<number>(0);
 
   // User review form state
   const [isFormOpen, setIsFormOpen] = useState<boolean>(false);
@@ -43,6 +44,7 @@ export default function ShopDetailCard({ shop, onClose, authToken }: ShopDetailC
   const [formContent, setFormContent] = useState<string>('');
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [formError, setFormError] = useState<string | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
   const [isDeleting, setIsDeleting] = useState<boolean>(false);
 
   const loadReviews = useCallback(async () => {
@@ -51,6 +53,7 @@ export default function ShopDetailCard({ shop, onClose, authToken }: ShopDetailC
       setReviewsData(null);
       setMyReview(null);
       setReviewsError(null);
+      setDeleteError(null);
       return;
     }
 
@@ -59,13 +62,14 @@ export default function ShopDetailCard({ shop, onClose, authToken }: ShopDetailC
     setReviewsError(null);
 
     try {
-      const [data, userReview] = await Promise.all([
-        fetchShopReviews(shop.id, authToken),
-        fetchMyReview(shop.id, authToken),
-      ]);
+      const reviewsPromise = fetchShopReviews(shop.id, authToken);
+      const myReviewPromise = fetchMyReview(shop.id, authToken).catch(() => null);
+
+      const [data, userReview] = await Promise.all([reviewsPromise, myReviewPromise]);
       if (requestId === currentRequestId.current) {
         setReviewsData(data);
         setMyReview(userReview);
+        setDeleteError(null);
       }
     } catch (err) {
       if (requestId === currentRequestId.current) {
@@ -84,6 +88,7 @@ export default function ShopDetailCard({ shop, onClose, authToken }: ShopDetailC
     loadReviews();
     return () => {
       currentRequestId.current += 1;
+      currentMutationId.current += 1;
     };
   }, [loadReviews]);
 
@@ -108,6 +113,7 @@ export default function ShopDetailCard({ shop, onClose, authToken }: ShopDetailC
       setFormContent('');
     }
     setFormError(null);
+    setDeleteError(null);
     setIsFormOpen(true);
   };
 
@@ -118,6 +124,9 @@ export default function ShopDetailCard({ shop, onClose, authToken }: ShopDetailC
 
   const handleSubmitReview = async () => {
     if (!authToken) return;
+    const mutationId = ++currentMutationId.current;
+    const activeShopId = shop.id;
+    const activeToken = authToken;
     setIsSubmitting(true);
     setFormError(null);
 
@@ -135,31 +144,72 @@ export default function ShopDetailCard({ shop, onClose, authToken }: ShopDetailC
           authToken
         );
       }
-      setIsFormOpen(false);
-      await loadReviews();
+      if (
+        mutationId === currentMutationId.current &&
+        activeShopId === shop.id &&
+        activeToken === authToken
+      ) {
+        setIsFormOpen(false);
+        await loadReviews();
+      }
     } catch (err) {
-      const message =
-        err instanceof Error ? err.message : 'Failed to save review.';
-      setFormError(message);
+      if (
+        mutationId === currentMutationId.current &&
+        activeShopId === shop.id &&
+        activeToken === authToken
+      ) {
+        const message =
+          err instanceof Error ? err.message : 'Failed to save review.';
+        setFormError(message);
+      }
     } finally {
-      setIsSubmitting(false);
+      if (
+        mutationId === currentMutationId.current &&
+        activeShopId === shop.id &&
+        activeToken === authToken
+      ) {
+        setIsSubmitting(false);
+      }
     }
   };
 
   const handleDeleteReview = async () => {
     if (!authToken) return;
+    const mutationId = ++currentMutationId.current;
+    const activeShopId = shop.id;
+    const activeToken = authToken;
     setIsDeleting(true);
+    setDeleteError(null);
+
     try {
       await deleteUserReview(shop.id, authToken);
-      setIsFormOpen(false);
-      setMyReview(null);
-      await loadReviews();
+      if (
+        mutationId === currentMutationId.current &&
+        activeShopId === shop.id &&
+        activeToken === authToken
+      ) {
+        setIsFormOpen(false);
+        setMyReview(null);
+        await loadReviews();
+      }
     } catch (err) {
-      const message =
-        err instanceof Error ? err.message : 'Failed to delete review.';
-      setFormError(message);
+      if (
+        mutationId === currentMutationId.current &&
+        activeShopId === shop.id &&
+        activeToken === authToken
+      ) {
+        const message =
+          err instanceof Error ? err.message : 'Failed to delete review.';
+        setDeleteError(message);
+      }
     } finally {
-      setIsDeleting(false);
+      if (
+        mutationId === currentMutationId.current &&
+        activeShopId === shop.id &&
+        activeToken === authToken
+      ) {
+        setIsDeleting(false);
+      }
     }
   };
 
@@ -289,6 +339,9 @@ export default function ShopDetailCard({ shop, onClose, authToken }: ShopDetailC
                 </View>
                 {myReview.text ? (
                   <Text style={styles.myReviewBody}>{myReview.text}</Text>
+                ) : null}
+                {deleteError ? (
+                  <Text style={styles.deleteErrorText}>{deleteError}</Text>
                 ) : null}
               </View>
             )}
@@ -715,6 +768,11 @@ const styles = StyleSheet.create({
     color: '#4A2E18',
     marginTop: 6,
     lineHeight: 18,
+  },
+  deleteErrorText: {
+    fontSize: 12,
+    color: '#8A3B28',
+    marginTop: 6,
   },
   reviewFormContainer: {
     backgroundColor: '#FAF8F5',

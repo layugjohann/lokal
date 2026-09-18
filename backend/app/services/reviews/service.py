@@ -248,12 +248,14 @@ class ReviewService:
                 detail="Cannot review a coffee shop that is not approved for public discovery.",
             )
 
-        # Resolve author display name snapshot
-        raw_name = (
-            user.user_metadata.get("full_name")
-            or user.user_metadata.get("display_name")
-            or ""
-        ).strip()
+        # Resolve author display name snapshot safely from user metadata
+        metadata = user.user_metadata or {}
+        raw_name = ""
+        for field in ("full_name", "display_name"):
+            candidate = metadata.get(field)
+            if isinstance(candidate, str) and candidate.strip():
+                raw_name = candidate.strip()
+                break
         author_name = raw_name if raw_name else "LOKAL User"
 
         insert_payload = {

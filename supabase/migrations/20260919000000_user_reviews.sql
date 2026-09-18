@@ -6,7 +6,7 @@ ALTER TABLE reviews ADD COLUMN IF NOT EXISTS user_id UUID REFERENCES auth.users(
 ALTER TABLE reviews ADD COLUMN IF NOT EXISTS author_name TEXT NOT NULL DEFAULT 'LOKAL User';
 ALTER TABLE reviews ALTER COLUMN source SET DEFAULT 'lokal';
 
--- 2. Single review per user per shop constraint
+-- 2. Single review per user per shop constraint (automatically creates unique index)
 DO $$
 BEGIN
     IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'uq_reviews_user_shop') THEN
@@ -17,9 +17,11 @@ END $$;
 -- 3. Performance & lookup indexes
 CREATE INDEX IF NOT EXISTS idx_reviews_shop_id ON reviews (shop_id);
 CREATE INDEX IF NOT EXISTS idx_reviews_user_id ON reviews (user_id);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_reviews_user_shop ON reviews (user_id, shop_id);
 
--- 4. Row Level Security
+-- 4. Table Privileges
+GRANT SELECT, INSERT, UPDATE, DELETE ON reviews TO authenticated;
+
+-- 5. Row Level Security
 ALTER TABLE reviews ENABLE ROW LEVEL SECURITY;
 
 -- Authenticated users only can read reviews
@@ -27,15 +29,39 @@ DROP POLICY IF EXISTS "Allow authenticated read access on reviews" ON reviews;
 CREATE POLICY "Allow authenticated read access on reviews" ON reviews
     FOR SELECT TO authenticated USING (true);
 
--- Authenticated users can insert only their own review
+-- Authenticated users can insert only their own review on an APPROVED shop
 DROP POLICY IF EXISTS "Allow users to insert own review" ON reviews;
 CREATE POLICY "Allow users to insert own review" ON reviews
-    FOR INSERT TO authenticated WITH CHECK (auth.uid() = user_id);
+    FOR INSERT TO authenticated
+    WITH CHECK (
+        auth.uid() = user_id
+        AND EXISTS (
+            SELECT 1 FROM shop_curation sc
+            WHERE sc.shop_id = reviews.shop_id
+              AND sc.status = 'APPROVED'
+        )
+    );
 
--- Authenticated users can update only their own review
+-- Authenticated users can update only their own review on an APPROVED shop
 DROP POLICY IF EXISTS "Allow users to update own review" ON reviews;
 CREATE POLICY "Allow users to update own review" ON reviews
-    FOR UPDATE TO authenticated USING (auth.uid() = user_id) WITH CHECK (auth.uid() = user_id);
+    FOR UPDATE TO authenticated
+    USING (
+        auth.uid() = user_id
+        AND EXISTS (
+            SELECT 1 FROM shop_curation sc
+            WHERE sc.shop_id = reviews.shop_id
+              AND sc.status = 'APPROVED'
+        )
+    )
+    WITH CHECK (
+        auth.uid() = user_id
+        AND EXISTS (
+            SELECT 1 FROM shop_curation sc
+            WHERE sc.shop_id = reviews.shop_id
+              AND sc.status = 'APPROVED'
+        )
+    );
 
 -- Authenticated users can delete only their own review
 DROP POLICY IF EXISTS "Allow users to delete own review" ON reviews;
