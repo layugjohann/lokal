@@ -60,6 +60,9 @@ class MockQueryBuilder:
         self.last_eq = (col, val)
         return self
 
+    def order(self, col, desc=False):
+        return self
+
     def execute(self):
         return self.mock_execute()
 
@@ -268,9 +271,46 @@ class TestReviewService(unittest.IsolatedAsyncioTestCase):
         self.mock_supabase = MagicMock()
         self.shop_id = "123e4567-e89b-12d3-a456-426614174000"
 
+        self.shops_builder = MockQueryBuilder(data=[{
+            "id": self.shop_id,
+            "name": "Local Café",
+            "rating": 4.5,
+            "google_place_id": "ChIJN1t_tDeuEmsRUsoyG83frY4",
+        }])
+        self.curation_builder = MockQueryBuilder(data=[{"status": "APPROVED"}])
+        self.reviews_builder = MockQueryBuilder(data=[])
+
+        def table_router(table_name):
+            if table_name == "shops":
+                return self.shops_builder
+            elif table_name == "shop_curation":
+                return self.curation_builder
+            elif table_name == "reviews":
+                return self.reviews_builder
+            return MockQueryBuilder(data=[])
+
+        self.mock_supabase.table.side_effect = table_router
+
     async def test_get_shop_reviews_shop_not_found(self):
-        builder = MockQueryBuilder(data=[])
-        self.mock_supabase.table.return_value = builder
+        self.shops_builder = MockQueryBuilder(data=[])
+
+        with self.assertRaises(HTTPException) as ctx:
+            await self.service.get_shop_reviews(self.shop_id, self.mock_supabase)
+
+        self.assertEqual(ctx.exception.status_code, 404)
+        self.assertEqual(ctx.exception.detail, "Coffee shop not found.")
+
+    async def test_get_shop_reviews_shop_excluded_returns_404(self):
+        self.curation_builder = MockQueryBuilder(data=[{"status": "EXCLUDED"}])
+
+        with self.assertRaises(HTTPException) as ctx:
+            await self.service.get_shop_reviews(self.shop_id, self.mock_supabase)
+
+        self.assertEqual(ctx.exception.status_code, 404)
+        self.assertEqual(ctx.exception.detail, "Coffee shop not found.")
+
+    async def test_get_shop_reviews_shop_pending_review_returns_404(self):
+        self.curation_builder = MockQueryBuilder(data=[{"status": "PENDING_REVIEW"}])
 
         with self.assertRaises(HTTPException) as ctx:
             await self.service.get_shop_reviews(self.shop_id, self.mock_supabase)
@@ -279,34 +319,25 @@ class TestReviewService(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(ctx.exception.detail, "Coffee shop not found.")
 
     async def test_get_shop_reviews_no_google_place_id(self):
-        shop_data = {
+        self.shops_builder = MockQueryBuilder(data=[{
             "id": self.shop_id,
             "name": "Local Café",
             "rating": 4.5,
             "google_place_id": None,
-        }
-        builder = MockQueryBuilder(data=[shop_data])
-        self.mock_supabase.table.return_value = builder
+        }])
 
         response = await self.service.get_shop_reviews(self.shop_id, self.mock_supabase)
         self.assertEqual(str(response.shop_id), self.shop_id)
         self.assertEqual(response.average_rating, 4.5)
         self.assertEqual(response.total_reviews_count, 0)
+        self.assertEqual(response.lokal_reviews_count, 0)
+        self.assertIsNone(response.lokal_average_rating)
         self.assertEqual(response.reviews, [])
         self.assertEqual(response.attributions, [])
         self.assertFalse(response.has_more)
         self.mock_provider.fetch_reviews.assert_not_called()
 
     async def test_get_shop_reviews_provider_success(self):
-        shop_data = {
-            "id": self.shop_id,
-            "name": "Local Café",
-            "rating": 4.5,
-            "google_place_id": "ChIJN1t_tDeuEmsRUsoyG83frY4",
-        }
-        builder = MockQueryBuilder(data=[shop_data])
-        self.mock_supabase.table.return_value = builder
-
         mock_review = UnifiedReview(
             id="google:rev1",
             source=ReviewSource.GOOGLE,
@@ -331,20 +362,38 @@ class TestReviewService(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(str(response.shop_id), self.shop_id)
         self.assertEqual(response.average_rating, 4.8)
         self.assertEqual(response.total_reviews_count, 50)
+        self.assertEqual(response.lokal_reviews_count, 0)
+        self.assertIsNone(response.lokal_average_rating)
         self.assertEqual(len(response.reviews), 1)
         self.assertEqual(len(response.attributions), 1)
         self.assertEqual(response.attributions[0].display_name, "Google Maps")
 
-    async def test_get_shop_reviews_provider_error_raises_502(self):
-        shop_data = {
-            "id": self.shop_id,
-            "name": "Local Café",
-            "rating": 4.5,
-            "google_place_id": "ChIJN1t_tDeuEmsRUsoyG83frY4",
+    async def test_get_shop_reviews_with_first_party_reviews(self):
+        lokal_row = {
+            "id": "11111111-2222-3333-4444-555555555555",
+            "shop_id": self.shop_id,
+            "user_id": "99999999-8888-7777-6666-555555555555",
+            "author_name": "Elena Gomez",
+            "rating": 5,
+            "content": "Superb pour-over and great staff.",
+            "source": "lokal",
+            "created_at": "2026-09-19T01:00:00Z",
+            "updated_at": "2026-09-19T01:00:00Z",
         }
-        builder = MockQueryBuilder(data=[shop_data])
-        self.mock_supabase.table.return_value = builder
+        self.reviews_builder = MockQueryBuilder(data=[lokal_row])
+        self.mock_provider.fetch_reviews.return_value = ([], None, None, 0)
 
+        response = await self.service.get_shop_reviews(self.shop_id, self.mock_supabase)
+        self.assertEqual(len(response.reviews), 1)
+        self.assertEqual(response.reviews[0].id, f"lokal:{lokal_row['id']}")
+        self.assertEqual(response.reviews[0].source, ReviewSource.LOKAL)
+        self.assertEqual(response.reviews[0].author.display_name, "Elena Gomez")
+        self.assertEqual(response.reviews[0].is_edited, False)
+        self.assertIsNone(response.reviews[0].updated_at)
+        self.assertEqual(response.lokal_reviews_count, 1)
+        self.assertEqual(response.lokal_average_rating, 5.0)
+
+    async def test_get_shop_reviews_provider_error_raises_502(self):
         self.mock_provider.fetch_reviews.side_effect = ExternalProviderError("Network timeout")
 
         with self.assertRaises(HTTPException) as ctx:
@@ -362,7 +411,7 @@ class TestReviewService(unittest.IsolatedAsyncioTestCase):
         mock_eq.execute.side_effect = APIError({"message": "DB connection dead", "code": "50000"})
         mock_select.eq.return_value = mock_eq
         mock_table.select.return_value = mock_select
-        self.mock_supabase.table.return_value = mock_table
+        self.shops_builder = mock_table
 
         with self.assertRaises(HTTPException) as ctx:
             await self.service.get_shop_reviews(self.shop_id, self.mock_supabase)
