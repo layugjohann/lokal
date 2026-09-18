@@ -106,6 +106,8 @@ class CurationService:
             supabase.table("shop_curation").select("*").eq("shop_id", str(shop_id)).execute()
         )
         current_curation = curation_res.data[0] if curation_res.data else None
+        if not current_curation:
+            current_curation = self.initialize_curation(shop_id=shop_id, supabase=supabase)
 
         if current_curation and current_curation.get("is_manual_override") and not force:
             logger.info(
@@ -116,11 +118,15 @@ class CurationService:
                 status=ShopEligibilityStatus(current_curation["status"]),
                 location_count=current_curation.get("location_count"),
                 evidence_source=current_curation.get("evidence_source"),
-                confidence=current_curation.get("confidence"),
+                confidence=CurationConfidence(current_curation["confidence"])
+                if current_curation.get("confidence")
+                else CurationConfidence.LOW,
                 is_manual_override=True,
                 evaluated_at=current_curation.get("evaluated_at"),
                 message="Shop is locked under manual curation override. Use force=True to override.",
             )
+
+        original_updated_at = current_curation.get("updated_at") if current_curation else None
 
         # 3. Execute classification
         decision = await self.classifier.classify(
@@ -145,26 +151,59 @@ class CurationService:
         # 4. Persist updated curation state with concurrency protection
         try:
             if not force:
-                # Conditional update: only update if is_manual_override is currently FALSE.
-                # This guarantees that if a curator applies an override while classification
-                # was running, this automated update affects 0 rows and will not overwrite it.
-                update_res = (
+                # Optimistic Concurrency Control: Condition update on both is_manual_override = False
+                # and updated_at = original_updated_at. This prevents both:
+                # 1. Overwriting a manual override applied during evaluation.
+                # 2. Stale automated evaluations overwriting newer concurrent automated decisions.
+                query = (
                     supabase.table("shop_curation")
                     .update(curation_payload)
                     .eq("shop_id", str(shop_id))
                     .eq("is_manual_override", False)
-                    .execute()
                 )
+                if original_updated_at is not None:
+                    query = query.eq("updated_at", original_updated_at)
+
+                update_res = query.execute()
+
                 if not update_res.data:
-                    # 0 rows updated: check if manual override was applied concurrently
+                    # Conditional update affected 0 rows. Reload current state to determine cause.
                     latest_res = (
                         supabase.table("shop_curation")
                         .select("*")
                         .eq("shop_id", str(shop_id))
                         .execute()
                     )
-                    if latest_res.data and latest_res.data[0].get("is_manual_override"):
-                        latest_record = latest_res.data[0]
+                    if not latest_res.data:
+                        # Case C: The curation row unexpectedly does not exist
+                        shop_check = (
+                            supabase.table("shops")
+                            .select("id")
+                            .eq("id", str(shop_id))
+                            .execute()
+                        )
+                        if not shop_check.data:
+                            raise HTTPException(
+                                status_code=status.HTTP_404_NOT_FOUND,
+                                detail="Coffee shop not found.",
+                            )
+                        # Re-initialize safely to PENDING_REVIEW per Feature #20 lifecycle
+                        init_record = self.initialize_curation(shop_id=shop_id, supabase=supabase)
+                        return CurationEvaluationResponse(
+                            shop_id=str(shop_id),
+                            status=ShopEligibilityStatus.PENDING_REVIEW,
+                            location_count=None,
+                            evidence_source=None,
+                            confidence=CurationConfidence.LOW,
+                            is_manual_override=False,
+                            evaluated_at=init_record.get("evaluated_at") or now_iso,
+                            message="Shop curation record was re-initialized to PENDING_REVIEW.",
+                        )
+
+                    latest_record = latest_res.data[0]
+
+                    # Case A: Manual override occurred during evaluation
+                    if latest_record.get("is_manual_override"):
                         logger.warning(
                             f"Shop {shop_id} was manually overridden while evaluation was running. Preserving manual state."
                         )
@@ -173,18 +212,30 @@ class CurationService:
                             status=ShopEligibilityStatus(latest_record["status"]),
                             location_count=latest_record.get("location_count"),
                             evidence_source=latest_record.get("evidence_source") or "manual",
-                            confidence=CurationConfidence(latest_record.get("confidence", "HIGH")),
+                            confidence=CurationConfidence(latest_record["confidence"])
+                            if latest_record.get("confidence")
+                            else CurationConfidence.HIGH,
                             is_manual_override=True,
                             evaluated_at=latest_record.get("evaluated_at") or now_iso,
                             message="Manual override applied during evaluation was preserved.",
                         )
-                    # If row didn't exist initially, upsert it
-                    upsert_res = supabase.table("shop_curation").upsert(curation_payload).execute()
-                    if not upsert_res.data:
-                        raise HTTPException(
-                            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                            detail="Failed to save curation evaluation results.",
-                        )
+
+                    # Case B: Another automated evaluation changed the record first
+                    logger.info(
+                        f"Shop {shop_id} was updated concurrently by another evaluation. Preserving newer persisted decision."
+                    )
+                    return CurationEvaluationResponse(
+                        shop_id=str(shop_id),
+                        status=ShopEligibilityStatus(latest_record["status"]),
+                        location_count=latest_record.get("location_count"),
+                        evidence_source=latest_record.get("evidence_source") or "automated_evaluation",
+                        confidence=CurationConfidence(latest_record["confidence"])
+                        if latest_record.get("confidence")
+                        else CurationConfidence.LOW,
+                        is_manual_override=False,
+                        evaluated_at=latest_record.get("evaluated_at") or now_iso,
+                        message="A concurrent evaluation completed first. Latest persisted decision was preserved.",
+                    )
             else:
                 # force=True: Curator-authorized path replaces any active manual override
                 upsert_res = supabase.table("shop_curation").upsert(curation_payload).execute()

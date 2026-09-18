@@ -574,6 +574,7 @@ class TestCurationEndpoints(unittest.TestCase):
             "status": "PENDING_REVIEW",
             "is_manual_override": False,
             "confidence": "LOW",
+            "updated_at": "2026-09-18T00:00:00Z",
         }]
         # Manual override applied concurrently while search was running
         concurrent_override = [{
@@ -585,6 +586,7 @@ class TestCurationEndpoints(unittest.TestCase):
             "evidence_source": "manual",
             "curator_notes": "Manually excluded by curator",
             "evaluated_at": "2026-09-18T00:00:00Z",
+            "updated_at": "2026-09-18T00:00:03Z",
         }]
 
         call_idx = {"curation_select": 0}
@@ -623,6 +625,138 @@ class TestCurationEndpoints(unittest.TestCase):
         self.assertTrue(data["is_manual_override"])
         self.assertEqual(data["confidence"], "HIGH")
         self.assertIn("Manual override applied during evaluation was preserved", data["message"])
+
+    @patch("app.services.curation.service.GooglePlacesEvidenceProvider.search_locations")
+    def test_evaluate_shop_preserves_concurrent_automated_evaluation(self, mock_search):
+        # Evaluation A finds 1 candidate place (would normally evaluate to APPROVED)
+        mock_search.return_value = ProviderSearchResult(
+            places=[
+                CandidatePlace(place_id="ChIJ_1", display_name="Independent Cafe", formatted_address="10 Makati Ave, Makati"),
+            ],
+            next_page_token=None,
+            has_more=False,
+        )
+        shop_data = [{"id": self.shop_id, "name": "Independent Cafe", "google_place_id": "ChIJ_1"}]
+        # Initial curation state when Evaluation A starts
+        initial_curation = [{
+            "shop_id": self.shop_id,
+            "status": "PENDING_REVIEW",
+            "is_manual_override": False,
+            "confidence": "LOW",
+            "updated_at": "2026-09-18T00:00:00Z",
+        }]
+        # Evaluation B finished concurrently first, updating status to EXCLUDED and updated_at
+        newer_concurrent_evaluation = [{
+            "shop_id": self.shop_id,
+            "status": "EXCLUDED",
+            "location_count": 6,
+            "is_manual_override": False,
+            "confidence": "HIGH",
+            "evidence_source": "google_places_text_search",
+            "curator_notes": "Identified 6 qualifying locations",
+            "evaluated_at": "2026-09-18T00:00:05Z",
+            "updated_at": "2026-09-18T00:00:05Z",
+        }]
+
+        call_idx = {"curation_select": 0}
+
+        def table_router(table_name):
+            builder = MockQueryBuilder()
+            if table_name == "shops":
+                builder._data = shop_data
+                builder.mock_execute.return_value.data = shop_data
+            elif table_name == "shop_curation":
+                def dynamic_execute():
+                    resp = MagicMock()
+                    if builder.last_updated is not None:
+                        # Conditional update: since updated_at on the row is "2026-09-18T00:00:05Z"
+                        # but Evaluation A sends eq("updated_at", "2026-09-18T00:00:00Z"),
+                        # the OCC update matches 0 rows!
+                        resp.data = []
+                        return resp
+                    # Select queries: first initial check, second re-query after OCC mismatch
+                    if call_idx["curation_select"] == 0:
+                        call_idx["curation_select"] += 1
+                        resp.data = initial_curation
+                    else:
+                        resp.data = newer_concurrent_evaluation
+                    return resp
+
+                builder.mock_execute = dynamic_execute
+            elif table_name == "shop_curation_audit":
+                # Evaluation A's stale decision must NOT write an audit log
+                builder.mock_execute.side_effect = AssertionError("Stale evaluation should not log audit record!")
+            return builder
+
+        self.mock_supabase.table.side_effect = table_router
+
+        resp = self.client.post(f"/api/v1/shops/{self.shop_id}/curation/evaluate")
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertEqual(data["status"], "EXCLUDED")
+        self.assertFalse(data["is_manual_override"])
+        self.assertEqual(data["confidence"], "HIGH")
+        self.assertIn("A concurrent evaluation completed first. Latest persisted decision was preserved.", data["message"])
+
+    @patch("app.services.curation.service.GooglePlacesEvidenceProvider.search_locations")
+    def test_evaluate_shop_reinitializes_if_curation_row_deleted(self, mock_search):
+        mock_search.return_value = ProviderSearchResult(
+            places=[
+                CandidatePlace(place_id="ChIJ_1", display_name="Local Cafe", formatted_address="10 Makati Ave, Makati"),
+            ],
+            next_page_token=None,
+            has_more=False,
+        )
+        shop_data = [{"id": self.shop_id, "name": "Local Cafe"}]
+        initial_curation = [{
+            "shop_id": self.shop_id,
+            "status": "PENDING_REVIEW",
+            "is_manual_override": False,
+            "confidence": "LOW",
+            "updated_at": "2026-09-18T00:00:00Z",
+        }]
+
+        call_idx = {"curation_select": 0}
+
+        def table_router(table_name):
+            builder = MockQueryBuilder()
+            if table_name == "shops":
+                builder._data = shop_data
+                builder.mock_execute.return_value.data = shop_data
+            elif table_name == "shop_curation":
+                def dynamic_execute():
+                    resp = MagicMock()
+                    if builder.last_updated is not None:
+                        # Row was deleted in-flight, update affects 0 rows
+                        resp.data = []
+                        return resp
+                    if builder.last_inserted is not None:
+                        # re-initialization insert
+                        resp.data = [{
+                            "shop_id": self.shop_id,
+                            "status": "PENDING_REVIEW",
+                            "confidence": "LOW",
+                            "is_manual_override": False,
+                        }]
+                        return resp
+                    if call_idx["curation_select"] == 0:
+                        call_idx["curation_select"] += 1
+                        resp.data = initial_curation
+                    else:
+                        # re-query after update failure finds no row (deleted)
+                        resp.data = []
+                    return resp
+
+                builder.mock_execute = dynamic_execute
+            return builder
+
+        self.mock_supabase.table.side_effect = table_router
+
+        resp = self.client.post(f"/api/v1/shops/{self.shop_id}/curation/evaluate")
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertEqual(data["status"], "PENDING_REVIEW")
+        self.assertIn("re-initialized", data["message"])
 
     def test_evaluate_shop_not_found(self):
         builder = MockQueryBuilder(data=[])
