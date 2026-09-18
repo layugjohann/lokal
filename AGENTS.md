@@ -43,27 +43,24 @@ ChatGPT does **not** directly implement production code unless explicitly reques
 
 Responsible for:
 
-* Reviewing assigned GitHub Issues
-* Reviewing project documentation
+* Reviewing assigned GitHub Issues and project documentation
 * Formulating implementation plans
 * Implementing approved GitHub Issues
-* Refactoring code when explicitly within approved scope
-* Writing tests
-* Updating documentation when appropriate
-* Running builds, tests, type checks, linting, and other relevant verification
+* Creating feature branches after Product Owner approval
+* Writing tests and running verification
+* Committing and pushing implementation work to the feature branch
+* Opening Pull Requests after implementation is verified
+* Evaluating and resolving valid CodeRabbit findings on the active Pull Request
+* Updating documentation when assigned through the documentation workflow
 * Reporting completed work, assumptions, risks, trade-offs, and limitations
 
-Agy must remain strictly within the scope of the assigned GitHub Issue and the Product Owner-approved implementation plan.
-
-Agy does **not** own repository management or Git history.
+Agy must remain strictly within the scope of the GitHub Issue and Product Owner-approved implementation plan.
 
 Agy must not:
 
-* create Git branches,
-* commit changes,
-* push changes,
-* create Pull Requests,
 * merge Pull Requests,
+* override Product Owner decisions,
+* implement unapproved scope,
 * rewrite Git history,
 * force push,
 * modify unrelated branches.
@@ -174,30 +171,25 @@ Every dependency should have a clear engineering justification.
 
 # Git Workflow
 
-Implementation work always occurs on a dedicated feature branch.
+Implementation work occurs on a dedicated feature branch.
 
-The Product Owner creates and manages branches.
+After the Product Owner approves Agy's implementation plan, Agy is authorized to:
 
-Implementation agents work only on the active feature branch.
+* create the feature branch,
+* implement the approved work,
+* commit focused changes,
+* push the feature branch,
+* open the Pull Request.
 
-Do not:
+Agy must never:
 
-* create release branches,
-* merge branches,
+* merge Pull Requests,
 * rewrite Git history,
 * force push,
-* modify unrelated branches.
+* modify unrelated branches,
+* bypass the review process.
 
----
-
-# Repository management belongs to the Product Owner.
-
-AI implementation agents must not:
-
-- create Git branches
-- rename branches
-- merge Pull Requests
-- delete branches
+The Product Owner retains final authority over the merge and completion decision.
 
 ## Post-Implementation Verification
 
@@ -303,11 +295,10 @@ When presenting work:
 * explain important decisions,
 * mention assumptions,
 * identify risks,
-* summarize completed work.
+* summarize completed work,
+* provide verification results.
 
-If uncertain:
-
-Ask before implementing.
+If uncertain about a material product or architectural decision, ask before implementing.
 
 Never guess on architectural or product decisions.
 
