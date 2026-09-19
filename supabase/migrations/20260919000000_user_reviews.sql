@@ -216,7 +216,9 @@ BEGIN
     -- Verify that the caller has an existing review for this shop
     IF NOT EXISTS (
         SELECT 1 FROM reviews
-        WHERE user_id = v_user_id AND shop_id = p_shop_id
+        WHERE user_id = v_user_id
+          AND shop_id = p_shop_id
+          AND source = 'lokal'
     ) THEN
         RAISE EXCEPTION 'You have not reviewed this coffee shop.'
             USING ERRCODE = 'P0002';
@@ -228,7 +230,9 @@ BEGIN
         rating = COALESCE(p_rating, rating),
         content = CASE WHEN p_update_content THEN NULLIF(TRIM(p_content), '') ELSE content END,
         updated_at = NOW()
-    WHERE user_id = v_user_id AND shop_id = p_shop_id
+    WHERE user_id = v_user_id
+      AND shop_id = p_shop_id
+      AND source = 'lokal'
     RETURNING * INTO v_review;
 
     RETURN v_review;

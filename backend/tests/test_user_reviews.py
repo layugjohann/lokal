@@ -57,7 +57,7 @@ class MockQueryBuilder:
         self.last_updated = None
         self.mock_execute = MagicMock()
         mock_resp = MagicMock()
-        mock_resp.data = self._data
+        mock_resp.data = list(self._data) if self._data is not None else None
         self.mock_execute.return_value = mock_resp
 
     def select(self, cols="*"):
@@ -66,6 +66,11 @@ class MockQueryBuilder:
     def eq(self, col, val):
         self.last_eq = (col, val)
         self.all_eq.append((col, val))
+        if self.mock_execute.return_value.data is not None:
+            self.mock_execute.return_value.data = [
+                r for r in self.mock_execute.return_value.data
+                if isinstance(r, dict) and (col not in r or r.get(col) == val)
+            ]
         return self
 
     def order(self, col, desc=False):
@@ -598,6 +603,34 @@ class TestUserReviewEndpoints(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 404)
         self.assertEqual(response.json()["detail"], "You have not reviewed this coffee shop.")
+
+    def test_patch_review_rejects_non_lokal_source(self):
+        # A review row exists for this user and shop, but belongs to external/legacy source 'google'
+        legacy_google_row = {
+            "id": "22222222-3333-4444-5555-666666666666",
+            "shop_id": self.shop_id,
+            "user_id": self.user_id,
+            "author_name": "Maria Santos",
+            "rating": 5,
+            "content": "Imported Google review",
+            "source": "google",
+            "created_at": "2025-01-01T01:00:00Z",
+            "updated_at": "2025-01-01T01:00:00Z",
+        }
+        self.reviews_builder = MockQueryBuilder(data=[legacy_google_row])
+
+        response = self.client.patch(
+            f"/api/v1/shops/{self.shop_id}/reviews/mine",
+            json={"rating": 4},
+            headers=self.auth_headers,
+        )
+        # Verify 404 because user has no first-party LOKAL review
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.json()["detail"], "You have not reviewed this coffee shop.")
+        # Verify application lookup explicitly filtered by source = 'lokal'
+        self.assertIn(("source", "lokal"), self.reviews_builder.all_eq)
+        # Verify RPC was never invoked because pre-check isolated the row
+        self.assertNotEqual(self.mock_rpc.last_rpc_name, "update_user_review")
 
     # --- 4. DELETE /api/v1/shops/{shop_id}/reviews/mine Tests ---
 

@@ -407,6 +407,7 @@ class ReviewService:
                 .select("id")
                 .eq("shop_id", str_shop_id)
                 .eq("user_id", user.id)
+                .eq("source", "lokal")
                 .execute()
             )
             if not existing.data:
