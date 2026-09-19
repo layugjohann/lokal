@@ -16,7 +16,9 @@ from .curation import (
 from .review import (
     ProviderAttribution,
     ReviewAuthor,
+    ReviewCreate,
     ReviewSource,
+    ReviewUpdate,
     ShopReviewsResponse,
     UnifiedReview,
 )
@@ -42,6 +44,8 @@ __all__ = [
     "NearbyShopResponse",
     "ReviewSource",
     "ReviewAuthor",
+    "ReviewCreate",
+    "ReviewUpdate",
     "UnifiedReview",
     "ProviderAttribution",
     "ShopReviewsResponse",
@@ -51,5 +55,3 @@ __all__ = [
     "CurationOverrideRequest",
     "CurationEvaluationResponse",
 ]
-
-

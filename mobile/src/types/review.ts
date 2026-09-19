@@ -15,8 +15,20 @@ export interface UnifiedReview {
   language?: string | null;
   author: ReviewAuthor;
   published_at?: string | null;
+  updated_at?: string | null;
+  is_edited?: boolean;
   relative_time?: string | null;
   report_url?: string | null;
+}
+
+export interface ReviewCreateInput {
+  rating: number;
+  content?: string | null;
+}
+
+export interface ReviewUpdateInput {
+  rating?: number | null;
+  content?: string | null;
 }
 
 export interface ProviderAttribution {
@@ -30,7 +42,13 @@ export interface ShopReviewsResponse {
   shop_id: string;
   average_rating?: number | null;
   total_reviews_count?: number | null;
+  lokal_average_rating?: number | null;
+  lokal_reviews_count?: number;
   reviews: UnifiedReview[];
   attributions: ProviderAttribution[];
   has_more: boolean;
+}
+
+export interface MessageResponse {
+  message: string;
 }
