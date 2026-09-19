@@ -235,6 +235,8 @@ BEGIN
 END;
 $$;
 
--- Grant execution privileges on secure review RPCs to authenticated role
+-- Restrict execution privileges on secure review RPCs to authenticated role only
+REVOKE EXECUTE ON FUNCTION create_user_review(UUID, INTEGER, TEXT) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION update_user_review(UUID, INTEGER, TEXT, BOOLEAN) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION create_user_review(UUID, INTEGER, TEXT) TO authenticated;
 GRANT EXECUTE ON FUNCTION update_user_review(UUID, INTEGER, TEXT, BOOLEAN) TO authenticated;

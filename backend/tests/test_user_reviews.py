@@ -51,6 +51,7 @@ class MockQueryBuilder:
     def __init__(self, data=None):
         self._data = data if data is not None else []
         self.last_eq = None
+        self.all_eq = []
         self.last_order = None
         self.last_inserted = None
         self.last_updated = None
@@ -64,6 +65,7 @@ class MockQueryBuilder:
 
     def eq(self, col, val):
         self.last_eq = (col, val)
+        self.all_eq.append((col, val))
         return self
 
     def order(self, col, desc=False):
@@ -435,6 +437,7 @@ class TestUserReviewEndpoints(unittest.TestCase):
         self.assertEqual(data["text"], "Loved the espresso!")
         self.assertEqual(data["author"]["display_name"], "Maria Santos")
         self.assertFalse(data["is_edited"])
+        self.assertIn(("source", "lokal"), self.reviews_builder.all_eq)
 
     def test_get_my_review_not_found(self):
         self.reviews_builder = MockQueryBuilder(data=[])
@@ -608,6 +611,7 @@ class TestUserReviewEndpoints(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["message"], "Review deleted successfully.")
+        self.assertIn(("source", "lokal"), self.reviews_builder.all_eq)
 
     def test_delete_my_review_allowed_when_shop_excluded(self):
         self.curation_builder = MockQueryBuilder(data=[{"status": "EXCLUDED"}])

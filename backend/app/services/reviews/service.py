@@ -138,6 +138,7 @@ class ReviewService:
                 supabase.table("reviews")
                 .select("*")
                 .eq("shop_id", str_shop_id)
+                .eq("source", "lokal")
                 .order("created_at", desc=True)
                 .execute()
             )
@@ -322,6 +323,7 @@ class ReviewService:
                 .select("*")
                 .eq("shop_id", str_shop_id)
                 .eq("user_id", user.id)
+                .eq("source", "lokal")
                 .execute()
             )
             if not res.data:
@@ -482,6 +484,7 @@ class ReviewService:
                 .select("id")
                 .eq("shop_id", str_shop_id)
                 .eq("user_id", user.id)
+                .eq("source", "lokal")
                 .execute()
             )
             if not existing.data:
@@ -490,7 +493,7 @@ class ReviewService:
                     detail="You have not reviewed this coffee shop.",
                 )
 
-            supabase.table("reviews").delete().eq("shop_id", str_shop_id).eq("user_id", user.id).execute()
+            supabase.table("reviews").delete().eq("shop_id", str_shop_id).eq("user_id", user.id).eq("source", "lokal").execute()
         except HTTPException:
             raise
         except APIError as exc:
