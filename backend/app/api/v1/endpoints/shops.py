@@ -1,5 +1,5 @@
 import logging
-from typing import Annotated
+from typing import Annotated, Optional
 from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from postgrest.exceptions import APIError
@@ -140,8 +140,17 @@ def search_nearby_shops(
     radius: float = Query(default=5000.0, gt=0.0, le=50000.0, description="Search radius in meters (max 50,000m)"),
     limit: int = Query(default=50, ge=1, le=100, description="Maximum number of shops to return"),
     offset: int = Query(default=0, ge=0, description="Number of shops to skip"),
+    query: Optional[str] = Query(default=None, min_length=1, max_length=100, description="Search coffee shops by name"),
+    min_rating: Optional[float] = Query(default=None, ge=0.0, le=5.0, description="Filter by minimum rating"),
+    sort_by: str = Query(default="distance", pattern="^(distance|rating)$", description="Sort criteria: 'distance' or 'rating'"),
 ) -> list[NearbyShopResponse]:
-    """Retrieve nearby coffee shops within a given radius using bounding box and Haversine distance."""
+    """Retrieve nearby coffee shops within a given radius using bounding box, Haversine distance, and optional search/filter/sort criteria."""
+    search_query: Optional[str] = None
+    if query is not None:
+        trimmed = query.strip()
+        if trimmed:
+            search_query = trimmed
+
     try:
         result = supabase.rpc(
             "get_nearby_shops",
@@ -151,6 +160,9 @@ def search_nearby_shops(
                 "radius_meters": radius,
                 "result_limit": limit,
                 "result_offset": offset,
+                "search_query": search_query,
+                "min_rating": min_rating,
+                "sort_by": sort_by,
             },
         ).execute()
         return result.data or []
