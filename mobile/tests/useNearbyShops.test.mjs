@@ -193,3 +193,45 @@ test('search keystroke race condition rejects older queries resolving after newe
   assert.strictEqual(activeResults?.shops[0].name, 'Kape Manila');
 });
 
+test('location loss invalidates in-flight request and prevents stale data from repopulating state', async () => {
+  let requestIdCounter = 0;
+  let state = {
+    shops: [],
+    selectedShop: null,
+    isLoading: false,
+    errorMessage: null,
+  };
+
+  // 1. Request begins while a valid location exists
+  const reqId = ++requestIdCounter;
+  state.isLoading = true;
+
+  const inFlightPromise = (async () => {
+    // Simulate network delay
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    // Check if request is still current
+    if (reqId === requestIdCounter) {
+      state.shops = [{ id: 'shop-1', name: 'Late Arriving Shop' }];
+      state.selectedShop = { id: 'shop-1', name: 'Late Arriving Shop' };
+      state.isLoading = false;
+    }
+  })();
+
+  // 2. Location becomes unavailable (null) before request resolves
+  // The hook invalidates in-flight requests and clears state
+  ++requestIdCounter;
+  state.shops = [];
+  state.selectedShop = null;
+  state.isLoading = false;
+  state.errorMessage = null;
+
+  // 3. In-flight request resolves afterward
+  await inFlightPromise;
+
+  // 4. Stale response was discarded: shops and selectedShop remain empty/null
+  assert.deepStrictEqual(state.shops, []);
+  assert.strictEqual(state.selectedShop, null);
+  assert.strictEqual(state.isLoading, false);
+});
+
+

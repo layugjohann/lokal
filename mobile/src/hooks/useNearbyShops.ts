@@ -61,8 +61,11 @@ export function useNearbyShops(
 
   const fetchShops = useCallback(async () => {
     if (!location) {
+      ++requestIdRef.current;
       setShops([]);
       setSelectedShop(null);
+      setIsLoading(false);
+      setErrorMessage(null);
       return;
     }
 
@@ -115,8 +118,10 @@ export function useNearbyShops(
     if (location) {
       fetchShops();
     } else {
+      ++requestIdRef.current;
       setShops([]);
       setSelectedShop(null);
+      setIsLoading(false);
       setErrorMessage(null);
     }
   }, [location?.latitude, location?.longitude, fetchShops]);
