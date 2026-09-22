@@ -132,7 +132,14 @@ BEGIN
               OR (NOT crosses_antimeridian AND s.longitude BETWEEN lng_min AND lng_max)
               OR (crosses_antimeridian AND (s.longitude >= lng_min OR s.longitude <= lng_max))
           )
-          AND (clean_query IS NULL OR s.name ILIKE ('%' || clean_query || '%'))
+          AND (
+              clean_query IS NULL
+              OR s.name ILIKE (
+                  '%' ||
+                  REPLACE(REPLACE(REPLACE(clean_query, E'\\', E'\\\\'), '%', E'\\%'), '_', E'\\_') ||
+                  '%'
+              ) ESCAPE E'\\'
+          )
           AND (min_rating IS NULL OR s.rating >= min_rating)
     ),
     calculated_shops AS (

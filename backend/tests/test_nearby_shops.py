@@ -464,6 +464,32 @@ class TestNearbyShopEndpoints(unittest.TestCase):
             },
         )
 
+    def test_nearby_search_query_with_wildcards_forwarded_literally(self):
+        """Verify queries containing special pattern characters (%, _, \\) are forwarded intact to RPC."""
+        mock_execute = MagicMock()
+        mock_execute.return_value.data = [self.sample_nearby_shops[0]]
+        self.mock_supabase.rpc.return_value.execute = mock_execute
+
+        response = self.client.get(
+            "/api/v1/shops/nearby?latitude=14.5995&longitude=120.9842&query=100%25_Coffee",
+            headers=self.auth_headers,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.mock_supabase.rpc.assert_called_once_with(
+            "get_nearby_shops",
+            {
+                "user_lat": 14.5995,
+                "user_lng": 120.9842,
+                "radius_meters": 5000.0,
+                "result_limit": 50,
+                "result_offset": 0,
+                "search_query": "100%_Coffee",
+                "min_rating": None,
+                "sort_by": "distance",
+            },
+        )
+
     def test_nearby_search_query_whitespace_only_normalized_to_none(self):
         """Verify whitespace-only query parameter is normalized to None."""
         mock_execute = MagicMock()
