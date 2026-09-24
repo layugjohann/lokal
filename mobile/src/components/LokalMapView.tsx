@@ -42,6 +42,16 @@ export default function LokalMapView({ authToken }: LokalMapViewProps = {}) {
     selectedShop,
     selectShop,
     refetch: refetchShops,
+    searchQuery,
+    setSearchQuery,
+    minRating,
+    setMinRating,
+    radius,
+    setRadius,
+    sortBy,
+    setSortBy,
+    resetFilters,
+    hasActiveFilters,
   } = useNearbyShops(location, authToken);
 
   const mapRef = useRef<MapView>(null);
@@ -125,6 +135,16 @@ export default function LokalMapView({ authToken }: LokalMapViewProps = {}) {
           onCloseDetail={handleCloseDetail}
           onRetry={refetchShops}
           authToken={authToken}
+          searchQuery={searchQuery}
+          onSearchChange={setSearchQuery}
+          minRating={minRating}
+          onMinRatingChange={setMinRating}
+          radius={radius}
+          onRadiusChange={setRadius}
+          sortBy={sortBy}
+          onSortByChange={setSortBy}
+          onResetFilters={resetFilters}
+          hasActiveFilters={hasActiveFilters}
         />
       )}
 

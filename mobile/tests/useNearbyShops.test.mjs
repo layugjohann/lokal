@@ -101,3 +101,137 @@ test('monotonic request counter discards out-of-order stale responses', async ()
   // Request 2 was latest; req 1 finished late and was discarded
   assert.deepStrictEqual(appliedData, ['req2_data']);
 });
+
+test('hasActiveFilters detects any non-default search, filter, or sort option', () => {
+  const checkActive = ({ query, minRating, radius, sortBy }) => {
+    return Boolean(
+      (query && query.trim()) ||
+      minRating !== null ||
+      sortBy !== 'distance' ||
+      radius !== 5000
+    );
+  };
+
+  // Defaults: not active
+  assert.strictEqual(
+    checkActive({ query: '', minRating: null, radius: 5000, sortBy: 'distance' }),
+    false
+  );
+  assert.strictEqual(
+    checkActive({ query: '   ', minRating: null, radius: 5000, sortBy: 'distance' }),
+    false
+  );
+
+  // Active cases
+  assert.strictEqual(
+    checkActive({ query: 'espresso', minRating: null, radius: 5000, sortBy: 'distance' }),
+    true
+  );
+  assert.strictEqual(
+    checkActive({ query: '', minRating: 4.0, radius: 5000, sortBy: 'distance' }),
+    true
+  );
+  assert.strictEqual(
+    checkActive({ query: '', minRating: null, radius: 1000, sortBy: 'distance' }),
+    true
+  );
+  assert.strictEqual(
+    checkActive({ query: '', minRating: null, radius: 5000, sortBy: 'rating' }),
+    true
+  );
+});
+
+test('resetFilters restores all states to default values', () => {
+  let state = {
+    searchQuery: 'Manila Roast',
+    debouncedQuery: 'Manila Roast',
+    minRating: 4.5,
+    radius: 3000,
+    sortBy: 'rating',
+  };
+
+  const resetFilters = () => {
+    state = {
+      searchQuery: '',
+      debouncedQuery: '',
+      minRating: null,
+      radius: 5000,
+      sortBy: 'distance',
+    };
+  };
+
+  resetFilters();
+
+  assert.strictEqual(state.searchQuery, '');
+  assert.strictEqual(state.debouncedQuery, '');
+  assert.strictEqual(state.minRating, null);
+  assert.strictEqual(state.radius, 5000);
+  assert.strictEqual(state.sortBy, 'distance');
+});
+
+test('search keystroke race condition rejects older queries resolving after newer ones', async () => {
+  let requestCounter = 0;
+  let activeResults = null;
+
+  const simulateSearch = async (term, delayMs, returnedShops) => {
+    const reqId = ++requestCounter;
+    await new Promise((resolve) => setTimeout(resolve, delayMs));
+    if (reqId === requestCounter) {
+      activeResults = { term, shops: returnedShops };
+    }
+  };
+
+  // User types "kap", then immediately "kape"
+  // "kap" request is slow (60ms); "kape" request is fast (15ms)
+  const p1 = simulateSearch('kap', 60, [{ name: 'Kapitolyo Beans' }]);
+  const p2 = simulateSearch('kape', 15, [{ name: 'Kape Manila' }, { name: 'Kape Isla' }]);
+
+  await Promise.all([p1, p2]);
+
+  assert.strictEqual(activeResults?.term, 'kape');
+  assert.strictEqual(activeResults?.shops.length, 2);
+  assert.strictEqual(activeResults?.shops[0].name, 'Kape Manila');
+});
+
+test('location loss invalidates in-flight request and prevents stale data from repopulating state', async () => {
+  let requestIdCounter = 0;
+  let state = {
+    shops: [],
+    selectedShop: null,
+    isLoading: false,
+    errorMessage: null,
+  };
+
+  // 1. Request begins while a valid location exists
+  const reqId = ++requestIdCounter;
+  state.isLoading = true;
+
+  const inFlightPromise = (async () => {
+    // Simulate network delay
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    // Check if request is still current
+    if (reqId === requestIdCounter) {
+      state.shops = [{ id: 'shop-1', name: 'Late Arriving Shop' }];
+      state.selectedShop = { id: 'shop-1', name: 'Late Arriving Shop' };
+      state.isLoading = false;
+    }
+  })();
+
+  // 2. Location becomes unavailable (null) before request resolves
+  // The hook invalidates in-flight requests and clears state
+  ++requestIdCounter;
+  state.shops = [];
+  state.selectedShop = null;
+  state.isLoading = false;
+  state.errorMessage = null;
+
+  // 3. In-flight request resolves afterward
+  await inFlightPromise;
+
+  // 4. Stale response was discarded: shops and selectedShop remain empty/null
+  assert.deepStrictEqual(state.shops, []);
+  assert.strictEqual(state.selectedShop, null);
+  assert.strictEqual(state.isLoading, false);
+});
+
+

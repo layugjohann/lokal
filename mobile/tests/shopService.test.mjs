@@ -166,3 +166,60 @@ test('fetchNearbyShops fallback error when response is not json', async () => {
     globalThis.fetch = originalFetch;
   }
 });
+
+test('fetchNearbyShops correctly serializes query, min_rating, and sort_by', async () => {
+  const originalFetch = globalThis.fetch;
+  let requestedUrl = '';
+
+  globalThis.fetch = async (input) => {
+    requestedUrl = input.toString();
+    return {
+      ok: true,
+      json: async () => [],
+    };
+  };
+
+  try {
+    await fetchNearbyShops({
+      latitude: 14.5995,
+      longitude: 120.9842,
+      query: 'espresso',
+      minRating: 4.5,
+      sortBy: 'rating',
+    });
+
+    // Specifically verify that the HTTP query parameter is 'query' (not 'search_query')
+    assert.ok(requestedUrl.includes('query=espresso'), 'URL must contain query=espresso');
+    assert.ok(!requestedUrl.includes('search_query='), 'URL must not contain search_query=');
+    assert.ok(requestedUrl.includes('min_rating=4.5'), 'URL must contain min_rating=4.5');
+    assert.ok(requestedUrl.includes('sort_by=rating'), 'URL must contain sort_by=rating');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('fetchNearbyShops strips and ignores whitespace-only query', async () => {
+  const originalFetch = globalThis.fetch;
+  let requestedUrl = '';
+
+  globalThis.fetch = async (input) => {
+    requestedUrl = input.toString();
+    return {
+      ok: true,
+      json: async () => [],
+    };
+  };
+
+  try {
+    await fetchNearbyShops({
+      latitude: 14.5995,
+      longitude: 120.9842,
+      query: '   ',
+    });
+
+    assert.ok(!requestedUrl.includes('query='), 'URL must not contain query param for whitespace string');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+

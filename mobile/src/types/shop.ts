@@ -17,4 +17,8 @@ export interface NearbySearchParams {
   radius?: number;
   limit?: number;
   offset?: number;
+  query?: string;
+  minRating?: number;
+  sortBy?: 'distance' | 'rating';
 }
+

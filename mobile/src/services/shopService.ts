@@ -39,7 +39,7 @@ export async function fetchNearbyShops(
   params: NearbySearchParams,
   authToken?: string | null
 ): Promise<Shop[]> {
-  const { latitude, longitude, radius = 5000, limit = 50, offset = 0 } = params;
+  const { latitude, longitude, radius = 5000, limit = 50, offset = 0, query, minRating, sortBy } = params;
   const baseUrl = getApiBaseUrl();
 
   const queryParams = new URLSearchParams({
@@ -49,6 +49,21 @@ export async function fetchNearbyShops(
     limit: limit.toString(),
     offset: offset.toString(),
   });
+
+  if (query !== undefined && query !== null) {
+    const trimmed = query.trim();
+    if (trimmed) {
+      queryParams.append('query', trimmed);
+    }
+  }
+
+  if (minRating !== undefined && minRating !== null && !isNaN(minRating)) {
+    queryParams.append('min_rating', minRating.toString());
+  }
+
+  if (sortBy) {
+    queryParams.append('sort_by', sortBy);
+  }
 
   const url = `${baseUrl}/api/v1/shops/nearby?${queryParams.toString()}`;
 

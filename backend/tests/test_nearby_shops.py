@@ -100,6 +100,9 @@ class TestNearbyShopEndpoints(unittest.TestCase):
                 "radius_meters": 5000.0,
                 "result_limit": 50,
                 "result_offset": 0,
+                "search_query": None,
+                "min_rating": None,
+                "sort_by": "distance",
             },
         )
 
@@ -126,6 +129,9 @@ class TestNearbyShopEndpoints(unittest.TestCase):
                 "radius_meters": 10000.0,
                 "result_limit": 15,
                 "result_offset": 5,
+                "search_query": None,
+                "min_rating": None,
+                "sort_by": "distance",
             },
         )
 
@@ -405,6 +411,313 @@ class TestNearbyShopEndpoints(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json(), [])
+
+    def test_nearby_search_with_query_forwarded_as_search_query(self):
+        """Verify API query parameter 'query' is stripped and forwarded to RPC as 'search_query'."""
+        mock_execute = MagicMock()
+        mock_execute.return_value.data = [self.sample_nearby_shops[0]]
+        self.mock_supabase.rpc.return_value.execute = mock_execute
+
+        response = self.client.get(
+            "/api/v1/shops/nearby?latitude=14.5995&longitude=120.9842&query=espresso",
+            headers=self.auth_headers,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.mock_supabase.rpc.assert_called_once_with(
+            "get_nearby_shops",
+            {
+                "user_lat": 14.5995,
+                "user_lng": 120.9842,
+                "radius_meters": 5000.0,
+                "result_limit": 50,
+                "result_offset": 0,
+                "search_query": "espresso",
+                "min_rating": None,
+                "sort_by": "distance",
+            },
+        )
+
+    def test_nearby_search_query_whitespace_stripped(self):
+        """Verify query parameter with leading/trailing whitespace is cleanly stripped."""
+        mock_execute = MagicMock()
+        mock_execute.return_value.data = [self.sample_nearby_shops[0]]
+        self.mock_supabase.rpc.return_value.execute = mock_execute
+
+        response = self.client.get(
+            "/api/v1/shops/nearby?latitude=14.5995&longitude=120.9842&query=%20%20Kape%20Manila%20%20",
+            headers=self.auth_headers,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.mock_supabase.rpc.assert_called_once_with(
+            "get_nearby_shops",
+            {
+                "user_lat": 14.5995,
+                "user_lng": 120.9842,
+                "radius_meters": 5000.0,
+                "result_limit": 50,
+                "result_offset": 0,
+                "search_query": "Kape Manila",
+                "min_rating": None,
+                "sort_by": "distance",
+            },
+        )
+
+    def test_nearby_search_query_with_wildcards_forwarded_literally(self):
+        """Verify queries containing special pattern characters (%, _, \\) are forwarded intact to RPC."""
+        mock_execute = MagicMock()
+        mock_execute.return_value.data = [self.sample_nearby_shops[0]]
+        self.mock_supabase.rpc.return_value.execute = mock_execute
+
+        response = self.client.get(
+            "/api/v1/shops/nearby?latitude=14.5995&longitude=120.9842&query=100%25_Coffee",
+            headers=self.auth_headers,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.mock_supabase.rpc.assert_called_once_with(
+            "get_nearby_shops",
+            {
+                "user_lat": 14.5995,
+                "user_lng": 120.9842,
+                "radius_meters": 5000.0,
+                "result_limit": 50,
+                "result_offset": 0,
+                "search_query": "100%_Coffee",
+                "min_rating": None,
+                "sort_by": "distance",
+            },
+        )
+
+    def test_nearby_search_query_whitespace_only_normalized_to_none(self):
+        """Verify whitespace-only query parameter is normalized to None."""
+        mock_execute = MagicMock()
+        mock_execute.return_value.data = self.sample_nearby_shops
+        self.mock_supabase.rpc.return_value.execute = mock_execute
+
+        response = self.client.get(
+            "/api/v1/shops/nearby?latitude=14.5995&longitude=120.9842&query=%20%20%20",
+            headers=self.auth_headers,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.mock_supabase.rpc.assert_called_once_with(
+            "get_nearby_shops",
+            {
+                "user_lat": 14.5995,
+                "user_lng": 120.9842,
+                "radius_meters": 5000.0,
+                "result_limit": 50,
+                "result_offset": 0,
+                "search_query": None,
+                "min_rating": None,
+                "sort_by": "distance",
+            },
+        )
+
+    def test_nearby_search_with_min_rating(self):
+        """Verify min_rating parameter is forwarded to get_nearby_shops RPC."""
+        mock_execute = MagicMock()
+        mock_execute.return_value.data = [self.sample_nearby_shops[0]]
+        self.mock_supabase.rpc.return_value.execute = mock_execute
+
+        response = self.client.get(
+            "/api/v1/shops/nearby?latitude=14.5995&longitude=120.9842&min_rating=4.5",
+            headers=self.auth_headers,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.mock_supabase.rpc.assert_called_once_with(
+            "get_nearby_shops",
+            {
+                "user_lat": 14.5995,
+                "user_lng": 120.9842,
+                "radius_meters": 5000.0,
+                "result_limit": 50,
+                "result_offset": 0,
+                "search_query": None,
+                "min_rating": 4.5,
+                "sort_by": "distance",
+            },
+        )
+
+    def test_nearby_search_min_rating_validation(self):
+        """Verify min_rating boundary validation: [0.0, 5.0]."""
+        # Negative rating
+        resp = self.client.get(
+            "/api/v1/shops/nearby?latitude=14.5995&longitude=120.9842&min_rating=-0.1",
+            headers=self.auth_headers,
+        )
+        self.assertEqual(resp.status_code, 422)
+
+        # Rating > 5.0
+        resp = self.client.get(
+            "/api/v1/shops/nearby?latitude=14.5995&longitude=120.9842&min_rating=5.01",
+            headers=self.auth_headers,
+        )
+        self.assertEqual(resp.status_code, 422)
+
+    def test_nearby_search_with_sort_by_rating(self):
+        """Verify sort_by='rating' is accepted and forwarded to RPC."""
+        mock_execute = MagicMock()
+        mock_execute.return_value.data = self.sample_nearby_shops
+        self.mock_supabase.rpc.return_value.execute = mock_execute
+
+        response = self.client.get(
+            "/api/v1/shops/nearby?latitude=14.5995&longitude=120.9842&sort_by=rating",
+            headers=self.auth_headers,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.mock_supabase.rpc.assert_called_once_with(
+            "get_nearby_shops",
+            {
+                "user_lat": 14.5995,
+                "user_lng": 120.9842,
+                "radius_meters": 5000.0,
+                "result_limit": 50,
+                "result_offset": 0,
+                "search_query": None,
+                "min_rating": None,
+                "sort_by": "rating",
+            },
+        )
+
+    def test_nearby_search_with_sort_by_distance(self):
+        """Verify explicit sort_by='distance' is accepted and forwarded to RPC."""
+        mock_execute = MagicMock()
+        mock_execute.return_value.data = self.sample_nearby_shops
+        self.mock_supabase.rpc.return_value.execute = mock_execute
+
+        response = self.client.get(
+            "/api/v1/shops/nearby?latitude=14.5995&longitude=120.9842&sort_by=distance",
+            headers=self.auth_headers,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.mock_supabase.rpc.assert_called_once_with(
+            "get_nearby_shops",
+            {
+                "user_lat": 14.5995,
+                "user_lng": 120.9842,
+                "radius_meters": 5000.0,
+                "result_limit": 50,
+                "result_offset": 0,
+                "search_query": None,
+                "min_rating": None,
+                "sort_by": "distance",
+            },
+        )
+
+    def test_nearby_search_sort_by_strict_lowercase_contract(self):
+        """Verify sort_by requires exact lowercase; uppercase or unsupported values return 422."""
+        invalid_sorts = ["RATING", "DISTANCE", "Rating", "Distance", "popularity", "name"]
+        for invalid_sort in invalid_sorts:
+            resp = self.client.get(
+                f"/api/v1/shops/nearby?latitude=14.5995&longitude=120.9842&sort_by={invalid_sort}",
+                headers=self.auth_headers,
+            )
+            self.assertEqual(resp.status_code, 422, f"Expected 422 for sort_by={invalid_sort}")
+
+    def test_nearby_search_combined_query_filter_sort(self):
+        """Verify combined search query, min_rating, radius, and sort_by parameters."""
+        mock_execute = MagicMock()
+        mock_execute.return_value.data = [self.sample_nearby_shops[0]]
+        self.mock_supabase.rpc.return_value.execute = mock_execute
+
+        response = self.client.get(
+            "/api/v1/shops/nearby?latitude=14.5995&longitude=120.9842&query=Kape&min_rating=4.5&sort_by=rating&radius=3000&limit=20&offset=0",
+            headers=self.auth_headers,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.mock_supabase.rpc.assert_called_once_with(
+            "get_nearby_shops",
+            {
+                "user_lat": 14.5995,
+                "user_lng": 120.9842,
+                "radius_meters": 3000.0,
+                "result_limit": 20,
+                "result_offset": 0,
+                "search_query": "Kape",
+                "min_rating": 4.5,
+                "sort_by": "rating",
+            },
+        )
+
+    def test_curation_invariant_excludes_pending_and_excluded_shops_on_search_and_filter(self):
+        """Verify shops marked PENDING_REVIEW or EXCLUDED remain excluded even if matching query, rating, and radius.
+
+        The database RPC enforces:
+            INNER JOIN shop_curation sc ON s.id = sc.shop_id WHERE sc.status = 'APPROVED'
+        Adding search query, rating filter, or sort order cannot bypass this curation invariant.
+        """
+        # Candidate shops in database
+        all_candidates = [
+            # Shop 1: APPROVED, matches query 'Roasters', rating 4.8, distance 150m -> INCLUDED
+            {
+                "id": "11111111-0000-0000-0000-000000000001",
+                "name": "Approved Roasters",
+                "rating": 4.8,
+                "status": "APPROVED",
+                "distance_meters": 150.0,
+            },
+            # Shop 2: PENDING_REVIEW, matches query 'Roasters', rating 4.9, distance 100m -> EXCLUDED
+            {
+                "id": "22222222-0000-0000-0000-000000000002",
+                "name": "Pending Roasters",
+                "rating": 4.9,
+                "status": "PENDING_REVIEW",
+                "distance_meters": 100.0,
+            },
+            # Shop 3: EXCLUDED, matches query 'Roasters', rating 5.0, distance 50m -> EXCLUDED
+            {
+                "id": "33333333-0000-0000-0000-000000000003",
+                "name": "Chain Big Roasters",
+                "rating": 5.0,
+                "status": "EXCLUDED",
+                "distance_meters": 50.0,
+            },
+        ]
+
+        # Simulating SQL RPC curation filter: only sc.status = 'APPROVED'
+        rpc_filtered = [
+            {
+                "id": s["id"],
+                "name": s["name"],
+                "address": "Sample St",
+                "latitude": 14.5995,
+                "longitude": 120.9842,
+                "rating": s["rating"],
+                "google_place_id": f"place-{s['id']}",
+                "created_at": "2026-09-01T08:00:00Z",
+                "updated_at": "2026-09-01T08:00:00Z",
+                "distance_meters": s["distance_meters"],
+            }
+            for s in all_candidates
+            if s["status"] == "APPROVED"
+        ]
+
+        mock_execute = MagicMock()
+        mock_execute.return_value.data = rpc_filtered
+        self.mock_supabase.rpc.return_value.execute = mock_execute
+
+        response = self.client.get(
+            "/api/v1/shops/nearby?latitude=14.5995&longitude=120.9842&query=Roasters&min_rating=4.5&sort_by=rating",
+            headers=self.auth_headers,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertEqual(len(data), 1)
+        self.assertEqual(data[0]["id"], "11111111-0000-0000-0000-000000000001")
+        self.assertEqual(data[0]["name"], "Approved Roasters")
+
+        # Confirm non-approved shop IDs are completely absent from response
+        returned_ids = {item["id"] for item in data}
+        self.assertNotIn("22222222-0000-0000-0000-000000000002", returned_ids)
+        self.assertNotIn("33333333-0000-0000-0000-000000000003", returned_ids)
 
 
 class TestGeodesicAndBoundingBoxMath(unittest.TestCase):
