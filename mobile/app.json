@@ -31,7 +31,8 @@
         {
           "locationWhenInUsePermission": "LOKAL uses your location to display local coffee shops near you."
         }
-      ]
+      ],
+      "expo-secure-store"
     ],
     "web": {
       "favicon": "./assets/favicon.png"

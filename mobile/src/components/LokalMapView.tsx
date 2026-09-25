@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useContext, useEffect, useRef } from 'react';
 import {
   StyleSheet,
   View,
@@ -7,6 +7,7 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import MapView, { Marker, Region } from 'react-native-maps';
+import { AuthContext } from '../context/AuthContext';
 import { useLocation } from '../hooks/useLocation';
 import { useNearbyShops } from '../hooks/useNearbyShops';
 import NearbyShopsSheet from './NearbyShopsSheet';
@@ -25,6 +26,9 @@ export interface LokalMapViewProps {
 }
 
 export default function LokalMapView({ authToken }: LokalMapViewProps = {}) {
+  const auth = useContext(AuthContext);
+  const activeAuthToken = authToken !== undefined ? authToken : (auth?.token ?? null);
+
   const {
     location,
     permissionStatus,
@@ -52,7 +56,7 @@ export default function LokalMapView({ authToken }: LokalMapViewProps = {}) {
     setSortBy,
     resetFilters,
     hasActiveFilters,
-  } = useNearbyShops(location, authToken);
+  } = useNearbyShops(location, activeAuthToken);
 
   const mapRef = useRef<MapView>(null);
 
@@ -134,7 +138,7 @@ export default function LokalMapView({ authToken }: LokalMapViewProps = {}) {
           onSelectShop={handleSelectShop}
           onCloseDetail={handleCloseDetail}
           onRetry={refetchShops}
-          authToken={authToken}
+          authToken={activeAuthToken}
           searchQuery={searchQuery}
           onSearchChange={setSearchQuery}
           minRating={minRating}
@@ -148,6 +152,17 @@ export default function LokalMapView({ authToken }: LokalMapViewProps = {}) {
         />
       )}
 
+      {auth && auth.status === 'authenticated' && (
+        <TouchableOpacity
+          style={styles.logoutButton}
+          onPress={auth.logout}
+          accessibilityRole="button"
+          accessibilityLabel="Log out of LOKAL"
+          activeOpacity={0.8}
+        >
+          <Text style={styles.logoutButtonText}>Log Out</Text>
+        </TouchableOpacity>
+      )}
 
       {isLoading && (
         <View style={styles.loadingBanner}>
@@ -289,5 +304,24 @@ const styles = StyleSheet.create({
     color: '#4A2E18',
     fontSize: 14,
     fontWeight: '500',
+  },
+  logoutButton: {
+    position: 'absolute',
+    top: 50,
+    right: 16,
+    backgroundColor: 'rgba(250, 248, 245, 0.95)',
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+    borderRadius: 20,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.15,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  logoutButtonText: {
+    color: '#4A2E18',
+    fontSize: 13,
+    fontWeight: '600',
   },
 });
