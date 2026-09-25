@@ -8,7 +8,7 @@ This document provides a snapshot of the **current state of the `main` branch** 
 
 **Phase 2 — Core Application Features**
 
-The project bootstrapping phase is complete. The mobile application foundation, FastAPI backend, Supabase integration, database schema, user authentication, maps/location integration, coffee shop CRUD API, nearby coffee shop discovery, independent business eligibility and curation, external review data layer, and first-party LOKAL user reviews are established.
+The project bootstrapping phase is complete. The mobile application foundation, FastAPI backend, Supabase integration, database schema, user authentication, maps/location integration, coffee shop CRUD API, nearby coffee shop discovery, independent business eligibility and curation, external review data layer, first-party LOKAL user reviews, and mobile user authentication with secure session management are established.
 
 The project is now building application-level features that provide the foundation for LOKAL's future AI capabilities, including AI review summaries and recommendations.
 
@@ -18,11 +18,11 @@ The project is now building application-level features that provide the foundati
 
 🟢 **On Track**
 
-The core application stack is operational. The latest completed feature, **LOKAL User Reviews (GitHub Issue #24)**, establishes a secure, first-party review system integrated into the unified review domain alongside transient external reviews.
+The core application stack is operational. The latest completed feature, **Mobile User Authentication & Session Management (GitHub Issue #29)**, establishes a secure, client-side authentication and session lifecycle management system for the React Native (Expo) mobile application.
 
-Authenticated users can submit, view, edit, and delete their own reviews for approved independent coffee shops. Review updates are strictly scoped to first-party LOKAL records (`source = 'lokal'`), ratings are constrained to 1–5 stars, review text is optional up to 1000 characters, and each user is limited to a single review per coffee shop. Direct database writes via PostgREST are blocked in favor of controlled PostgreSQL `SECURITY DEFINER` RPC functions with revoked `PUBLIC` execution privileges, protecting server-managed fields (`user_id`, `author_name`, `source`, `created_at`, `updated_at`). Curation rules ensure reviews cannot be created or edited for shops that are not approved for public discovery, while users retain the ability to inspect or delete their existing reviews even if a shop becomes excluded.
+Users can securely register and log in using email and password, authenticate against the FastAPI backend, and store JWT credentials in hardware-backed secure storage via `expo-secure-store`. Credential storage strictly enforces fail-fast security in production and native environments by forbidding silent downgrades to in-memory storage. On application launch, sessions are automatically restored with profile verification against `GET /api/v1/auth/me`. The authentication state machine (`AuthContext`) strictly differentiates between permanently invalid sessions (`401 Unauthorized`, which automatically deletes stored credentials and transitions to unauthenticated) and transient network or server errors (5xx/timeouts, which preserves the stored credential and presents an actionable recovery card with both Retry and Sign Out options).
 
-In the mobile app, users can view first-party reviews alongside external reviews with separate rating metrics (preserving external provider attribution and first-party LOKAL community scores), view and manage their own review via an interactive modal composer, and experience robust protection against stale asynchronous responses and mutation races across shop selections.
+Monotonic operation generation guards (`operationGenerationRef`) protect the entire authentication lifecycle against race conditions and out-of-order asynchronous responses (such as concurrent logins, retries while awaiting restoration, or retries triggered while logout is in progress). Sign out is fail-safe, ensuring local credentials are deleted regardless of backend network availability, and trailing retries are immediately invalidated. Authenticated API requests across the mobile app (including nearby shop search and review operations) automatically attach the active Bearer token.
 
 The engineering workflow is formalized as the **AI-Assisted Engineering Workflow**, including implementation planning, Product Owner approval, dedicated feature branches, automated verification, CodeRabbit review, iterative review resolution, and human-controlled merging.
 
@@ -32,48 +32,56 @@ The next feature cycle should begin only after the current state is synchronized
 
 # Latest Completed Feature
 
-## GitHub Issue #24 — LOKAL User Reviews
+## GitHub Issue #29 — Mobile User Authentication & Session Management
 
 **Status:** ✅ Completed
 
 ### Completed Work
 
-* **Database Schema & Constraints**:
-  * Enhanced the `reviews` table with `user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE`, `author_name TEXT NOT NULL DEFAULT 'LOKAL User'`, and default `source = 'lokal'`.
-  * Added unique constraint `uq_reviews_user_shop` on `(user_id, shop_id)` enforcing a strict one-review-per-user-per-shop limit at the database level.
-  * Added performance and lookup indexes `idx_reviews_shop_id` and `idx_reviews_user_id`.
-* **Database Privilege Hardening & Secure RPCs**:
-  * Revoked direct table `INSERT` and `UPDATE` privileges on `reviews` from `authenticated`, `anon`, and `public` roles, requiring all write mutations to pass through controlled PostgreSQL `SECURITY DEFINER` stored procedures.
-  * Implemented `create_user_review(p_shop_id, p_rating, p_content)`: derives caller identity from `auth.uid()`, enforces 1–5 integer rating, validates shop existence and `APPROVED` curation status, enforces single review per shop, resolves author display name snapshot from user profile metadata (`full_name` or `display_name`, falling back to `'LOKAL User'`), and stamps server-managed timestamps (`created_at`, `updated_at`).
-  * Implemented `update_user_review(p_shop_id, p_rating, p_content, p_update_content)`: derives caller identity from `auth.uid()`, enforces field-presence semantics, validates 1–5 integer rating when present, validates shop existence and `APPROVED` curation status, enforces ownership and `source = 'lokal'` filtering, preserves server-managed fields (`author_name`, `source`, `user_id`, `shop_id`, `created_at`), atomically updates rating and/or content, and advances `updated_at`.
-  * Explicitly revoked `EXECUTE` on both review RPCs from `PUBLIC` and granted execution strictly to `authenticated`.
-* **Row Level Security (RLS)**:
-  * Configured `SELECT` policy restricting review read access to reviews of `APPROVED` shops (`shop_curation.status = 'APPROVED'`) or the authenticated caller's own review (`auth.uid() = user_id`).
-  * Configured `DELETE` policy allowing authenticated users to delete their own review (`auth.uid() = user_id`) even if the shop is excluded or pending review.
-* **Backend API Endpoints**:
-  * `POST /api/v1/shops/{shop_id}/reviews`: Submits a first-party LOKAL review for an approved coffee shop (201 Created).
-  * `GET /api/v1/shops/{shop_id}/reviews/mine`: Retrieves the authenticated caller's own review (200 OK or 404 Not Found); permitted even if the shop is currently excluded or pending review.
-  * `PATCH /api/v1/shops/{shop_id}/reviews/mine`: Partially updates the caller's review with field-presence semantics (200 OK); blocked if the shop is not approved.
-  * `DELETE /api/v1/shops/{shop_id}/reviews/mine`: Permanently deletes the caller's review (200 OK); permitted even if the shop is currently excluded or pending review.
-  * `GET /api/v1/shops/{shop_id}/reviews`: Retrieves unified reviews combining first-party LOKAL reviews and transient external Google reviews; returns 404 Not Found if the shop is pending review or excluded.
-* **Review Domain Modeling & Separation of Metrics**:
-  * Preserved separate rating metrics in `ShopReviewsResponse`: `average_rating` and `total_reviews_count` reflect external Google Places provider data, while `lokal_average_rating` and `lokal_reviews_count` reflect first-party community reviews (no blending into a composite score).
-  * Domain model `UnifiedReview` includes `is_edited` (derived deterministically from `created_at != updated_at`), `published_at`, `updated_at`, `author` (`display_name`, `avatar_url`, `profile_url`), and provider attribution.
-  * Enforced strict `source = 'lokal'` isolation in both application lookups and database RPCs to prevent unintentional modification of non-LOKAL rows.
-  * External Google review content remains transient (unpersisted in Supabase).
-* **Mobile Application Integration**:
-  * Displayed first-party LOKAL reviews alongside external reviews with separate rating sections ("LOKAL Community" rating and count alongside Google rating).
-  * Prominently presented the authenticated user's own review with dedicated Edit and Delete options.
-  * Added an interactive inline review composer modal supporting star rating selection (1–5), optional review text with character count (max 1000 characters), and validation feedback.
-  * Implemented stale async request and mutation protection using monotonic request (`currentRequestId`) and mutation (`currentMutationId`) sequence counters in `ShopDetailCard`, discarding out-of-order responses.
-  * Added compound component keying in `NearbyShopsSheet` (`${selectedShop.id}:${authToken || 'anon'}`) to reset review form and mutation states cleanly whenever the selected shop or auth token changes.
+* **Hardware-Backed Secure Token Storage**:
+  * Implemented `mobile/src/services/secureStorage.ts` wrapping `expo-secure-store` with key `lokal_access_token`.
+  * Enforced production security invariant: in-memory storage adapter is restricted exclusively to headless Node.js test environments; native or production runtimes fail fast with explicit errors if SecureStore is unavailable rather than silently downgrading credential security.
+  * Enforced token validation: rejects empty or whitespace-only strings before storage.
+* **Authentication Service**:
+  * Implemented `mobile/src/services/authService.ts` providing typed client wrappers for backend auth endpoints:
+    * `login({ email, password })`: `POST /api/v1/auth/login`
+    * `register({ email, password })`: `POST /api/v1/auth/register`
+    * `logout(token)`: `POST /api/v1/auth/logout` (Bearer authenticated)
+    * `getMe(token)`: `GET /api/v1/auth/me` (Bearer authenticated)
+  * Integrated fixed request timeouts (10,000ms) across all authentication requests using `AbortController` to guarantee stalled requests do not leave the client hanging in transient states.
+  * Structured domain error handling: mapped HTTP errors into strongly typed `AuthError` instances with status codes and backend detail messages.
+* **Session Lifecycle & State Machine**:
+  * Implemented `mobile/src/context/AuthContext.ts` providing `AuthProvider` and `useAuth()` hook managing session state (`restoring`, `authenticated`, `unauthenticated`).
+  * Built using pure TypeScript and `React.createElement` to ensure seamless native execution and direct headless Node.js test execution.
+  * **Automatic Session Restoration**:
+    * Automatically attempts session restoration from SecureStore on initial app mount.
+    * If no token is stored, transitions directly to `unauthenticated`.
+    * If a token is stored, verifies it against `GET /api/v1/auth/me`. On success, transitions to `authenticated` with user profile.
+    * On `401 Unauthorized`, treats token as expired/revoked, purges SecureStore, and transitions to `unauthenticated`.
+    * On network or 5xx server failure, preserves the stored token and sets `status: 'restoring'` with an actionable `restorationError` message.
+  * **Fail-Safe Logout**:
+    * Calls `POST /api/v1/auth/logout` using the active token.
+    * Guarantees local credential deletion and transition to `unauthenticated` inside a `finally` block, ensuring network or backend failures never trap the user in an authenticated local state.
+  * **Generation Guards Against Stale/Concurrent Operations**:
+    * Protected state transitions using a monotonic provider-level generation counter (`operationGenerationRef`).
+    * Invalidates pending restoration tasks whenever login, registration, or logout begins.
+    * Increments the generation counter in the `logout()` `finally` block immediately after local credential deletion, ensuring retries initiated while logout was awaiting network response or cleanup cannot overwrite the unauthenticated state or re-introduce a session.
+* **Authentication UI & User Experience**:
+  * Implemented `mobile/src/screens/LoginView.tsx` with email and password inputs, form validation, loading indicators, error banner presentation, and navigation toggle to registration.
+  * Implemented `mobile/src/screens/RegisterView.tsx` with email, password, and confirmation password inputs, password match validation, loading indicators, error banner presentation, and navigation toggle to login.
+  * Added a dedicated restoration error recovery view in `mobile/App.tsx` displaying the failure message alongside both **Retry** and **Sign Out** actions.
+* **API Integration & Bearer Token Propagation**:
+  * Updated `mobile/src/services/shopService.ts` and `mobile/src/services/reviewService.ts` to consume the active auth token from `AuthContext` and attach it as `Authorization: Bearer <token>` for authenticated requests.
 * **Automated Verification**:
-  * Completed backend verification with **182 unit/regression tests passing** in 1.3s (including 35 dedicated first-party user review tests and 22 review data layer tests).
-  * Completed mobile verification with **26 automated tests passing** in 260ms (including 11 `reviewService` tests, 5 `shopReviewState` async race tests, and 10 `shopService` tests).
-  * Completed TypeScript verification with **0 errors** (`npx tsc --noEmit`).
-  * *Verification environment distinction*: Automated tests in the repository validate application logic, HTTP contracts, and SQL RPC generation through mock harnesses. Live PostgreSQL constraints, RLS policy enforcement, and database triggers apply upon migration deployment to Supabase.
+  * Completed mobile verification with **60 automated tests passing** in 281ms:
+    * 12 tests in `authService.test.mjs` (endpoints, payload structures, 401 handling, timeout handling).
+    * 16 tests in `authState.test.mjs` (SecureStore security, in-memory isolation, restoration transitions, 401 token purge, network failure retry, explicit sign out during restoration failure, race condition regression tests).
+    * 16 tests in `reviewService.test.mjs` (CRUD operations, error formatting, race guards, token change resets).
+    * 16 tests in `shopService.test.mjs` (query params, formatting, nearby search, Bearer token integration).
+  * Completed mobile TypeScript verification with **0 errors** (`npx tsc --noEmit`).
+  * Completed backend regression verification with **193 tests passing** in 1.2s (`python -m unittest discover -s backend/tests`).
 * **Pull Request**:
-  * Pull Request #25 was evaluated by CodeRabbit, actionable findings were resolved, and the PR was approved and merged into `main` by the Product Owner (commit `1bc393c4`).
+  * Pull Request #30 was evaluated by CodeRabbit, actionable findings (request timeouts, secure storage downgrade prevention, generation race protection, explicit sign-out during restoration error, and deterministic race tests) were resolved iteratively, and the PR was approved and merged into `main` by the Product Owner (commit `6af27d73`).
 
 ---
 
@@ -93,6 +101,7 @@ The next feature cycle should begin only after the current state is synchronized
 | Issue #19 — External Review Data Layer            | ✅ Complete |
 | Issue #22 — Independent Business Eligibility & Shop Curation | ✅ Complete |
 | Issue #24 — LOKAL User Reviews                   | ✅ Complete |
+| Issue #29 — Mobile User Authentication & Session Management | ✅ Complete |
 | AI-Assisted Engineering Workflow                 | ✅ Complete |
 | AI Review Summaries                              | ⏳ Planned  |
 | AI Must-Try Recommendations                      | ⏳ Planned  |
@@ -103,6 +112,15 @@ The next feature cycle should begin only after the current state is synchronized
 
 The React Native (Expo) mobile application currently provides:
 
+* **Authentication & Session Lifecycle Management**:
+  * User registration and login screens (`RegisterView`, `LoginView`) with input validation, password matching, inline error presentation, and loading states.
+  * Hardware-backed credential persistence via `expo-secure-store` with fail-fast security preventing silent in-memory downgrades in native or production runtimes.
+  * Automatic session restoration on application launch with backend profile validation against `/api/v1/auth/me`.
+  * Distinct error handling for invalid sessions (automatic token purging on `401 Unauthorized`) versus transient network/server failures (credential preservation with recovery UI).
+  * Dedicated restoration error recovery UI offering both **Retry** and **Sign Out** actions.
+  * Fail-safe sign-out ensuring local credentials are unconditionally deleted regardless of backend network availability.
+  * Monotonic operation generation guards (`operationGenerationRef`) protecting the authentication provider against asynchronous race conditions across concurrent logins, retries, and logouts.
+  * Automatic Bearer token propagation across nearby coffee shop searches and user review submissions.
 * Interactive map visualization via `react-native-maps`.
 * Device foreground location permission requests via `expo-location`.
 * Automatic user coordinate acquisition and map re-centering.
@@ -230,9 +248,9 @@ Independent-business eligibility and curation are maintained as a separate domai
 
 # Next Task
 
-The next feature should be defined through the next GitHub Issue after reviewing the completed first-party review architecture and current application state.
+The next feature should be defined through the next GitHub Issue after reviewing the completed mobile authentication architecture and current application state.
 
-With the unified review domain now active with both first-party and external reviews, the project is ready to build toward the AI layer (e.g. **AI Review Summaries / Issue #26**).
+With the unified review domain active with both first-party and external reviews and the mobile client providing full user authentication and session management, the project is ready to build toward the AI layer (e.g. **AI Review Summaries / Issue #26**).
 
 Before implementation:
 
@@ -248,7 +266,7 @@ Before implementation:
 
 **None.**
 
-The unified review domain is functional with separate external and first-party metrics. External reviews remain transient and compliant with provider policies, while first-party reviews are securely persisted in Supabase. AI processing of unified review content remains a planned next step.
+The unified review domain is functional with separate external and first-party metrics. External reviews remain transient and compliant with provider policies, while first-party reviews are securely persisted in Supabase. Mobile user authentication and session persistence are operational and tested. AI processing of unified review content remains the planned next step.
 
 ---
 
@@ -256,6 +274,11 @@ The unified review domain is functional with separate external and first-party m
 
 The recent development cycles established the following engineering practices:
 
+* **Monotonic Generation Guards for Async State Transitions**: Protect complex client-side authentication and session flows (restoration, retry, login, logout) with a monotonic generation ref that increments on each new operation and at the completion of critical cleanup in `finally` blocks. This ensures stale or out-of-order async responses never overwrite state or reintroduce credentials.
+* **Fail-Safe Client Credential Purging**: Local credential deletion on logout must be executed inside a `finally` block so that network failures, timeouts, or backend 5xx errors never trap the user in an authenticated local state.
+* **Strict Runtime Security Invariants**: Never allow production applications to silently fall back from hardware-backed secure storage (e.g. `expo-secure-store`) to in-memory storage; fallbacks must be strictly isolated to headless test harnesses.
+* **Fixed Request Timeouts on Auth Operations**: Bounding authentication HTTP requests with fixed timeouts (`AbortController`) prevents the application from hanging indefinitely in transient restoration or login states during network degradation.
+* **Session Restoration Error Differentiation**: Differentiating permanently invalid credentials (`401 Unauthorized`, which warrants credential purging) from transient connection/server failures (which warrants credential preservation and actionable retry/sign-out controls) prevents accidental session destruction while keeping users in control.
 * **Database Write Privilege Hardening**: Sensitive database tables should have direct `INSERT` and `UPDATE` privileges revoked from client roles (including `authenticated`). Routing writes through PostgreSQL `SECURITY DEFINER` RPCs protects server-managed fields (`user_id`, `author_name`, `source`, `created_at`) from client tampering.
 * **RPC Execution Privilege Revocation**: PostgreSQL functions grant execute permissions to `PUBLIC` by default. Security-definer RPCs must explicitly revoke execution from `PUBLIC` and grant execute strictly to `authenticated`.
 * **Source Isolation in Multi-Source Tables**: When a table stores records originating from multiple sources (such as first-party and external/legacy data), all query, update, and delete operations must explicitly scope themselves to `source = 'lokal'` to prevent cross-contamination.
@@ -306,4 +329,4 @@ After implementation:
 
 ---
 
-**Last Updated:** Phase 2 — Core Application Features (after completion of GitHub Issue #24 and merge of PR #25)
+**Last Updated:** Phase 2 — Core Application Features (after completion of GitHub Issue #29 and merge of PR #30)
