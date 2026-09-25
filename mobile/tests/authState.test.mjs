@@ -625,14 +625,29 @@ test('stale restoration protection: retry triggered during logout cleanup cannot
 
   const originalFetch = globalThis.fetch;
 
+  let signalInitialGetMeStarted;
+  const initialGetMeStarted = new Promise((resolve) => {
+    signalInitialGetMeStarted = resolve;
+  });
+
   let resolveInitialGetMe;
   const initialGetMeGate = new Promise((resolve) => {
     resolveInitialGetMe = resolve;
   });
 
+  let signalLogoutStarted;
+  const logoutStarted = new Promise((resolve) => {
+    signalLogoutStarted = resolve;
+  });
+
   let resolveLogoutBackend;
   const logoutGate = new Promise((resolve) => {
     resolveLogoutBackend = resolve;
+  });
+
+  let signalRetryGetMeStarted;
+  const retryGetMeStarted = new Promise((resolve) => {
+    signalRetryGetMeStarted = resolve;
   });
 
   let resolveRetryGetMe;
@@ -647,6 +662,7 @@ test('stale restoration protection: retry triggered during logout cleanup cannot
       getMeCallCount++;
       if (getMeCallCount === 1) {
         // Step 1: Initial restoration awaits this gate
+        signalInitialGetMeStarted();
         await initialGetMeGate;
         return {
           ok: false,
@@ -654,17 +670,21 @@ test('stale restoration protection: retry triggered during logout cleanup cannot
           json: async () => ({ detail: 'Initial network error' }),
         };
       }
-      // Step 3 / 5: Retry restoration awaits this gate, then would return success
-      await retryGetMeGate;
-      return {
-        ok: true,
-        status: 200,
-        json: async () => ({ id: 'stale-user', email: 'stale@lokal.ph' }),
-      };
+      if (getMeCallCount === 2) {
+        // Step 3 / 5: Retry restoration awaits this gate, then would return success
+        signalRetryGetMeStarted();
+        await retryGetMeGate;
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ id: 'stale-user', email: 'stale@lokal.ph' }),
+        };
+      }
     }
 
     if (url.includes('/api/v1/auth/logout')) {
       // Step 2: Logout awaits this gate
+      signalLogoutStarted();
       await logoutGate;
       return {
         ok: true,
@@ -677,24 +697,30 @@ test('stale restoration protection: retry triggered during logout cleanup cannot
   };
 
   try {
-    // 1. Begin session restoration so it is awaiting an async /auth/me result
+    // 1. Begin session restoration and wait until initial getMe() has started
     const runner = renderProductionAuthProvider();
     assert.strictEqual(runner.getAuth().status, 'restoring');
+    await initialGetMeStarted;
 
-    // 2. Trigger logout
+    // Release initial restoration request
+    resolveInitialGetMe();
+
+    // 2. Trigger logout and wait for logout request to start
     const logoutPromise = runner.getAuth().logout();
+    await logoutStarted;
 
     // 3. While logout is awaiting cleanup, trigger retryRestoration()
     const retryPromise = runner.getAuth().retryRestoration();
 
-    // Allow initial restoration to complete with 503
-    resolveInitialGetMe();
+    // Signal and await the retry request, asserting it is the second getMe() call
+    await retryGetMeStarted;
+    assert.strictEqual(getMeCallCount, 2);
 
-    // 4. Allow logout cleanup to finish
+    // 4. Release logout cleanup and await completion
     resolveLogoutBackend();
     await logoutPromise;
 
-    // 5. Allow the retry/restoration operation to resolve
+    // 5. Allow the retry request to resolve and await retry completion
     resolveRetryGetMe();
     await retryPromise;
 
