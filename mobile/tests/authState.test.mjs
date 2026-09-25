@@ -618,6 +618,103 @@ test('stale restoration protection: login during restoration prevents 401 from d
   }
 });
 
+test('stale restoration protection: retry triggered during logout cleanup cannot overwrite unauthenticated state', async () => {
+  const storage = createMemoryStorageAdapter();
+  await storage.setItemAsync('lokal_access_token', 'initial-stored-token');
+  setStorageAdapter(storage);
+
+  const originalFetch = globalThis.fetch;
+
+  let resolveInitialGetMe;
+  const initialGetMeGate = new Promise((resolve) => {
+    resolveInitialGetMe = resolve;
+  });
+
+  let resolveLogoutBackend;
+  const logoutGate = new Promise((resolve) => {
+    resolveLogoutBackend = resolve;
+  });
+
+  let resolveRetryGetMe;
+  const retryGetMeGate = new Promise((resolve) => {
+    resolveRetryGetMe = resolve;
+  });
+
+  let getMeCallCount = 0;
+
+  globalThis.fetch = async (url) => {
+    if (url.includes('/api/v1/auth/me')) {
+      getMeCallCount++;
+      if (getMeCallCount === 1) {
+        // Step 1: Initial restoration awaits this gate
+        await initialGetMeGate;
+        return {
+          ok: false,
+          status: 503,
+          json: async () => ({ detail: 'Initial network error' }),
+        };
+      }
+      // Step 3 / 5: Retry restoration awaits this gate, then would return success
+      await retryGetMeGate;
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ id: 'stale-user', email: 'stale@lokal.ph' }),
+      };
+    }
+
+    if (url.includes('/api/v1/auth/logout')) {
+      // Step 2: Logout awaits this gate
+      await logoutGate;
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ message: 'Signed out' }),
+      };
+    }
+
+    throw new Error('Unexpected URL: ' + url);
+  };
+
+  try {
+    // 1. Begin session restoration so it is awaiting an async /auth/me result
+    const runner = renderProductionAuthProvider();
+    assert.strictEqual(runner.getAuth().status, 'restoring');
+
+    // 2. Trigger logout
+    const logoutPromise = runner.getAuth().logout();
+
+    // 3. While logout is awaiting cleanup, trigger retryRestoration()
+    const retryPromise = runner.getAuth().retryRestoration();
+
+    // Allow initial restoration to complete with 503
+    resolveInitialGetMe();
+
+    // 4. Allow logout cleanup to finish
+    resolveLogoutBackend();
+    await logoutPromise;
+
+    // 5. Allow the retry/restoration operation to resolve
+    resolveRetryGetMe();
+    await retryPromise;
+
+    // 6. Verify the final state remains unauthenticated
+    const finalAuth = runner.getAuth();
+    assert.strictEqual(finalAuth.status, 'unauthenticated');
+    assert.strictEqual(finalAuth.token, null);
+    assert.strictEqual(finalAuth.user, null);
+
+    // 7. Verify no stored token is reintroduced
+    assert.strictEqual(await storage.getItemAsync('lokal_access_token'), null);
+
+    // 8. Verify the stale retry cannot overwrite the final logout state
+    assert.strictEqual(finalAuth.status, 'unauthenticated');
+  } finally {
+    globalThis.fetch = originalFetch;
+    setStorageAdapter(null);
+  }
+});
+
 test('authenticated API integration: fetchNearbyShops attaches active Bearer token', async () => {
   const originalFetch = globalThis.fetch;
   let receivedAuthHeader = null;

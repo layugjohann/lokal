@@ -227,6 +227,8 @@ export function AuthProvider({
       } catch {
         // Fallback cleanup
       }
+      // Invalidate any retry or restoration operation that started while logout was in progress
+      operationGenerationRef.current++;
       setState({
         status: 'unauthenticated',
         token: null,
