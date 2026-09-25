@@ -206,7 +206,15 @@ export function AuthProvider({
     // Invalidate any in-flight session restoration
     operationGenerationRef.current++;
 
-    const activeToken = state.token;
+    let activeToken = state.token;
+    if (!activeToken) {
+      try {
+        activeToken = await getAuthToken();
+      } catch {
+        // Ignore storage read error
+      }
+    }
+
     try {
       if (activeToken) {
         await authService.logout(activeToken);

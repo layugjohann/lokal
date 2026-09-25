@@ -319,6 +319,53 @@ test('production AuthProvider session restoration: network failure preserves tok
   }
 });
 
+test('production AuthProvider restoration error: explicit sign out clears stored credentials and transitions to unauthenticated', async () => {
+  const storage = createMemoryStorageAdapter();
+  await storage.setItemAsync('lokal_access_token', 'token-offline-signout');
+  setStorageAdapter(storage);
+
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    if (url.includes('/api/v1/auth/me')) {
+      return {
+        ok: false,
+        status: 503,
+        json: async () => ({ detail: 'Service unavailable' }),
+      };
+    }
+    if (url.includes('/api/v1/auth/logout')) {
+      // Backend logout fails due to network outage
+      throw new Error('Network error during logout');
+    }
+    throw new Error('Unexpected URL: ' + url);
+  };
+
+  try {
+    const runner = renderProductionAuthProvider();
+
+    // Wait for initial failure
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    const auth = runner.getAuth();
+    assert.strictEqual(auth.status, 'restoring');
+    assert.match(auth.restorationError || '', /unavailable/i);
+    assert.strictEqual(await storage.getItemAsync('lokal_access_token'), 'token-offline-signout');
+
+    // User explicitly signs out from the restoration error screen
+    await auth.logout();
+    const unauth = await runner.waitForStatus('unauthenticated');
+
+    assert.strictEqual(unauth.status, 'unauthenticated');
+    assert.strictEqual(unauth.token, null);
+    assert.strictEqual(unauth.user, null);
+    assert.strictEqual(unauth.restorationError, null);
+    assert.strictEqual(await storage.getItemAsync('lokal_access_token'), null);
+  } finally {
+    globalThis.fetch = originalFetch;
+    setStorageAdapter(null);
+  }
+});
+
 test('production AuthProvider login transition: persists token and sets authenticated state', async () => {
   const storage = createMemoryStorageAdapter();
   setStorageAdapter(storage);

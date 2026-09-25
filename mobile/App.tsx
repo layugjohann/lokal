@@ -13,7 +13,7 @@ import AuthScreen from './src/components/AuthScreen';
 import LokalMapView from './src/components/LokalMapView';
 
 function MainAppContent(props?: { authToken?: string | null }) {
-  const { status, restorationError, retryRestoration, token } = useAuth();
+  const { status, restorationError, retryRestoration, token, logout } = useAuth();
   const effectiveToken = props?.authToken !== undefined ? props.authToken : token;
 
   if (status === 'restoring' && !props?.authToken) {
@@ -23,15 +23,26 @@ function MainAppContent(props?: { authToken?: string | null }) {
           <View style={styles.errorBox}>
             <Text style={styles.errorTitle}>Connection Issue</Text>
             <Text style={styles.errorDescription}>{restorationError}</Text>
-            <TouchableOpacity
-              style={styles.retryButton}
-              onPress={retryRestoration}
-              accessibilityRole="button"
-              accessibilityLabel="Retry connecting"
-              activeOpacity={0.8}
-            >
-              <Text style={styles.retryButtonText}>Retry</Text>
-            </TouchableOpacity>
+            <View style={styles.errorButtonGroup}>
+              <TouchableOpacity
+                style={styles.signOutButton}
+                onPress={logout}
+                accessibilityRole="button"
+                accessibilityLabel="Sign out"
+                activeOpacity={0.8}
+              >
+                <Text style={styles.signOutButtonText}>Sign Out</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.retryButton}
+                onPress={retryRestoration}
+                accessibilityRole="button"
+                accessibilityLabel="Retry connecting"
+                activeOpacity={0.8}
+              >
+                <Text style={styles.retryButtonText}>Retry</Text>
+              </TouchableOpacity>
+            </View>
           </View>
         ) : (
           <View style={styles.restoringBox}>
@@ -107,6 +118,25 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     marginBottom: 20,
     lineHeight: 20,
+  },
+  errorButtonGroup: {
+    flexDirection: 'row',
+    gap: 12,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  signOutButton: {
+    backgroundColor: 'transparent',
+    paddingVertical: 10,
+    paddingHorizontal: 20,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#D4C8BE',
+  },
+  signOutButtonText: {
+    color: '#4A2E18',
+    fontSize: 14,
+    fontWeight: '600',
   },
   retryButton: {
     backgroundColor: '#4A2E18',
