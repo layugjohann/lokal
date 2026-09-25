@@ -10,10 +10,31 @@ let customAdapter: StorageAdapter | null = null;
 let nativeAdapter: StorageAdapter | null = null;
 
 /**
+ * Checks whether execution is occurring inside a headless Node.js test environment
+ * rather than a native Expo / React Native device or simulator runtime.
+ */
+export function isHeadlessTestEnvironment(): boolean {
+  return (
+    typeof process !== 'undefined' &&
+    Boolean(process.versions?.node) &&
+    typeof navigator === 'undefined' &&
+    typeof (globalThis as any).nativeCallSyncHook === 'undefined'
+  );
+}
+
+/**
  * Overrides the storage adapter (primarily for automated unit tests).
  */
 export function setStorageAdapter(adapter: StorageAdapter | null): void {
   customAdapter = adapter;
+}
+
+/**
+ * Resets cached adapters (for test harness isolation).
+ */
+export function resetStorageAdapters(): void {
+  customAdapter = null;
+  nativeAdapter = null;
 }
 
 /**
@@ -39,14 +60,33 @@ async function getAdapter(): Promise<StorageAdapter> {
   if (nativeAdapter) {
     return nativeAdapter;
   }
+
   try {
     const SecureStore = await import('expo-secure-store');
-    nativeAdapter = SecureStore;
-    return nativeAdapter;
-  } catch {
-    // Fallback for headless test runners (e.g. node --test) where native binary is unavailable
-    nativeAdapter = createMemoryStorageAdapter();
-    return nativeAdapter;
+    if (
+      SecureStore &&
+      typeof SecureStore.getItemAsync === 'function' &&
+      typeof SecureStore.setItemAsync === 'function' &&
+      typeof SecureStore.deleteItemAsync === 'function'
+    ) {
+      nativeAdapter = SecureStore;
+      return nativeAdapter;
+    }
+    throw new Error('expo-secure-store module does not provide expected storage methods.');
+  } catch (err: any) {
+    if (isHeadlessTestEnvironment()) {
+      // Allowed ONLY in headless test environments (node --test) where native bridge is unavailable
+      nativeAdapter = createMemoryStorageAdapter();
+      return nativeAdapter;
+    }
+
+    // In native/production environments, explicitly surface the failure.
+    // NEVER silently downgrade credential persistence from SecureStore to in-memory storage.
+    throw new Error(
+      `Secure device storage is unavailable and cannot be downgraded to memory in production: ${
+        err?.message || err
+      }`
+    );
   }
 }
 

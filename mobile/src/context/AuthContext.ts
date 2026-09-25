@@ -1,8 +1,8 @@
 import React, {
   createContext,
   useCallback,
-  useContext,
   useEffect,
+  useRef,
   useState,
 } from 'react';
 import type {
@@ -11,13 +11,13 @@ import type {
   AuthUser,
   LoginInput,
   RegisterInput,
-} from '../types/auth';
-import * as authService from '../services/authService';
+} from '../types/auth.ts';
+import * as authService from '../services/authService.ts';
 import {
   deleteAuthToken,
   getAuthToken,
   saveAuthToken,
-} from '../services/secureStorage';
+} from '../services/secureStorage.ts';
 
 export interface AuthContextValue extends AuthState {
   login: (input: LoginInput) => Promise<void>;
@@ -39,6 +39,9 @@ export function AuthProvider({
   initialToken,
   initialUser,
 }: AuthProviderProps) {
+  // Provider-level operation generation counter guarding against stale/concurrent async updates
+  const operationGenerationRef = useRef(0);
+
   const [state, setState] = useState<AuthState>(() => {
     if (initialToken !== undefined && initialToken !== null) {
       return {
@@ -69,6 +72,8 @@ export function AuthProvider({
       return;
     }
 
+    const currentGen = ++operationGenerationRef.current;
+
     setState((prev) => ({
       ...prev,
       status: 'restoring',
@@ -79,7 +84,7 @@ export function AuthProvider({
     try {
       storedToken = await getAuthToken();
     } catch {
-      // If reading secure storage fails, treat as unauthenticated
+      if (operationGenerationRef.current !== currentGen) return;
       setState({
         status: 'unauthenticated',
         token: null,
@@ -88,6 +93,8 @@ export function AuthProvider({
       });
       return;
     }
+
+    if (operationGenerationRef.current !== currentGen) return;
 
     if (!storedToken) {
       setState({
@@ -101,6 +108,8 @@ export function AuthProvider({
 
     try {
       const user = await authService.getMe(storedToken);
+      if (operationGenerationRef.current !== currentGen) return;
+
       setState({
         status: 'authenticated',
         token: storedToken,
@@ -108,13 +117,18 @@ export function AuthProvider({
         restorationError: null,
       });
     } catch (err: any) {
+      if (operationGenerationRef.current !== currentGen) return;
+
       if (err?.status === 401) {
-        // Token is invalid or expired: purge from secure storage
+        // Token is invalid or expired: purge from secure storage ONLY if this restoration is still current
         try {
           await deleteAuthToken();
         } catch {
           // Ignore deletion error
         }
+
+        if (operationGenerationRef.current !== currentGen) return;
+
         setState({
           status: 'unauthenticated',
           token: null,
@@ -139,6 +153,9 @@ export function AuthProvider({
   }, [restoreSession]);
 
   const login = useCallback(async (input: LoginInput) => {
+    // Invalidate any in-flight session restoration
+    operationGenerationRef.current++;
+
     const response: AuthResponse = await authService.login(input);
     const accessToken = response.session?.access_token;
     if (!accessToken) {
@@ -157,6 +174,9 @@ export function AuthProvider({
 
   const register = useCallback(
     async (input: RegisterInput): Promise<{ message?: string | null }> => {
+      // Invalidate any in-flight session restoration
+      operationGenerationRef.current++;
+
       const response: AuthResponse = await authService.register(input);
       const accessToken = response.session?.access_token;
 
@@ -183,6 +203,9 @@ export function AuthProvider({
   );
 
   const logout = useCallback(async () => {
+    // Invalidate any in-flight session restoration
+    operationGenerationRef.current++;
+
     const activeToken = state.token;
     try {
       if (activeToken) {
@@ -217,5 +240,5 @@ export function AuthProvider({
     retryRestoration,
   };
 
-  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
+  return React.createElement(AuthContext.Provider, { value }, children);
 }

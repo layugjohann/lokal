@@ -1,5 +1,5 @@
 import { useContext } from 'react';
-import { AuthContext, type AuthContextValue } from '../context/AuthContext';
+import { AuthContext, type AuthContextValue } from '../context/AuthContext.ts';
 
 /**
  * Accesses the central authentication context.

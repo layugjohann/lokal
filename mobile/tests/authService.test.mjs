@@ -275,3 +275,60 @@ test('getMe throws 401 when token is expired or rejected', async () => {
     globalThis.fetch = originalFetch;
   }
 });
+
+test('login throws timeout error when request exceeds timeoutMs', async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (_url, { signal }) => {
+    return new Promise((_resolve, reject) => {
+      signal.addEventListener('abort', () => {
+        const err = new Error('The operation was aborted');
+        err.name = 'AbortError';
+        reject(err);
+      });
+    });
+  };
+
+  try {
+    await assert.rejects(
+      async () => {
+        await login({ email: 'test@lokal.ph', password: 'password123' }, 40);
+      },
+      (err) => {
+        assert.match(err.message, /timed out/i);
+        assert.strictEqual(err.status, 504);
+        return true;
+      }
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('getMe throws timeout error when request exceeds timeoutMs', async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (_url, { signal }) => {
+    return new Promise((_resolve, reject) => {
+      signal.addEventListener('abort', () => {
+        const err = new Error('The operation was aborted');
+        err.name = 'AbortError';
+        reject(err);
+      });
+    });
+  };
+
+  try {
+    await assert.rejects(
+      async () => {
+        await getMe('valid-token', 40);
+      },
+      (err) => {
+        assert.match(err.message, /timed out/i);
+        assert.strictEqual(err.status, 504);
+        return true;
+      }
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
