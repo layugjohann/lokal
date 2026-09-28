@@ -3,6 +3,7 @@ import type {
   ReviewCreateInput,
   ReviewUpdateInput,
   ShopReviewsResponse,
+  ShopReviewSummaryResponse,
   UnifiedReview,
 } from '../types/review';
 
@@ -199,6 +200,44 @@ export async function deleteUserReview(
 
   if (!response.ok) {
     let errorDetail = 'Failed to delete your review.';
+    try {
+      const data = await response.json();
+      if (data && typeof data.detail === 'string') {
+        errorDetail = data.detail;
+      }
+    } catch {
+      // Non-JSON fallback
+    }
+    const error = new Error(errorDetail);
+    (error as { status?: number }).status = response.status;
+    throw error;
+  }
+
+  return response.json();
+}
+
+/**
+ * Retrieves the AI-generated review summary for a coffee shop from FastAPI.
+ * Requires a valid authenticated caller JWT.
+ */
+export async function fetchShopReviewSummary(
+  shopId: string,
+  authToken: string
+): Promise<ShopReviewSummaryResponse> {
+  if (!authToken || !authToken.trim()) {
+    throw new Error('Authentication token is required to fetch review summary.');
+  }
+  const headers = getAuthHeaders(authToken);
+  const baseUrl = getApiBaseUrl();
+  const url = `${baseUrl}/api/v1/shops/${encodeURIComponent(shopId)}/reviews/summary`;
+
+  const response = await fetch(url, {
+    method: 'GET',
+    headers,
+  });
+
+  if (!response.ok) {
+    let errorDetail = 'Failed to fetch review summary.';
     try {
       const data = await response.json();
       if (data && typeof data.detail === 'string') {

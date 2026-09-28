@@ -11,10 +11,11 @@ import {
   TextInput,
 } from 'react-native';
 import { Shop } from '../types/shop';
-import { ShopReviewsResponse, UnifiedReview, ProviderAttribution } from '../types/review';
+import { ShopReviewsResponse, ShopReviewSummaryResponse, UnifiedReview, ProviderAttribution } from '../types/review';
 import { formatDistance, formatRating } from '../services/shopService';
 import {
   fetchShopReviews,
+  fetchShopReviewSummary,
   fetchMyReview,
   createUserReview,
   updateUserReview,
@@ -37,6 +38,12 @@ export default function ShopDetailCard({ shop, onClose, authToken }: ShopDetailC
   const [reviewsError, setReviewsError] = useState<string | null>(null);
   const currentRequestId = useRef<number>(0);
   const currentMutationId = useRef<number>(0);
+
+  // AI Review Summary state
+  const [summaryData, setSummaryData] = useState<ShopReviewSummaryResponse | null>(null);
+  const [isLoadingSummary, setIsLoadingSummary] = useState<boolean>(true);
+  const [summaryError, setSummaryError] = useState<string | null>(null);
+  const currentSummaryRequestId = useRef<number>(0);
 
   // User review form state
   const [isFormOpen, setIsFormOpen] = useState<boolean>(false);
@@ -84,9 +91,40 @@ export default function ShopDetailCard({ shop, onClose, authToken }: ShopDetailC
     }
   }, [shop.id, authToken]);
 
+  const loadSummary = useCallback(async () => {
+    if (!authToken) {
+      setIsLoadingSummary(false);
+      setSummaryData(null);
+      setSummaryError(null);
+      return;
+    }
+
+    const requestId = ++currentSummaryRequestId.current;
+    setIsLoadingSummary(true);
+    setSummaryError(null);
+
+    try {
+      const data = await fetchShopReviewSummary(shop.id, authToken);
+      if (requestId === currentSummaryRequestId.current) {
+        setSummaryData(data);
+      }
+    } catch (err) {
+      if (requestId === currentSummaryRequestId.current) {
+        const message =
+          err instanceof Error ? err.message : 'Unable to load review summary.';
+        setSummaryError(message);
+      }
+    } finally {
+      if (requestId === currentSummaryRequestId.current) {
+        setIsLoadingSummary(false);
+      }
+    }
+  }, [shop.id, authToken]);
+
   useEffect(() => {
     currentRequestId.current += 1;
     currentMutationId.current += 1;
+    currentSummaryRequestId.current += 1;
 
     setIsFormOpen(false);
     setFormRating(5);
@@ -98,13 +136,17 @@ export default function ShopDetailCard({ shop, onClose, authToken }: ShopDetailC
     setMyReview(null);
     setReviewsData(null);
     setReviewsError(null);
+    setSummaryData(null);
+    setSummaryError(null);
 
     loadReviews();
+    loadSummary();
     return () => {
       currentRequestId.current += 1;
       currentMutationId.current += 1;
+      currentSummaryRequestId.current += 1;
     };
-  }, [shop.id, authToken, loadReviews]);
+  }, [shop.id, authToken, loadReviews, loadSummary]);
 
   const handleOpenUrl = async (url?: string | null) => {
     if (!url) return;
@@ -164,7 +206,7 @@ export default function ShopDetailCard({ shop, onClose, authToken }: ShopDetailC
         activeToken === authToken
       ) {
         setIsFormOpen(false);
-        await loadReviews();
+        await Promise.all([loadReviews(), loadSummary()]);
       }
     } catch (err) {
       if (
@@ -204,7 +246,7 @@ export default function ShopDetailCard({ shop, onClose, authToken }: ShopDetailC
       ) {
         setIsFormOpen(false);
         setMyReview(null);
-        await loadReviews();
+        await Promise.all([loadReviews(), loadSummary()]);
       }
     } catch (err) {
       if (
@@ -310,6 +352,84 @@ export default function ShopDetailCard({ shop, onClose, authToken }: ShopDetailC
             )
           ) : null}
         </View>
+
+        {/* AI Review Summary Section */}
+        {authToken && (
+          <View style={styles.aiSummaryContainer}>
+            {isLoadingSummary && (
+              <View style={styles.aiSummaryLoading}>
+                <ActivityIndicator size="small" color="#4A2E18" />
+                <Text style={styles.aiSummaryLoadingText}>
+                  Synthesizing review summary...
+                </Text>
+              </View>
+            )}
+
+            {!isLoadingSummary && summaryError && (
+              <View style={styles.aiSummaryErrorContainer}>
+                <Text style={styles.aiSummaryErrorText}>{summaryError}</Text>
+                <TouchableOpacity
+                  style={styles.aiSummaryRetryButton}
+                  onPress={loadSummary}
+                  activeOpacity={0.7}
+                  accessibilityRole="button"
+                  accessibilityLabel="Retry loading review summary"
+                >
+                  <Text style={styles.aiSummaryRetryText}>Retry</Text>
+                </TouchableOpacity>
+              </View>
+            )}
+
+            {!isLoadingSummary && !summaryError && summaryData?.status === 'insufficient_reviews' && (
+              <View style={styles.aiSummaryInsufficient}>
+                <Text style={styles.aiSummaryInsufficientText}>
+                  ✨ Not enough customer reviews yet to generate an AI summary.
+                </Text>
+              </View>
+            )}
+
+            {!isLoadingSummary && !summaryError && summaryData?.status === 'available' && summaryData.summary && (
+              <View style={styles.aiSummaryCard}>
+                <View style={styles.aiSummaryHeader}>
+                  <Text style={styles.aiSummaryBadge}>✨ AI Review Summary</Text>
+                  {summaryData.review_count_analyzed > 0 ? (
+                    <Text style={styles.aiSummaryCountText}>
+                      Based on {summaryData.review_count_analyzed} reviews
+                    </Text>
+                  ) : null}
+                </View>
+
+                <Text style={styles.aiSummaryText}>{summaryData.summary}</Text>
+
+                {summaryData.positive_themes && summaryData.positive_themes.length > 0 && (
+                  <View style={styles.themeGroup}>
+                    <Text style={styles.themeGroupLabel}>Highlights</Text>
+                    <View style={styles.themePillContainer}>
+                      {summaryData.positive_themes.map((theme, idx) => (
+                        <View key={`pos-${idx}`} style={styles.positivePill}>
+                          <Text style={styles.positivePillText}>+ {theme}</Text>
+                        </View>
+                      ))}
+                    </View>
+                  </View>
+                )}
+
+                {summaryData.negative_themes && summaryData.negative_themes.length > 0 && (
+                  <View style={styles.themeGroup}>
+                    <Text style={styles.themeGroupLabel}>Things to Note</Text>
+                    <View style={styles.themePillContainer}>
+                      {summaryData.negative_themes.map((theme, idx) => (
+                        <View key={`neg-${idx}`} style={styles.negativePill}>
+                          <Text style={styles.negativePillText}>- {theme}</Text>
+                        </View>
+                      ))}
+                    </View>
+                  </View>
+                )}
+              </View>
+            )}
+          </View>
+        )}
 
         {/* User Review Management Section */}
         {authToken && !isLoadingReviews && !reviewsError && (
@@ -1023,5 +1143,140 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     marginTop: 6,
     fontStyle: 'italic',
+  },
+  aiSummaryContainer: {
+    marginBottom: 12,
+  },
+  aiSummaryLoading: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 12,
+    backgroundColor: '#FAF8F5',
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#EFEAE4',
+    gap: 8,
+  },
+  aiSummaryLoadingText: {
+    fontSize: 12,
+    color: '#6B5E55',
+    fontStyle: 'italic',
+  },
+  aiSummaryErrorContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: 10,
+    backgroundColor: '#FDF2F2',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#F8D7DA',
+    gap: 8,
+  },
+  aiSummaryErrorText: {
+    flex: 1,
+    fontSize: 12,
+    color: '#9C3434',
+  },
+  aiSummaryRetryButton: {
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+    backgroundColor: '#9C3434',
+    borderRadius: 6,
+  },
+  aiSummaryRetryText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#FFFFFF',
+  },
+  aiSummaryInsufficient: {
+    padding: 10,
+    backgroundColor: '#FAF8F5',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#EFEAE4',
+  },
+  aiSummaryInsufficientText: {
+    fontSize: 12,
+    color: '#8C7D73',
+    fontStyle: 'italic',
+    textAlign: 'center',
+  },
+  aiSummaryCard: {
+    backgroundColor: '#FAF8F5',
+    borderRadius: 12,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: '#EFEAE4',
+  },
+  aiSummaryHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 8,
+  },
+  aiSummaryBadge: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#4A2E18',
+    backgroundColor: '#FAF2EB',
+    paddingVertical: 2,
+    paddingHorizontal: 8,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#D4A373',
+  },
+  aiSummaryCountText: {
+    fontSize: 11,
+    color: '#8C7D73',
+  },
+  aiSummaryText: {
+    fontSize: 13,
+    color: '#3A2B20',
+    lineHeight: 18,
+    marginBottom: 8,
+  },
+  themeGroup: {
+    marginTop: 6,
+  },
+  themeGroupLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#6B5E55',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    marginBottom: 4,
+  },
+  themePillContainer: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+  },
+  positivePill: {
+    backgroundColor: '#EDF7ED',
+    borderWidth: 1,
+    borderColor: '#C8E6C9',
+    borderRadius: 6,
+    paddingVertical: 3,
+    paddingHorizontal: 8,
+  },
+  positivePillText: {
+    fontSize: 11,
+    color: '#2E7D32',
+    fontWeight: '600',
+  },
+  negativePill: {
+    backgroundColor: '#FFF8E1',
+    borderWidth: 1,
+    borderColor: '#FFE082',
+    borderRadius: 6,
+    paddingVertical: 3,
+    paddingHorizontal: 8,
+  },
+  negativePillText: {
+    fontSize: 11,
+    color: '#8D6E63',
+    fontWeight: '600',
   },
 });

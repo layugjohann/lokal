@@ -10,10 +10,11 @@ from ....schemas import (
     ReviewCreate,
     ReviewUpdate,
     ShopReviewsResponse,
+    ShopReviewSummaryResponse,
     UnifiedReview,
     UserResponse,
 )
-from ....services.reviews import ReviewService
+from ....services.reviews import ReviewService, ReviewSummaryService
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +24,11 @@ router = APIRouter()
 def get_review_service() -> ReviewService:
     """Dependency provider for ReviewService."""
     return ReviewService()
+
+
+def get_review_summary_service() -> ReviewSummaryService:
+    """Dependency provider for ReviewSummaryService."""
+    return ReviewSummaryService()
 
 
 @router.post(
@@ -139,3 +145,29 @@ async def get_shop_reviews(
     Returns 404 Not Found if the coffee shop is pending review or excluded.
     """
     return await service.get_shop_reviews(shop_id=shop_id, supabase=supabase)
+
+
+@router.get(
+    "/{shop_id}/reviews/summary",
+    response_model=ShopReviewSummaryResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Retrieve AI-generated review summary for a coffee shop",
+)
+async def get_shop_review_summary(
+    shop_id: UUID,
+    _current_user: Annotated[UserResponse, Depends(get_current_user)],
+    supabase: Annotated[Client, Depends(get_authenticated_supabase)],
+    summary_service: Annotated[ReviewSummaryService, Depends(get_review_summary_service)],
+    review_service: Annotated[ReviewService, Depends(get_review_service)],
+) -> ShopReviewSummaryResponse:
+    """Retrieve an AI review summary for an approved coffee shop.
+
+    Requires authentication and fail-closed curation approval.
+    Returns 404 Not Found if the coffee shop is pending review or excluded.
+    Returns status 'insufficient_reviews' if fewer than 3 text reviews are available.
+    """
+    return await summary_service.get_shop_summary(
+        shop_id=shop_id,
+        supabase=supabase,
+        review_service=review_service,
+    )
