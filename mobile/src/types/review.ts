@@ -52,3 +52,14 @@ export interface ShopReviewsResponse {
 export interface MessageResponse {
   message: string;
 }
+
+export type SummaryStatus = 'available' | 'insufficient_reviews';
+
+export interface ShopReviewSummaryResponse {
+  shop_id: string;
+  status: SummaryStatus;
+  summary?: string | null;
+  positive_themes: string[];
+  negative_themes: string[];
+  review_count_analyzed: number;
+}

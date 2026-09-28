@@ -18,6 +18,8 @@ class Settings:
         for email in os.getenv("CURATOR_EMAILS", "").split(",")
         if email.strip()
     ]
+    GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
+    GEMINI_MODEL: str = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
 
 
 settings = Settings()
