@@ -91,13 +91,30 @@ NEGATIVE_DESCRIPTORS = {
     "disliked",
 }
 
+PERMITTED_CONNECTORS = {
+    "being",
+    "too",
+    "overly",
+    "very",
+    "particularly",
+    "remotely",
+    "even",
+    "so",
+    "to",
+    "be",
+    "at",
+    "all",
+}
+
 
 def has_negative_context(text: str) -> bool:
     """Check whether text contains unnegated negative or avoidance indicators.
 
     Uses a phrase-aware heuristic to ensure negated negative constructions
-    (e.g., 'never stale', 'not bland at all', 'worth not skipping', 'don't skip')
-    are not falsely flagged as negative.
+    (e.g., 'never stale', 'not bland at all', 'worth not skipping', 'don't skip',
+    'far from bland', 'without being burnt') are not falsely flagged as negative,
+    while ensuring an earlier negator does not bleed across intervening non-connector
+    tokens (e.g., 'not fresh, stale', 'no milk, burnt').
 
     NOTE: This is a deterministic heuristic safeguard against obvious negative or avoidance
     constructions in cited evidence, not an exhaustive natural-language sentiment analysis engine.
@@ -109,27 +126,50 @@ def has_negative_context(text: str) -> bool:
         if pattern.search(norm):
             return True
 
-    # 2. Tokenize and check for unnegated negative descriptors or avoidance verbs
-    tokens = re.findall(r"[a-z']+", norm)
+    # 2. Tokenize words and punctuation boundaries
+    raw_tokens = re.findall(r"[a-z']+|[,;.!?]", norm)
+    tokens = [t.strip("'") for t in raw_tokens if t.strip("'")]
 
     for i, token in enumerate(tokens):
         clean_token = token.replace("'", "")
         for neg_word in NEGATIVE_DESCRIPTORS:
             if token == neg_word or clean_token == neg_word.replace("'", ""):
-                # Look back up to 3 tokens for a negator
-                window_start = max(0, i - 3)
-                prior_tokens = tokens[window_start:i]
+                is_negated = False
 
-                # Check if any prior token in the window is a negator
-                is_negated = any(
-                    p in NEGATORS or p.replace("'", "") in NEGATORS
-                    for p in prior_tokens
-                )
-
-                # Also check for "far from" or "anything but" in the prior substring
-                sub_prior = " ".join(prior_tokens)
-                if "far from" in sub_prior or "anything but" in sub_prior:
+                # Check preceding phrases like 'far from' or 'anything but'
+                if i >= 2 and (
+                    (tokens[i - 2] == "far" and tokens[i - 1] == "from")
+                    or (tokens[i - 2] == "anything" and tokens[i - 1] == "but")
+                ):
                     is_negated = True
+                elif i >= 3 and tokens[i - 1] in PERMITTED_CONNECTORS and (
+                    (tokens[i - 3] == "far" and tokens[i - 2] == "from")
+                    or (tokens[i - 3] == "anything" and tokens[i - 2] == "but")
+                ):
+                    is_negated = True
+                else:
+                    # Backward scan: a negator counts only when directly preceding
+                    # the descriptor or separated from it only by permitted connector tokens.
+                    # Scan halts immediately upon encountering another meaningful token or punctuation.
+                    curr_idx = i - 1
+                    steps = 0
+                    max_steps = 3
+
+                    while curr_idx >= 0 and steps < max_steps:
+                        prev_tok = tokens[curr_idx]
+                        prev_clean = prev_tok.replace("'", "")
+                        if prev_tok in NEGATORS or prev_clean in NEGATORS:
+                            is_negated = True
+                            break
+                        elif (
+                            prev_tok in PERMITTED_CONNECTORS
+                            or prev_clean in PERMITTED_CONNECTORS
+                        ):
+                            curr_idx -= 1
+                            steps += 1
+                        else:
+                            # Encountered another meaningful token or clause boundary
+                            break
 
                 if not is_negated:
                     return True

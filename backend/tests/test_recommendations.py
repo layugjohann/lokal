@@ -347,12 +347,41 @@ class TestGroundingValidator(unittest.TestCase):
             "horrible service and awful coffee",
             "undrinkable espresso",
             "disappointing drinks",
+            "not fresh, stale",
+            "no milk, burnt",
+            "not fresh stale",
+            "no milk burnt",
         ]
         for phrase in negative_cases:
             self.assertTrue(
                 has_negative_context(phrase),
                 f"Expected '{phrase}' to trigger negative context guard.",
             )
+
+    def test_intervening_meaningful_tokens_do_not_negate_subsequent_descriptors(self) -> None:
+        """Negators must not cross intervening non-connector tokens or clause boundaries."""
+        regression_reviews = [
+            ReviewInput(rating=4.0, text="Great location, but not fresh, stale croissant."),
+            ReviewInput(rating=4.5, text="Nice vibe, no milk, burnt coffee taste."),
+        ]
+        internal = InternalRecommendationContent(
+            items=[
+                InternalRecommendationItem(
+                    item_name="Croissant",
+                    reason="Customer mentioned croissant.",
+                    supporting_review_index=0,
+                    supporting_evidence="not fresh, stale croissant",
+                ),
+                InternalRecommendationItem(
+                    item_name="Coffee",
+                    reason="Customer mentioned coffee.",
+                    supporting_review_index=1,
+                    supporting_evidence="no milk, burnt coffee taste",
+                ),
+            ]
+        )
+        result = validate_and_convert_recommendations(internal, regression_reviews)
+        self.assertEqual(result, [])
 
 
 class TestGeminiReviewRecommender(unittest.IsolatedAsyncioTestCase):
