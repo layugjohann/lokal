@@ -263,11 +263,16 @@ class ShopDetailCardSummaryStateHarness {
 test('Stale summary protection: Shop A -> Shop B while summary loading is in progress does not apply stale summary', async () => {
   const originalFetch = globalThis.fetch;
 
+  let resolveShopA;
+  const shopAPromise = new Promise((resolve) => {
+    resolveShopA = resolve;
+  });
+
   globalThis.fetch = async (input) => {
     const url = input.toString();
     if (url.includes('shop-A')) {
-      // Simulate delayed response for Shop A
-      await new Promise((resolve) => setTimeout(resolve, 35));
+      // Keep Shop A's response pending until explicitly resolved
+      await shopAPromise;
       return {
         ok: true,
         status: 200,
@@ -281,8 +286,7 @@ test('Stale summary protection: Shop A -> Shop B while summary loading is in pro
         }),
       };
     }
-    // Faster response for Shop B
-    await new Promise((resolve) => setTimeout(resolve, 5));
+    // Immediate response for Shop B
     return {
       ok: true,
       status: 200,
@@ -300,27 +304,29 @@ test('Stale summary protection: Shop A -> Shop B while summary loading is in pro
   try {
     const harness = new ShopDetailCardSummaryStateHarness({ id: 'shop-A' }, 'token-xyz');
 
-    // 1. ShopDetailCard mounts for Shop A and invokes loadSummary
+    // 1. Start Shop A summary request
     const promiseA = harness.loadSummary(fetchShopReviewSummary);
     assert.strictEqual(harness.isLoadingSummary, true);
 
-    // 2. User switches to Shop B before Shop A resolves
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    // 2. Switch the test context to Shop B while Shop A is still pending
     harness.switchContext({ id: 'shop-B' });
     assert.strictEqual(harness.summaryData, null);
 
+    // 3. Start Shop B summary request and wait for it to complete
     const promiseB = harness.loadSummary(fetchShopReviewSummary);
     await promiseB;
 
-    // Shop B has resolved and rendered
+    // 4. Assert that Shop B's summary is active and its loading state is correct
     assert.strictEqual(harness.shop.id, 'shop-B');
     assert.strictEqual(harness.summaryData?.summary, 'Summary for Shop B');
     assert.strictEqual(harness.isLoadingSummary, false);
+    assert.strictEqual(harness.summaryError, null);
 
-    // Wait for Shop A's slow response to complete
+    // 5. Now explicitly resolve Shop A
+    resolveShopA();
     await promiseA;
 
-    // Verify Shop A did not overwrite Shop B's summary data or change loading state
+    // 6. Assert that Shop A's late response did not overwrite Shop B's summary or loading/error state
     assert.strictEqual(harness.shop.id, 'shop-B');
     assert.strictEqual(harness.summaryData?.summary, 'Summary for Shop B');
     assert.strictEqual(harness.isLoadingSummary, false);
@@ -333,17 +339,23 @@ test('Stale summary protection: Shop A -> Shop B while summary loading is in pro
 test('Stale summary protection: failed stale summary request does not set error on newly selected shop', async () => {
   const originalFetch = globalThis.fetch;
 
+  let resolveShopA;
+  const shopAPromise = new Promise((resolve) => {
+    resolveShopA = resolve;
+  });
+
   globalThis.fetch = async (input) => {
     const url = input.toString();
     if (url.includes('shop-A')) {
-      await new Promise((resolve) => setTimeout(resolve, 35));
+      // Keep Shop A pending until explicitly resolved with an error response
+      await shopAPromise;
       return {
         ok: false,
         status: 502,
         json: async () => ({ detail: 'AI review summarization is temporarily unavailable.' }),
       };
     }
-    await new Promise((resolve) => setTimeout(resolve, 5));
+    // Immediate response for Shop B
     return {
       ok: true,
       status: 200,
@@ -360,23 +372,34 @@ test('Stale summary protection: failed stale summary request does not set error 
 
   try {
     const harness = new ShopDetailCardSummaryStateHarness({ id: 'shop-A' }, 'token-xyz');
+
+    // 1. Start Shop A summary request
     const promiseA = harness.loadSummary(fetchShopReviewSummary);
+    assert.strictEqual(harness.isLoadingSummary, true);
 
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    // 2. Switch context to Shop B while Shop A is pending
     harness.switchContext({ id: 'shop-B' });
+    assert.strictEqual(harness.summaryData, null);
 
+    // 3. Start Shop B summary request and await resolution
     const promiseB = harness.loadSummary(fetchShopReviewSummary);
     await promiseB;
 
-    assert.strictEqual(harness.summaryData?.summary, 'Summary for Shop B');
-    assert.strictEqual(harness.summaryError, null);
-
-    await promiseA;
-
-    // Failed response from Shop A must not pollute Shop B's error state
-    assert.strictEqual(harness.summaryError, null);
+    // 4. Assert Shop B's successful state
+    assert.strictEqual(harness.shop.id, 'shop-B');
     assert.strictEqual(harness.summaryData?.summary, 'Summary for Shop B');
     assert.strictEqual(harness.isLoadingSummary, false);
+    assert.strictEqual(harness.summaryError, null);
+
+    // 5. Now resolve Shop A with the error response
+    resolveShopA();
+    await promiseA;
+
+    // 6. Assert that Shop A's late failure does not populate Shop B's error state or overwrite Shop B's summary
+    assert.strictEqual(harness.shop.id, 'shop-B');
+    assert.strictEqual(harness.summaryData?.summary, 'Summary for Shop B');
+    assert.strictEqual(harness.isLoadingSummary, false);
+    assert.strictEqual(harness.summaryError, null);
   } finally {
     globalThis.fetch = originalFetch;
   }
