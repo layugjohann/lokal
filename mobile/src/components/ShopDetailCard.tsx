@@ -11,11 +11,12 @@ import {
   TextInput,
 } from 'react-native';
 import { Shop } from '../types/shop';
-import { ShopReviewsResponse, ShopReviewSummaryResponse, UnifiedReview, ProviderAttribution } from '../types/review';
+import { ShopReviewsResponse, ShopReviewSummaryResponse, ShopRecommendationsResponse, UnifiedReview, ProviderAttribution } from '../types/review';
 import { formatDistance, formatRating } from '../services/shopService';
 import {
   fetchShopReviews,
   fetchShopReviewSummary,
+  fetchShopRecommendations,
   fetchMyReview,
   createUserReview,
   updateUserReview,
@@ -44,6 +45,12 @@ export default function ShopDetailCard({ shop, onClose, authToken }: ShopDetailC
   const [isLoadingSummary, setIsLoadingSummary] = useState<boolean>(true);
   const [summaryError, setSummaryError] = useState<string | null>(null);
   const currentSummaryRequestId = useRef<number>(0);
+
+  // AI Must-Try Recommendations state
+  const [recommendationsData, setRecommendationsData] = useState<ShopRecommendationsResponse | null>(null);
+  const [isLoadingRecommendations, setIsLoadingRecommendations] = useState<boolean>(true);
+  const [recommendationsError, setRecommendationsError] = useState<string | null>(null);
+  const currentRecommendationsRequestId = useRef<number>(0);
 
   // User review form state
   const [isFormOpen, setIsFormOpen] = useState<boolean>(false);
@@ -121,10 +128,41 @@ export default function ShopDetailCard({ shop, onClose, authToken }: ShopDetailC
     }
   }, [shop.id, authToken]);
 
+  const loadRecommendations = useCallback(async () => {
+    if (!authToken) {
+      setIsLoadingRecommendations(false);
+      setRecommendationsData(null);
+      setRecommendationsError(null);
+      return;
+    }
+
+    const requestId = ++currentRecommendationsRequestId.current;
+    setIsLoadingRecommendations(true);
+    setRecommendationsError(null);
+
+    try {
+      const data = await fetchShopRecommendations(shop.id, authToken);
+      if (requestId === currentRecommendationsRequestId.current) {
+        setRecommendationsData(data);
+      }
+    } catch (err) {
+      if (requestId === currentRecommendationsRequestId.current) {
+        const message =
+          err instanceof Error ? err.message : 'Unable to load recommendations.';
+        setRecommendationsError(message);
+      }
+    } finally {
+      if (requestId === currentRecommendationsRequestId.current) {
+        setIsLoadingRecommendations(false);
+      }
+    }
+  }, [shop.id, authToken]);
+
   useEffect(() => {
     currentRequestId.current += 1;
     currentMutationId.current += 1;
     currentSummaryRequestId.current += 1;
+    currentRecommendationsRequestId.current += 1;
 
     setIsFormOpen(false);
     setFormRating(5);
@@ -138,15 +176,19 @@ export default function ShopDetailCard({ shop, onClose, authToken }: ShopDetailC
     setReviewsError(null);
     setSummaryData(null);
     setSummaryError(null);
+    setRecommendationsData(null);
+    setRecommendationsError(null);
 
     loadReviews();
     loadSummary();
+    loadRecommendations();
     return () => {
       currentRequestId.current += 1;
       currentMutationId.current += 1;
       currentSummaryRequestId.current += 1;
+      currentRecommendationsRequestId.current += 1;
     };
-  }, [shop.id, authToken, loadReviews, loadSummary]);
+  }, [shop.id, authToken, loadReviews, loadSummary, loadRecommendations]);
 
   const handleOpenUrl = async (url?: string | null) => {
     if (!url) return;
@@ -206,7 +248,7 @@ export default function ShopDetailCard({ shop, onClose, authToken }: ShopDetailC
         activeToken === authToken
       ) {
         setIsFormOpen(false);
-        await Promise.all([loadReviews(), loadSummary()]);
+        await Promise.all([loadReviews(), loadSummary(), loadRecommendations()]);
       }
     } catch (err) {
       if (
@@ -246,7 +288,7 @@ export default function ShopDetailCard({ shop, onClose, authToken }: ShopDetailC
       ) {
         setIsFormOpen(false);
         setMyReview(null);
-        await Promise.all([loadReviews(), loadSummary()]);
+        await Promise.all([loadReviews(), loadSummary(), loadRecommendations()]);
       }
     } catch (err) {
       if (
@@ -428,6 +470,83 @@ export default function ShopDetailCard({ shop, onClose, authToken }: ShopDetailC
                 )}
               </View>
             )}
+          </View>
+        )}
+
+        {/* AI Must Try Recommendations Section */}
+        {authToken && (
+          <View style={styles.aiRecommendationsContainer}>
+            {isLoadingRecommendations && (
+              <View style={styles.aiRecommendationsLoading}>
+                <ActivityIndicator size="small" color="#4A2E18" />
+                <Text style={styles.aiRecommendationsLoadingText}>
+                  Finding customer favorites...
+                </Text>
+              </View>
+            )}
+
+            {!isLoadingRecommendations && recommendationsError && (
+              <View style={styles.aiRecommendationsErrorContainer}>
+                <Text style={styles.aiRecommendationsErrorText}>{recommendationsError}</Text>
+                <TouchableOpacity
+                  style={styles.aiRecommendationsRetryButton}
+                  onPress={loadRecommendations}
+                  activeOpacity={0.7}
+                  accessibilityRole="button"
+                  accessibilityLabel="Retry loading recommendations"
+                >
+                  <Text style={styles.aiRecommendationsRetryText}>Retry</Text>
+                </TouchableOpacity>
+              </View>
+            )}
+
+            {!isLoadingRecommendations &&
+              !recommendationsError &&
+              recommendationsData &&
+              recommendationsData.review_count_analyzed < 3 && (
+                <View style={styles.aiRecommendationsInsufficient}>
+                  <Text style={styles.aiRecommendationsInsufficientText}>
+                    ✨ Not enough customer reviews yet to generate recommendations.
+                  </Text>
+                </View>
+              )}
+
+            {!isLoadingRecommendations &&
+              !recommendationsError &&
+              recommendationsData &&
+              recommendationsData.review_count_analyzed >= 3 &&
+              recommendationsData.items.length === 0 && (
+                <View style={styles.aiRecommendationsEmpty}>
+                  <Text style={styles.aiRecommendationsEmptyText}>
+                    ✨ No specific menu recommendations found in the available reviews.
+                  </Text>
+                </View>
+              )}
+
+            {!isLoadingRecommendations &&
+              !recommendationsError &&
+              recommendationsData &&
+              recommendationsData.items.length > 0 && (
+                <View style={styles.aiRecommendationsCard}>
+                  <View style={styles.aiRecommendationsHeader}>
+                    <Text style={styles.aiRecommendationsBadge}>☕ Must Try</Text>
+                    {recommendationsData.review_count_analyzed > 0 ? (
+                      <Text style={styles.aiRecommendationsCountText}>
+                        Based on {recommendationsData.review_count_analyzed} reviews
+                      </Text>
+                    ) : null}
+                  </View>
+
+                  <View style={styles.recommendationList}>
+                    {recommendationsData.items.map((item, idx) => (
+                      <View key={`rec-${idx}`} style={styles.recommendationItemCard}>
+                        <Text style={styles.recommendationItemName}>{item.item_name}</Text>
+                        <Text style={styles.recommendationItemReason}>{item.reason}</Text>
+                      </View>
+                    ))}
+                  </View>
+                </View>
+              )}
           </View>
         )}
 
@@ -1278,5 +1397,124 @@ const styles = StyleSheet.create({
     fontSize: 11,
     color: '#8D6E63',
     fontWeight: '600',
+  },
+  aiRecommendationsContainer: {
+    marginTop: 10,
+    marginBottom: 6,
+  },
+  aiRecommendationsLoading: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 10,
+    backgroundColor: '#FAF8F5',
+    borderRadius: 8,
+    gap: 8,
+  },
+  aiRecommendationsLoadingText: {
+    fontSize: 12,
+    color: '#6B5E55',
+  },
+  aiRecommendationsErrorContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: 10,
+    backgroundColor: '#FDF2F2',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#F8D7DA',
+    gap: 8,
+  },
+  aiRecommendationsErrorText: {
+    flex: 1,
+    fontSize: 12,
+    color: '#9C3434',
+  },
+  aiRecommendationsRetryButton: {
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+    backgroundColor: '#9C3434',
+    borderRadius: 6,
+  },
+  aiRecommendationsRetryText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#FFFFFF',
+  },
+  aiRecommendationsInsufficient: {
+    padding: 10,
+    backgroundColor: '#FAF8F5',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#EFEAE4',
+  },
+  aiRecommendationsInsufficientText: {
+    fontSize: 12,
+    color: '#8C7D73',
+    fontStyle: 'italic',
+    textAlign: 'center',
+  },
+  aiRecommendationsEmpty: {
+    padding: 10,
+    backgroundColor: '#FAF8F5',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#EFEAE4',
+  },
+  aiRecommendationsEmptyText: {
+    fontSize: 12,
+    color: '#8C7D73',
+    fontStyle: 'italic',
+    textAlign: 'center',
+  },
+  aiRecommendationsCard: {
+    backgroundColor: '#FAF8F5',
+    borderRadius: 12,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: '#EFEAE4',
+  },
+  aiRecommendationsHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 8,
+  },
+  aiRecommendationsBadge: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#4A2E18',
+    backgroundColor: '#FAF2EB',
+    paddingVertical: 2,
+    paddingHorizontal: 8,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#D4A373',
+  },
+  aiRecommendationsCountText: {
+    fontSize: 11,
+    color: '#8C7D73',
+  },
+  recommendationList: {
+    gap: 8,
+  },
+  recommendationItemCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 8,
+    padding: 10,
+    borderWidth: 1,
+    borderColor: '#EFEAE4',
+  },
+  recommendationItemName: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#4A2E18',
+    marginBottom: 2,
+  },
+  recommendationItemReason: {
+    fontSize: 12,
+    color: '#55433C',
+    lineHeight: 16,
   },
 });

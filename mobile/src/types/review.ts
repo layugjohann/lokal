@@ -63,3 +63,18 @@ export interface ShopReviewSummaryResponse {
   negative_themes: string[];
   review_count_analyzed: number;
 }
+
+export type RecommendationStatus = 'available' | 'insufficient_reviews';
+
+export interface RecommendationItem {
+  item_name: string;
+  reason: string;
+}
+
+export interface ShopRecommendationsResponse {
+  shop_id: string;
+  status: RecommendationStatus;
+  items: RecommendationItem[];
+  review_count_analyzed: number;
+}
+

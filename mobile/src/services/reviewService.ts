@@ -4,6 +4,7 @@ import type {
   ReviewUpdateInput,
   ShopReviewsResponse,
   ShopReviewSummaryResponse,
+  ShopRecommendationsResponse,
   UnifiedReview,
 } from '../types/review';
 
@@ -253,3 +254,42 @@ export async function fetchShopReviewSummary(
 
   return response.json();
 }
+
+/**
+ * Retrieves AI-generated 'Must Try' recommendations for a coffee shop from FastAPI.
+ * Requires a valid authenticated caller JWT.
+ */
+export async function fetchShopRecommendations(
+  shopId: string,
+  authToken: string
+): Promise<ShopRecommendationsResponse> {
+  if (!authToken || !authToken.trim()) {
+    throw new Error('Authentication token is required to fetch recommendations.');
+  }
+  const headers = getAuthHeaders(authToken);
+  const baseUrl = getApiBaseUrl();
+  const url = `${baseUrl}/api/v1/shops/${encodeURIComponent(shopId)}/reviews/recommendations`;
+
+  const response = await fetch(url, {
+    method: 'GET',
+    headers,
+  });
+
+  if (!response.ok) {
+    let errorDetail = 'Failed to fetch recommendations.';
+    try {
+      const data = await response.json();
+      if (data && typeof data.detail === 'string') {
+        errorDetail = data.detail;
+      }
+    } catch {
+      // Non-JSON fallback
+    }
+    const error = new Error(errorDetail);
+    (error as { status?: number }).status = response.status;
+    throw error;
+  }
+
+  return response.json();
+}
+

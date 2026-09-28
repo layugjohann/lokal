@@ -1,5 +1,12 @@
 from .base import BaseReviewProvider, ExternalProviderError
 from .google_places import GooglePlacesReviewProvider
+from .recommendations import (
+    GeminiReviewRecommender,
+    InMemoryRecommendationCache,
+    ReviewRecommender,
+    ReviewRecommendationService,
+    get_recommendation_cache,
+)
 from .service import ReviewService
 from .summary import (
     GeminiReviewSummarizer,
@@ -19,4 +26,9 @@ __all__ = [
     "InMemorySummaryCache",
     "ReviewSummaryService",
     "get_summary_cache",
+    "ReviewRecommender",
+    "GeminiReviewRecommender",
+    "InMemoryRecommendationCache",
+    "ReviewRecommendationService",
+    "get_recommendation_cache",
 ]

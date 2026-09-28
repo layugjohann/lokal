@@ -147,3 +147,43 @@ class ShopReviewSummaryResponse(BaseModel):
     review_count_analyzed: int = Field(
         0, description="Total count of usable text reviews analyzed"
     )
+
+
+class RecommendationStatus(str, Enum):
+    """Availability status indicator for coffee shop recommendations."""
+    AVAILABLE = "available"
+    INSUFFICIENT_REVIEWS = "insufficient_reviews"
+
+
+class RecommendationItem(BaseModel):
+    """Public recommendation item presented to users."""
+    model_config = ConfigDict(from_attributes=True)
+
+    item_name: str = Field(
+        ...,
+        min_length=2,
+        max_length=60,
+        description="Specific menu, coffee, or food item name",
+    )
+    reason: str = Field(
+        ...,
+        min_length=10,
+        max_length=300,
+        description="Concise evidence-based reason derived from positive review mentions",
+    )
+
+
+class ShopRecommendationsResponse(BaseModel):
+    """API response schema for coffee shop recommendations."""
+    model_config = ConfigDict(from_attributes=True)
+
+    shop_id: Union[UUID, str] = Field(..., description="LOKAL coffee shop identifier")
+    status: RecommendationStatus = Field(..., description="Recommendation availability status")
+    items: list[RecommendationItem] = Field(
+        default_factory=list,
+        description="List of positively recommended menu items",
+    )
+    review_count_analyzed: int = Field(
+        0, description="Total count of usable text reviews analyzed"
+    )
+
