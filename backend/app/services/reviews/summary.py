@@ -1,5 +1,6 @@
 import json
 import logging
+from threading import Lock
 import time
 from typing import Any, Optional, Protocol, Union, runtime_checkable
 from uuid import UUID
@@ -59,7 +60,7 @@ class GeminiReviewSummarizer:
 
         Raises:
             ExternalProviderError: If the provider request fails, times out,
-                returns 429/5xx, or returns malformed schema output.
+                returns 429/5xx, non-STOP finish reason, or returns malformed schema output.
         """
         if not self.api_key:
             logger.error("GEMINI_API_KEY is not configured.")
@@ -110,6 +111,16 @@ class GeminiReviewSummarizer:
             "required": ["summary", "positive_themes", "negative_themes"],
         }
 
+        generation_config: dict[str, Any] = {
+            "temperature": 0.2,
+            "maxOutputTokens": 500,
+            "responseMimeType": "application/json",
+            "responseSchema": response_schema,
+        }
+        # Disable reasoning tokens on Gemini 2.5 series so maxOutputTokens is dedicated to JSON summary
+        if "2.5" in self.model:
+            generation_config["thinkingConfig"] = {"thinkingBudget": 0}
+
         body = {
             "system_instruction": {
                 "parts": [{"text": system_instruction}]
@@ -120,12 +131,7 @@ class GeminiReviewSummarizer:
                     "parts": [{"text": user_content}],
                 }
             ],
-            "generationConfig": {
-                "temperature": 0.2,
-                "maxOutputTokens": 500,
-                "responseMimeType": "application/json",
-                "responseSchema": response_schema,
-            },
+            "generationConfig": generation_config,
         }
 
         url = f"{GEMINI_API_BASE_URL}/{self.model}:generateContent?key={self.api_key}"
@@ -141,29 +147,53 @@ class GeminiReviewSummarizer:
 
             if response.status_code != 200:
                 logger.warning(
-                    f"Gemini API returned error HTTP {response.status_code}: {response.text}"
+                    f"Gemini API returned non-200 status code: HTTP {response.status_code}"
                 )
                 raise ExternalProviderError(
                     f"Gemini API returned HTTP {response.status_code}."
                 )
 
-            data = response.json()
-            candidates = data.get("candidates", [])
-            if not candidates:
-                logger.warning("Gemini API returned no candidates in response.")
-                raise ExternalProviderError("Gemini API returned empty candidate response.")
+            try:
+                data = response.json()
+                if not isinstance(data, dict):
+                    logger.warning("Gemini API returned non-dict response body.")
+                    raise ExternalProviderError("AI provider returned an unexpected response structure.")
 
-            first_candidate = candidates[0]
-            finish_reason = first_candidate.get("finishReason")
-            if finish_reason and finish_reason not in ("STOP", None):
-                logger.warning(f"Gemini generation stopped unexpectedly: finishReason={finish_reason}")
+                candidates = data.get("candidates")
+                if not isinstance(candidates, list) or len(candidates) == 0:
+                    logger.warning("Gemini API returned no candidates in response.")
+                    raise ExternalProviderError("Gemini API returned empty candidate response.")
 
-            content_parts = first_candidate.get("content", {}).get("parts", [])
-            if not content_parts or "text" not in content_parts[0]:
-                logger.warning("Gemini candidate did not contain text content part.")
-                raise ExternalProviderError("Gemini API candidate missing text content.")
+                first_candidate = candidates[0]
+                if not isinstance(first_candidate, dict):
+                    logger.warning("Gemini candidate is not a dictionary.")
+                    raise ExternalProviderError("AI provider returned an unexpected candidate structure.")
 
-            raw_text = content_parts[0]["text"]
+                finish_reason = first_candidate.get("finishReason")
+                if finish_reason not in ("STOP", None):
+                    logger.warning(f"Gemini generation stopped unexpectedly: finishReason={finish_reason}")
+                    raise ExternalProviderError(
+                        f"Gemini generation stopped with finishReason={finish_reason}."
+                    )
+
+                content_parts = first_candidate.get("content", {}).get("parts", [])
+                if (
+                    not isinstance(content_parts, list)
+                    or len(content_parts) == 0
+                    or not isinstance(content_parts[0], dict)
+                    or "text" not in content_parts[0]
+                ):
+                    logger.warning("Gemini candidate did not contain text content part.")
+                    raise ExternalProviderError("Gemini API candidate missing text content.")
+
+                raw_text = content_parts[0]["text"]
+                if not isinstance(raw_text, str):
+                    logger.warning("Gemini candidate text is not a string.")
+                    raise ExternalProviderError("Gemini API candidate missing text content.")
+
+            except (ValueError, TypeError, AttributeError, KeyError, IndexError) as parse_exc:
+                logger.warning(f"Failed to parse Gemini API response structure: {parse_exc}")
+                raise ExternalProviderError("AI provider returned a malformed response.") from parse_exc
 
             # Application-Level Validation Boundary: validate with Pydantic
             try:
@@ -188,40 +218,76 @@ class GeminiReviewSummarizer:
 
 
 class InMemorySummaryCache:
-    """In-memory TTL cache for review summaries with shop-level eviction."""
+    """In-memory TTL cache for review summaries with shop-level eviction and generation tracking."""
 
     def __init__(self, ttl_seconds: float = 3600.0, max_capacity: int = 500) -> None:
         self.ttl_seconds = ttl_seconds
         self.max_capacity = max_capacity
+        self._lock = Lock()
+        self._epoch = 0
+        self._versions: dict[str, int] = {}
         # shop_id -> (ReviewSummaryContent, review_count_analyzed, timestamp)
         self._cache: dict[str, tuple[ReviewSummaryContent, int, float]] = {}
 
     def get(self, shop_id: str) -> Optional[tuple[ReviewSummaryContent, int]]:
         """Retrieve unexpired cached summary for shop, or None if expired/missing."""
-        entry = self._cache.get(shop_id)
-        if not entry:
-            return None
-        content, count, cached_at = entry
-        if time.time() - cached_at > self.ttl_seconds:
-            self._cache.pop(shop_id, None)
-            return None
-        return content, count
+        with self._lock:
+            entry = self._cache.get(shop_id)
+            if not entry:
+                return None
+            content, count, cached_at = entry
+            if time.time() - cached_at > self.ttl_seconds:
+                self._cache.pop(shop_id, None)
+                return None
+            return content, count
 
-    def set(self, shop_id: str, content: ReviewSummaryContent, review_count_analyzed: int) -> None:
-        """Store summary in cache with current timestamp, enforcing max capacity."""
+    def get_generation(self, shop_id: str) -> tuple[int, int]:
+        """Capture the current generation tuple (epoch, shop_version) for a shop."""
+        with self._lock:
+            return self._epoch, self._versions.get(shop_id, 0)
+
+    def _set_unlocked(self, shop_id: str, content: ReviewSummaryContent, review_count_analyzed: int) -> None:
         if len(self._cache) >= self.max_capacity and shop_id not in self._cache:
             # Evict oldest entry
             oldest_key = min(self._cache, key=lambda k: self._cache[k][2])
             self._cache.pop(oldest_key, None)
         self._cache[shop_id] = (content, review_count_analyzed, time.time())
 
+    def set(self, shop_id: str, content: ReviewSummaryContent, review_count_analyzed: int) -> None:
+        """Store summary in cache with current timestamp, enforcing max capacity."""
+        with self._lock:
+            self._set_unlocked(shop_id, content, review_count_analyzed)
+
+    def set_if_generation(
+        self,
+        shop_id: str,
+        content: ReviewSummaryContent,
+        review_count_analyzed: int,
+        generation: tuple[int, int],
+    ) -> bool:
+        """Store summary in cache only if the shop generation matches the captured generation.
+
+        Returns True if the entry was stored, False if the generation changed (invalidation occurred).
+        """
+        with self._lock:
+            current_generation = (self._epoch, self._versions.get(shop_id, 0))
+            if generation != current_generation:
+                return False
+            self._set_unlocked(shop_id, content, review_count_analyzed)
+            return True
+
     def invalidate(self, shop_id: str) -> None:
-        """Invalidate the cached summary for a specific coffee shop."""
-        self._cache.pop(shop_id, None)
+        """Invalidate the cached summary for a specific coffee shop and advance generation."""
+        with self._lock:
+            self._versions[shop_id] = self._versions.get(shop_id, 0) + 1
+            self._cache.pop(shop_id, None)
 
     def clear(self) -> None:
-        """Clear all cached entries."""
-        self._cache.clear()
+        """Clear all cached entries and advance epoch to invalidate all prior generations."""
+        with self._lock:
+            self._epoch += 1
+            self._versions.clear()
+            self._cache.clear()
 
 
 # Global in-memory cache instance shared across the process
@@ -288,6 +354,9 @@ class ReviewSummaryService:
                 review_count_analyzed=analyzed_count,
             )
 
+        # Capture generation before review retrieval and AI summarization
+        generation = self.cache.get_generation(str_shop_id)
+
         # 3. Retrieve unified reviews
         reviews_res = await review_service.get_shop_reviews(shop_id=shop_id, supabase=supabase)
 
@@ -333,10 +402,15 @@ class ReviewSummaryService:
             raise HTTPException(
                 status_code=status.HTTP_502_BAD_GATEWAY,
                 detail="AI review summarization is temporarily unavailable.",
-            )
+            ) from exc
 
-        # 8. Cache successful summary
-        self.cache.set(str_shop_id, summary_content, len(usable_reviews))
+        # 8. Cache successful summary only if generation has not changed
+        self.cache.set_if_generation(
+            str_shop_id,
+            summary_content,
+            len(usable_reviews),
+            generation,
+        )
 
         return ShopReviewSummaryResponse(
             shop_id=shop_id,

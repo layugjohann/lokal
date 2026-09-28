@@ -195,16 +195,79 @@ test('fetchShopReviewSummary handles non-JSON error response fallback', async ()
   }
 });
 
-test('Stale summary protection: switching shops ignores in-flight response from previous shop', async () => {
+/**
+ * Harness modeling ShopDetailCard's summary state management,
+ * monotonic request tracking, and context invalidation.
+ */
+class ShopDetailCardSummaryStateHarness {
+  constructor(initialShop, initialAuthToken = 'mock-token') {
+    this.shop = initialShop;
+    this.authToken = initialAuthToken;
+
+    this.summaryData = null;
+    this.isLoadingSummary = false;
+    this.summaryError = null;
+
+    this.currentSummaryRequestId = 0;
+  }
+
+  // Simulates useEffect cleanup and re-trigger when shop.id or authToken changes in ShopDetailCard.tsx
+  switchContext(newShop, newAuthToken = this.authToken) {
+    // 1. useEffect cleanup of previous context
+    this.currentSummaryRequestId += 1;
+
+    this.shop = newShop;
+    this.authToken = newAuthToken;
+
+    // 2. useEffect setup for new context
+    this.currentSummaryRequestId += 1;
+    this.summaryData = null;
+    this.summaryError = null;
+    if (!this.authToken) {
+      this.isLoadingSummary = false;
+    }
+  }
+
+  // Simulates loadSummary callback in ShopDetailCard.tsx
+  async loadSummary(fetchFn) {
+    if (!this.authToken) {
+      this.isLoadingSummary = false;
+      this.summaryData = null;
+      this.summaryError = null;
+      return;
+    }
+
+    const requestId = ++this.currentSummaryRequestId;
+    this.isLoadingSummary = true;
+    this.summaryError = null;
+
+    try {
+      const data = await fetchFn(this.shop.id, this.authToken);
+      if (requestId === this.currentSummaryRequestId) {
+        this.summaryData = data;
+      }
+    } catch (err) {
+      if (requestId === this.currentSummaryRequestId) {
+        const message =
+          err instanceof Error ? err.message : 'Unable to load review summary.';
+        this.summaryError = message;
+      }
+    } finally {
+      if (requestId === this.currentSummaryRequestId) {
+        this.isLoadingSummary = false;
+      }
+    }
+  }
+}
+
+test('Stale summary protection: Shop A -> Shop B while summary loading is in progress does not apply stale summary', async () => {
   const originalFetch = globalThis.fetch;
-  let currentSummaryRequestId = 0;
-  let renderedSummary = null;
 
   globalThis.fetch = async (input) => {
     const url = input.toString();
     if (url.includes('shop-A')) {
       // Simulate delayed response for Shop A
-      await new Promise((resolve) => setTimeout(resolve, 30));
+      await new Promise((resolve) => setTimeout(resolve, 35));
       return {
         ok: true,
         status: 200,
@@ -235,28 +298,125 @@ test('Stale summary protection: switching shops ignores in-flight response from 
   };
 
   try {
-    // 1. User selects Shop A
-    const reqA = ++currentSummaryRequestId;
-    const promiseA = fetchShopReviewSummary('shop-A', 'token').then((data) => {
-      if (reqA === currentSummaryRequestId) {
-        renderedSummary = data.summary;
-      }
-    });
+    const harness = new ShopDetailCardSummaryStateHarness({ id: 'shop-A' }, 'token-xyz');
 
-    // 2. User immediately switches to Shop B before Shop A resolves
+    // 1. ShopDetailCard mounts for Shop A and invokes loadSummary
+    const promiseA = harness.loadSummary(fetchShopReviewSummary);
+    assert.strictEqual(harness.isLoadingSummary, true);
+
+    // 2. User switches to Shop B before Shop A resolves
     await new Promise((resolve) => setTimeout(resolve, 10));
-    const reqB = ++currentSummaryRequestId;
-    const promiseB = fetchShopReviewSummary('shop-B', 'token').then((data) => {
-      if (reqB === currentSummaryRequestId) {
-        renderedSummary = data.summary;
-      }
-    });
+    harness.switchContext({ id: 'shop-B' });
+    assert.strictEqual(harness.summaryData, null);
 
-    await Promise.all([promiseA, promiseB]);
+    const promiseB = harness.loadSummary(fetchShopReviewSummary);
+    await promiseB;
 
-    // Shop B summary must win; Shop A must be discarded
-    assert.strictEqual(renderedSummary, 'Summary for Shop B');
+    // Shop B has resolved and rendered
+    assert.strictEqual(harness.shop.id, 'shop-B');
+    assert.strictEqual(harness.summaryData?.summary, 'Summary for Shop B');
+    assert.strictEqual(harness.isLoadingSummary, false);
+
+    // Wait for Shop A's slow response to complete
+    await promiseA;
+
+    // Verify Shop A did not overwrite Shop B's summary data or change loading state
+    assert.strictEqual(harness.shop.id, 'shop-B');
+    assert.strictEqual(harness.summaryData?.summary, 'Summary for Shop B');
+    assert.strictEqual(harness.isLoadingSummary, false);
+    assert.strictEqual(harness.summaryError, null);
   } finally {
     globalThis.fetch = originalFetch;
   }
 });
+
+test('Stale summary protection: failed stale summary request does not set error on newly selected shop', async () => {
+  const originalFetch = globalThis.fetch;
+
+  globalThis.fetch = async (input) => {
+    const url = input.toString();
+    if (url.includes('shop-A')) {
+      await new Promise((resolve) => setTimeout(resolve, 35));
+      return {
+        ok: false,
+        status: 502,
+        json: async () => ({ detail: 'AI review summarization is temporarily unavailable.' }),
+      };
+    }
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({
+        shop_id: 'shop-B',
+        status: 'available',
+        summary: 'Summary for Shop B',
+        positive_themes: [],
+        negative_themes: [],
+        review_count_analyzed: 4,
+      }),
+    };
+  };
+
+  try {
+    const harness = new ShopDetailCardSummaryStateHarness({ id: 'shop-A' }, 'token-xyz');
+    const promiseA = harness.loadSummary(fetchShopReviewSummary);
+
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    harness.switchContext({ id: 'shop-B' });
+
+    const promiseB = harness.loadSummary(fetchShopReviewSummary);
+    await promiseB;
+
+    assert.strictEqual(harness.summaryData?.summary, 'Summary for Shop B');
+    assert.strictEqual(harness.summaryError, null);
+
+    await promiseA;
+
+    // Failed response from Shop A must not pollute Shop B's error state
+    assert.strictEqual(harness.summaryError, null);
+    assert.strictEqual(harness.summaryData?.summary, 'Summary for Shop B');
+    assert.strictEqual(harness.isLoadingSummary, false);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('Stale summary protection: auth token invalidation during in-flight summary request discards stale summary', async () => {
+  const originalFetch = globalThis.fetch;
+
+  globalThis.fetch = async () => {
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({
+        shop_id: 'shop-A',
+        status: 'available',
+        summary: 'Summary for Shop A',
+        positive_themes: [],
+        negative_themes: [],
+        review_count_analyzed: 5,
+      }),
+    };
+  };
+
+  try {
+    const harness = new ShopDetailCardSummaryStateHarness({ id: 'shop-A' }, 'token-xyz');
+    const promise = harness.loadSummary(fetchShopReviewSummary);
+
+    // User logs out while request is in flight
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    harness.switchContext(harness.shop, null);
+
+    await promise;
+
+    // Logged out context must have null summary data
+    assert.strictEqual(harness.summaryData, null);
+    assert.strictEqual(harness.authToken, null);
+    assert.strictEqual(harness.isLoadingSummary, false);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+

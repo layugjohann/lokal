@@ -192,6 +192,125 @@ class TestGeminiReviewSummarizer(unittest.IsolatedAsyncioTestCase):
                 await self.summarizer.summarize(self._sample_reviews())
             self.assertIn("expected summary schema", str(ctx.exception))
 
+    async def test_summarize_http_200_invalid_json_raises_provider_error(self) -> None:
+        mock_response = MagicMock(spec=httpx.Response)
+        mock_response.status_code = 200
+        mock_response.json.side_effect = ValueError("Expecting value: line 1 column 1 (char 0)")
+
+        with patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_post:
+            mock_post.return_value = mock_response
+            with self.assertRaises(ExternalProviderError) as ctx:
+                await self.summarizer.summarize(self._sample_reviews())
+            self.assertIn("malformed response", str(ctx.exception))
+
+    async def test_summarize_unexpected_response_shape_list_raises_provider_error(self) -> None:
+        mock_response = MagicMock(spec=httpx.Response)
+        mock_response.status_code = 200
+        mock_response.json.return_value = ["unexpected", "list", "body"]
+
+        with patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_post:
+            mock_post.return_value = mock_response
+            with self.assertRaises(ExternalProviderError) as ctx:
+                await self.summarizer.summarize(self._sample_reviews())
+            self.assertIn("unexpected response structure", str(ctx.exception))
+
+    async def test_summarize_unexpected_response_shape_empty_candidates_raises_provider_error(self) -> None:
+        mock_response = MagicMock(spec=httpx.Response)
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"candidates": []}
+
+        with patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_post:
+            mock_post.return_value = mock_response
+            with self.assertRaises(ExternalProviderError) as ctx:
+                await self.summarizer.summarize(self._sample_reviews())
+            self.assertIn("empty candidate response", str(ctx.exception))
+
+    async def test_summarize_unexpected_response_shape_candidate_not_dict_raises_provider_error(self) -> None:
+        mock_response = MagicMock(spec=httpx.Response)
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"candidates": ["not-a-dict"]}
+
+        with patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_post:
+            mock_post.return_value = mock_response
+            with self.assertRaises(ExternalProviderError) as ctx:
+                await self.summarizer.summarize(self._sample_reviews())
+            self.assertIn("unexpected candidate structure", str(ctx.exception))
+
+    async def test_summarize_unexpected_response_shape_missing_parts_raises_provider_error(self) -> None:
+        mock_response = MagicMock(spec=httpx.Response)
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "candidates": [{"content": {"parts": []}}]
+        }
+
+        with patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_post:
+            mock_post.return_value = mock_response
+            with self.assertRaises(ExternalProviderError) as ctx:
+                await self.summarizer.summarize(self._sample_reviews())
+            self.assertIn("missing text content", str(ctx.exception))
+
+    async def test_summarize_non_stop_finish_reason_raises_provider_error(self) -> None:
+        mock_response_data = {
+            "candidates": [
+                {
+                    "finishReason": "MAX_TOKENS",
+                    "content": {
+                        "parts": [
+                            {
+                                "text": json.dumps({
+                                    "summary": "Truncated summary",
+                                    "positive_themes": [],
+                                    "negative_themes": [],
+                                })
+                            }
+                        ],
+                        "role": "model",
+                    },
+                }
+            ]
+        }
+        mock_response = MagicMock(spec=httpx.Response)
+        mock_response.status_code = 200
+        mock_response.json.return_value = mock_response_data
+
+        with patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_post:
+            mock_post.return_value = mock_response
+            with self.assertRaises(ExternalProviderError) as ctx:
+                await self.summarizer.summarize(self._sample_reviews())
+            self.assertIn("finishReason=MAX_TOKENS", str(ctx.exception))
+
+    async def test_summarize_thinking_config_disabled_for_gemini_2_5(self) -> None:
+        valid_json = json.dumps({
+            "summary": "Great coffee.",
+            "positive_themes": ["Coffee"],
+            "negative_themes": [],
+        })
+        mock_response_data = {
+            "candidates": [
+                {
+                    "finishReason": "STOP",
+                    "content": {
+                        "parts": [{"text": valid_json}],
+                        "role": "model",
+                    },
+                }
+            ]
+        }
+        mock_response = MagicMock(spec=httpx.Response)
+        mock_response.status_code = 200
+        mock_response.json.return_value = mock_response_data
+
+        with patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_post:
+            mock_post.return_value = mock_response
+            await self.summarizer.summarize(self._sample_reviews())
+
+            call_kwargs = mock_post.call_args.kwargs
+            json_body = call_kwargs["json"]
+            self.assertEqual(
+                json_body["generationConfig"].get("thinkingConfig"),
+                {"thinkingBudget": 0},
+            )
+
 
 class TestInMemorySummaryCache(unittest.TestCase):
     """Unit tests for the in-memory summary TTL cache."""
@@ -246,6 +365,33 @@ class TestInMemorySummaryCache(unittest.TestCase):
         self.cache.set("shop-1", self.sample_content, 3)
         self.cache.clear()
         self.assertIsNone(self.cache.get("shop-1"))
+
+    def test_generation_advances_on_invalidation_and_clear(self) -> None:
+        gen0 = self.cache.get_generation("shop-1")
+        self.assertEqual(gen0, (0, 0))
+
+        self.cache.invalidate("shop-1")
+        gen1 = self.cache.get_generation("shop-1")
+        self.assertEqual(gen1, (0, 1))
+
+        self.cache.clear()
+        gen2 = self.cache.get_generation("shop-1")
+        self.assertEqual(gen2, (1, 0))
+
+    def test_set_if_generation_rejects_stale_generation(self) -> None:
+        gen0 = self.cache.get_generation("shop-1")
+        self.cache.invalidate("shop-1")
+
+        # Attempting to set with old gen0 must fail and not populate cache
+        stored = self.cache.set_if_generation("shop-1", self.sample_content, 3, gen0)
+        self.assertFalse(stored)
+        self.assertIsNone(self.cache.get("shop-1"))
+
+        # Setting with current generation succeeds
+        gen1 = self.cache.get_generation("shop-1")
+        stored = self.cache.set_if_generation("shop-1", self.sample_content, 3, gen1)
+        self.assertTrue(stored)
+        self.assertIsNotNone(self.cache.get("shop-1"))
 
 
 class TestReviewSummaryService(unittest.IsolatedAsyncioTestCase):
@@ -422,6 +568,47 @@ class TestReviewSummaryService(unittest.IsolatedAsyncioTestCase):
                 review_service=self.mock_review_service,
             )
             self.assertEqual(self.mock_summarizer.summarize.call_count, 2)
+
+    async def test_invalidation_during_in_flight_summary_prevents_stale_cache_pollution(self) -> None:
+        self.mock_review_service._get_shop_curation_status.return_value = "APPROVED"
+        reviews = self._make_unified_reviews([
+            "Review one text.",
+            "Review two text.",
+            "Review three text.",
+        ])
+        self.mock_review_service.get_shop_reviews = AsyncMock(
+            return_value=ShopReviewsResponse(
+                shop_id=self.shop_id,
+                reviews=reviews,
+                has_more=False,
+            )
+        )
+
+        sample_summary = ReviewSummaryContent(
+            summary="Pre-mutation summary.",
+            positive_themes=["Great taste"],
+            negative_themes=[],
+        )
+
+        async def slow_summarize(usable_reviews):
+            # Simulate a mutation / invalidation occurring while Gemini is generating
+            self.service.invalidate_shop_summary(self.shop_id)
+            return sample_summary
+
+        self.mock_summarizer.summarize.side_effect = slow_summarize
+
+        with patch.object(settings, "GEMINI_API_KEY", "valid-key"):
+            res = await self.service.get_shop_summary(
+                shop_id=self.shop_id,
+                supabase=self.mock_supabase,
+                review_service=self.mock_review_service,
+            )
+            # The current in-flight call succeeds and returns its calculated summary
+            self.assertEqual(res.status, SummaryStatus.AVAILABLE)
+            self.assertEqual(res.summary, "Pre-mutation summary.")
+
+            # But the cache must NOT contain this stale summary!
+            self.assertIsNone(self.cache.get(str(self.shop_id)))
 
     async def test_missing_gemini_api_key_raises_503(self) -> None:
         self.mock_review_service._get_shop_curation_status.return_value = "APPROVED"
