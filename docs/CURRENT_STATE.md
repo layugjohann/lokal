@@ -8,9 +8,9 @@ This document provides a snapshot of the **current state of the `main` branch** 
 
 **Phase 2 — Core Application Features**
 
-The project bootstrapping phase is complete. The mobile application foundation, FastAPI backend, Supabase integration, database schema, user authentication, maps/location integration, coffee shop CRUD API, nearby coffee shop discovery, independent business eligibility and curation, external review data layer, first-party LOKAL user reviews, and mobile user authentication with secure session management are established.
+The project bootstrapping phase is complete. The mobile application foundation, FastAPI backend, Supabase integration, database schema, user authentication, maps/location integration, coffee shop CRUD API, nearby coffee shop discovery, independent business eligibility and curation, external review data layer, first-party LOKAL user reviews, mobile user authentication with secure session management, and AI-generated review summaries are established.
 
-The project is now building application-level features that provide the foundation for LOKAL's future AI capabilities, including AI review summaries and recommendations.
+The project is now building application-level features that expand LOKAL's AI capabilities, including AI must-try recommendations.
 
 ---
 
@@ -18,11 +18,15 @@ The project is now building application-level features that provide the foundati
 
 🟢 **On Track**
 
-The core application stack is operational. The latest completed feature, **Mobile User Authentication & Session Management (GitHub Issue #29)**, establishes a secure, client-side authentication and session lifecycle management system for the React Native (Expo) mobile application.
+The core application stack is operational. The latest completed feature, **AI-Generated Review Summaries (GitHub Issue #31)**, introduces LOKAL's first AI-powered capability: concise, objective synthesized review summaries with highlight chips for approved coffee shops.
 
-Users can securely register and log in using email and password, authenticate against the FastAPI backend, and store JWT credentials in hardware-backed secure storage via `expo-secure-store`. Credential storage strictly enforces fail-fast security in production and native environments by forbidding silent downgrades to in-memory storage. On application launch, sessions are automatically restored with profile verification against `GET /api/v1/auth/me`. The authentication state machine (`AuthContext`) strictly differentiates between permanently invalid sessions (`401 Unauthorized`, which automatically deletes stored credentials and transitions to unauthenticated) and transient network or server errors (5xx/timeouts, which preserves the stored credential and presents an actionable recovery card with both Retry and Sign Out options).
+Review summaries are powered by the Google Gemini API (`gemini-2.5-flash`) via a clean provider abstraction (`ReviewSummarizer` protocol) and lightweight native HTTP client (`httpx`), avoiding heavy AI frameworks like LangChain or LlamaIndex. Gemini is configured with `thinkingBudget: 0` to preserve the entire output token allowance for structured JSON synthesis, and non-`STOP` completions are rejected. Responses are validated against an application-level Pydantic schema (`ReviewSummaryContent`), failing closed to HTTP 502 Bad Gateway on malformed or schema-nonconforming outputs.
 
-Monotonic operation generation guards (`operationGenerationRef`) protect the entire authentication lifecycle against race conditions and out-of-order asynchronous responses (such as concurrent logins, retries while awaiting restoration, or retries triggered while logout is in progress). Sign out is fail-safe, ensuring local credentials are deleted regardless of backend network availability, and trailing retries are immediately invalidated. Authenticated API requests across the mobile app (including nearby shop search and review operations) automatically attach the active Bearer token.
+To maintain a zero-cost MVP architecture without Redis or a persistent summary dataset, summaries are cached in an in-memory 1-hour TTL cache (`InMemorySummaryCache`, 500 shops max capacity). A thread-safe, per-shop generation/version mechanism protects against race conditions where in-flight summarization requests could otherwise overwrite recent review mutations with stale pre-mutation summaries. First-party review creation, editing, and deletion immediately invalidate the cache and advance the generation version.
+
+User privacy and prompt-injection safety are strictly enforced: reviews are stripped of reviewer author names, user IDs, review IDs, and visit dates; rating-only reviews are excluded; and remaining reviews are passed inside `<reviews>` tags with explicit anti-override system instructions. Summaries require a minimum threshold of 3 usable reviews with text.
+
+On the mobile client, `ShopDetailCard` renders the AI summary card asynchronously without blocking the shop presentation. It handles loading, available, insufficient reviews (< 3 reviews), and error states with localized retries. Monotonic request counters protect the UI against shop-switching race conditions and out-of-order responses, and review mutations automatically trigger a fresh summary refresh.
 
 The engineering workflow is formalized as the **AI-Assisted Engineering Workflow**, including implementation planning, Product Owner approval, dedicated feature branches, automated verification, CodeRabbit review, iterative review resolution, and human-controlled merging.
 
@@ -32,56 +36,56 @@ The next feature cycle should begin only after the current state is synchronized
 
 # Latest Completed Feature
 
-## GitHub Issue #29 — Mobile User Authentication & Session Management
+## GitHub Issue #31 — AI-Generated Review Summaries
 
 **Status:** ✅ Completed
 
 ### Completed Work
 
-* **Hardware-Backed Secure Token Storage**:
-  * Implemented `mobile/src/services/secureStorage.ts` wrapping `expo-secure-store` with key `lokal_access_token`.
-  * Enforced production security invariant: in-memory storage adapter is restricted exclusively to headless Node.js test environments; native or production runtimes fail fast with explicit errors if SecureStore is unavailable rather than silently downgrading credential security.
-  * Enforced token validation: rejects empty or whitespace-only strings before storage.
-* **Authentication Service**:
-  * Implemented `mobile/src/services/authService.ts` providing typed client wrappers for backend auth endpoints:
-    * `login({ email, password })`: `POST /api/v1/auth/login`
-    * `register({ email, password })`: `POST /api/v1/auth/register`
-    * `logout(token)`: `POST /api/v1/auth/logout` (Bearer authenticated)
-    * `getMe(token)`: `GET /api/v1/auth/me` (Bearer authenticated)
-  * Integrated fixed request timeouts (10,000ms) across all authentication requests using `AbortController` to guarantee stalled requests do not leave the client hanging in transient states.
-  * Structured domain error handling: mapped HTTP errors into strongly typed `AuthError` instances with status codes and backend detail messages.
-* **Session Lifecycle & State Machine**:
-  * Implemented `mobile/src/context/AuthContext.ts` providing `AuthProvider` and `useAuth()` hook managing session state (`restoring`, `authenticated`, `unauthenticated`).
-  * Built using pure TypeScript and `React.createElement` to ensure seamless native execution and direct headless Node.js test execution.
-  * **Automatic Session Restoration**:
-    * Automatically attempts session restoration from SecureStore on initial app mount.
-    * If no token is stored, transitions directly to `unauthenticated`.
-    * If a token is stored, verifies it against `GET /api/v1/auth/me`. On success, transitions to `authenticated` with user profile.
-    * On `401 Unauthorized`, treats token as expired/revoked, purges SecureStore, and transitions to `unauthenticated`.
-    * On network or 5xx server failure, preserves the stored token and sets `status: 'restoring'` with an actionable `restorationError` message.
-  * **Fail-Safe Logout**:
-    * Calls `POST /api/v1/auth/logout` using the active token.
-    * Guarantees local credential deletion and transition to `unauthenticated` inside a `finally` block, ensuring network or backend failures never trap the user in an authenticated local state.
-  * **Generation Guards Against Stale/Concurrent Operations**:
-    * Protected state transitions using a monotonic provider-level generation counter (`operationGenerationRef`).
-    * Invalidates pending restoration tasks whenever login, registration, or logout begins.
-    * Increments the generation counter in the `logout()` `finally` block immediately after local credential deletion, ensuring retries initiated while logout was awaiting network response or cleanup cannot overwrite the unauthenticated state or re-introduce a session.
-* **Authentication UI & User Experience**:
-  * Implemented `mobile/src/screens/LoginView.tsx` with email and password inputs, form validation, loading indicators, error banner presentation, and navigation toggle to registration.
-  * Implemented `mobile/src/screens/RegisterView.tsx` with email, password, and confirmation password inputs, password match validation, loading indicators, error banner presentation, and navigation toggle to login.
-  * Added a dedicated restoration error recovery view in `mobile/App.tsx` displaying the failure message alongside both **Retry** and **Sign Out** actions.
-* **API Integration & Bearer Token Propagation**:
-  * Updated `mobile/src/services/shopService.ts` and `mobile/src/services/reviewService.ts` to consume the active auth token from `AuthContext` and attach it as `Authorization: Bearer <token>` for authenticated requests.
+* **Provider Abstraction & Native Gemini Integration**:
+  * Implemented `ReviewSummarizer` (Protocol) and `GeminiReviewSummarizer` in `backend/app/services/reviews/summary.py`.
+  * Targeted Gemini REST API `v1beta/models/{model}:generateContent` using native `httpx` (no LangChain, LlamaIndex, or heavy AI SDKs).
+  * Configurable through `GEMINI_API_KEY` and `GEMINI_MODEL` (default: `gemini-2.5-flash`).
+  * Added `"thinkingConfig": {"thinkingBudget": 0}` in `generationConfig` for `gemini-2.5-flash` so internal reasoning tokens do not consume `maxOutputTokens=500`.
+  * Enforced completion validation: accepts `finishReason == "STOP"` or absent, rejecting all truncated/safety completions (`MAX_TOKENS`, `SAFETY`, etc.) with `ExternalProviderError`.
+  * Fail-closed provider parsing: caught `ValueError`, `TypeError`, `AttributeError`, `KeyError`, and `IndexError` during response JSON extraction, converting malformed structures into `ExternalProviderError` without leaking raw provider bodies in logs.
+* **Application-Level Validation Boundary**:
+  * Gemini is requested to output structured JSON matching a JSON schema.
+  * Implemented `ReviewSummaryContent` Pydantic model (`summary: str`, `positive_themes: list[str]`, `negative_themes: list[str]`).
+  * Application strictly validates raw text with `ReviewSummaryContent.model_validate_json()`, mapping any validation or parsing failure to `ExternalProviderError` and HTTP 502 Bad Gateway.
+* **Privacy & Prompt Injection Protections**:
+  * Strips all reviewer user IDs, author names, review IDs, and visit dates. Only `{"rating": r.rating, "text": r.text}` is sent.
+  * Excludes rating-only reviews (empty or whitespace text).
+  * Bounds inputs: maximum 10 usable reviews, each truncated to 500 characters.
+  * Wraps input inside `<reviews>` XML tags and passes explicit system instructions commanding the model to treat review contents as untrusted data and ignore embedded instructions or prompt overrides.
+  * Enforces minimum review threshold: requires at least 3 usable reviews with text, returning `status: "insufficient_reviews"` with empty theme lists and null summary when fewer than 3 reviews are available.
+* **Generation-Guarded In-Memory Caching**:
+  * Implemented `InMemorySummaryCache` with 1-hour TTL (`ttl_seconds=3600.0`) and 500-shop capacity limit with oldest-entry eviction.
+  * Guarded with `threading.Lock()` and dual versioning (`_epoch`, `_versions`).
+  * `get_shop_summary` captures `generation = cache.get_generation(shop_id)` prior to review fetching and Gemini summarization.
+  * Stores via `cache.set_if_generation(..., generation)` atomically verifying the generation has not changed.
+  * Prevents race conditions where an in-flight read could overwrite a cache invalidation triggered by a concurrent user review mutation.
+  * Hooked immediate cache invalidation and generation advancement into `ReviewService.create_user_review`, `update_user_review`, and `delete_user_review`.
+* **API Endpoint & Curation Protection**:
+  * Added `GET /api/v1/shops/{shop_id}/reviews/summary` in `backend/app/api/v1/endpoints/reviews.py`.
+  * Enforced authentication via `get_current_user`.
+  * Enforced fail-closed curation: returns `404 Not Found` if the shop is `PENDING_REVIEW` or `EXCLUDED`.
+  * Returns `503 Service Unavailable` if `GEMINI_API_KEY` is unconfigured.
+  * Returns `502 Bad Gateway` if Gemini fails, times out, or returns invalid schema data.
+* **Non-Blocking Mobile Experience**:
+  * Added `fetchShopReviewSummary(shopId, authToken)` in `mobile/src/services/reviewService.ts`.
+  * Integrated AI review summary card in `mobile/src/components/ShopDetailCard.tsx`.
+  * Loads summary asynchronously in the background after shop details are visible without blocking navigation or reviews.
+  * Renders loading spinner, available state with summary paragraph and chips for positive and negative themes, empty/insufficient reviews card, and error state with localized retry button.
+  * Monotonic request counter (`currentSummaryRequestId`) discards out-of-order responses and prevents stale data from overwriting active state when switching shops.
+  * Automatically refetches summary after user review creation, editing, or deletion.
 * **Automated Verification**:
-  * Completed mobile verification with **60 automated tests passing** in 281ms:
-    * 12 tests in `authService.test.mjs` (endpoints, payload structures, 401 handling, timeout handling).
-    * 16 tests in `authState.test.mjs` (SecureStore security, in-memory isolation, restoration transitions, 401 token purge, network failure retry, explicit sign out during restoration failure, race condition regression tests).
-    * 16 tests in `reviewService.test.mjs` (CRUD operations, error formatting, race guards, token change resets).
-    * 16 tests in `shopService.test.mjs` (query params, formatting, nearby search, Bearer token integration).
-  * Completed mobile TypeScript verification with **0 errors** (`npx tsc --noEmit`).
-  * Completed backend regression verification with **193 tests passing** in 1.2s (`python -m unittest discover -s backend/tests`).
+  * Backend regression suite: **229 tests passing** in 1.6s (`python -m unittest discover -s backend/tests`).
+  * Mobile test suite: **71 tests passing** in 348ms (`npm test --prefix mobile`).
+  * Mobile TypeScript verification: **0 errors** (`npx tsc --noEmit`).
+  * Deterministic race testing: verified shop-switching and failed stale responses using controlled promises.
 * **Pull Request**:
-  * Pull Request #30 was evaluated by CodeRabbit, actionable findings (request timeouts, secure storage downgrade prevention, generation race protection, explicit sign-out during restoration error, and deterministic race tests) were resolved iteratively, and the PR was approved and merged into `main` by the Product Owner (commit `6af27d73`).
+  * Pull Request #32 was reviewed by CodeRabbit, actionable findings were resolved iteratively (fail-closed parsing, non-STOP rejection, thinking token budget configuration, cache generation tracking, and deterministic race tests), and the PR was approved and merged into `main` by the Product Owner (commit `af26f0df`).
 
 ---
 
@@ -103,7 +107,7 @@ The next feature cycle should begin only after the current state is synchronized
 | Issue #24 — LOKAL User Reviews                   | ✅ Complete |
 | Issue #29 — Mobile User Authentication & Session Management | ✅ Complete |
 | AI-Assisted Engineering Workflow                 | ✅ Complete |
-| AI Review Summaries                              | ⏳ Planned  |
+| Issue #31 — AI-Generated Review Summaries        | ✅ Complete |
 | AI Must-Try Recommendations                      | ⏳ Planned  |
 
 ---
@@ -120,7 +124,16 @@ The React Native (Expo) mobile application currently provides:
   * Dedicated restoration error recovery UI offering both **Retry** and **Sign Out** actions.
   * Fail-safe sign-out ensuring local credentials are unconditionally deleted regardless of backend network availability.
   * Monotonic operation generation guards (`operationGenerationRef`) protecting the authentication provider against asynchronous race conditions across concurrent logins, retries, and logouts.
-  * Automatic Bearer token propagation across nearby coffee shop searches and user review submissions.
+  * Automatic Bearer token propagation across nearby coffee shop searches, review operations, and AI summary requests.
+* **AI-Generated Review Summaries**:
+  * Non-blocking AI review summary card within `ShopDetailCard`.
+  * Asynchronous background fetching initiated after shop selection, leaving the rest of the detail card responsive.
+  * Concise overall synthesis paragraph summarizing customer sentiment and opinions.
+  * Visual highlight chips distinguishing positive highlights and areas to note (negative themes).
+  * Graceful insufficient reviews state informing the user when fewer than 3 usable reviews exist.
+  * Error state presentation with localized retry action.
+  * Monotonic request counter (`currentSummaryRequestId`) preventing stale out-of-order responses from overwriting active state when switching shops.
+  * Automatic summary refresh triggered immediately after user review creation, editing, or deletion.
 * Interactive map visualization via `react-native-maps`.
 * Device foreground location permission requests via `expo-location`.
 * Automatic user coordinate acquisition and map re-centering.
@@ -145,12 +158,12 @@ The React Native (Expo) mobile application currently provides:
   * Review deletion flow with confirmation dialog and error handling.
   * Full optimistic UI updates and localized error banner display with retry capabilities.
 * **Stale Async & Mutation Race Protection**:
-  * Monotonic request counter (`currentRequestId`) and mutation counter (`currentMutationId`) in `ShopDetailCard` ensuring late-arriving responses or mutations from previously selected shops or previous auth sessions are discarded.
-  * Component lifecycle keying in `NearbyShopsSheet` (`${selectedShop.id}:${authToken || 'anon'}`) ensuring complete reset of review form, submission, and deletion states on shop selection change.
+  * Monotonic request counter (`currentRequestId`), mutation counter (`currentMutationId`), and summary request counter (`currentSummaryRequestId`) in `ShopDetailCard` ensuring late-arriving responses or mutations from previously selected shops or previous auth sessions are discarded.
+  * Component lifecycle keying in `NearbyShopsSheet` (`${selectedShop.id}:${authToken || 'anon'}`) ensuring complete reset of review form, submission, deletion, and summary states on shop selection change.
 * Non-blocking review loading and retry behavior.
 * Zero external UI dependencies, maintaining scope discipline and clean architecture.
 
-AI review summaries, Must-Try recommendations, and background location tracking remain outside the current implementation scope.
+Must-Try recommendations and background location tracking remain outside the current implementation scope.
 
 ---
 
@@ -158,7 +171,7 @@ AI review summaries, Must-Try recommendations, and background location tracking 
 
 The FastAPI backend currently provides:
 
-* Application configuration through environment variables.
+* Application configuration through environment variables (including `GEMINI_API_KEY` and `GEMINI_MODEL`).
 * Basic health-check endpoints (`/health` and `/api/v1/health`).
 * Supabase client initialization through `backend/app/core/supabase.py` with lazy loading, HTTPS enforcement, and isolated request-scoped authenticated client instantiation (`create_scoped_supabase_client`).
 * Database schema migrations located in `supabase/migrations/`:
@@ -177,13 +190,22 @@ The FastAPI backend currently provides:
   * `GET /api/v1/shops/{shop_id}/reviews/mine`: Retrieves the authenticated caller's own review; permitted even if the shop is `PENDING_REVIEW` or `EXCLUDED`.
   * `PATCH /api/v1/shops/{shop_id}/reviews/mine`: Partially updates caller's review with field-presence semantics; blocked if shop is not approved; permits text clearing via `null` or empty string.
   * `DELETE /api/v1/shops/{shop_id}/reviews/mine`: Permanently deletes caller's review; permitted even if shop is `PENDING_REVIEW` or `EXCLUDED`.
+* **AI Review Summarization Layer & Endpoint**:
+  * `GET /api/v1/shops/{shop_id}/reviews/summary`: Protected endpoint returning structured AI review summary for an approved coffee shop.
+  * `ReviewSummarizer` (Protocol) abstraction enabling clean decoupling from specific AI vendors.
+  * `GeminiReviewSummarizer` implementation targeting Google Gemini REST API (`gemini-2.5-flash`) via `httpx`, with `thinkingBudget: 0` to preserve the output token budget for JSON synthesis.
+  * Application-level Pydantic schema validation boundary (`ReviewSummaryContent`), failing closed on malformed output or non-`STOP` finish reasons.
+  * Privacy-preserving review sanitization: strips author names and internal IDs, passes only rating and truncated text within `<reviews>` XML tags with anti-prompt-injection system instructions.
+  * 3-review minimum usable text threshold check; excludes rating-only reviews.
+  * `InMemorySummaryCache` (1-hour TTL, 500 capacity) with thread-safe per-shop generation tracking preventing in-flight stale cache repopulation.
+  * Automatic cache invalidation and generation advancement on first-party review creation, editing, and deletion.
 * **Database Write Privilege Protection & Secure RPCs**:
   * Direct PostgREST `INSERT` and `UPDATE` on `reviews` revoked; writes routed through PostgreSQL `SECURITY DEFINER` RPCs (`create_user_review`, `update_user_review`) with `auth.uid()` derivation and revoked `PUBLIC` execution privileges.
   * Immutable author name snapshotting from user metadata with fallback to `'LOKAL User'`. Never exposes user emails or internal UUIDs in review responses.
   * Strict `source = 'lokal'` filtering across application lookups, updates, and deletes.
 * Google Places API (New) integration for transient external review retrieval with provider attribution and source links. No caching or persistence of Google review content.
 * Robust error handling distinguishing client input errors (`400`/`422`), missing records (`404`), unique constraint conflicts (`409`), external provider failures (`502`), service unavailability (`503`), and sanitized generic server failures (`500`).
-* Automated backend regression testing with **182 passing tests**, covering auth, shops, curation, nearby discovery, external reviews, and first-party user reviews.
+* Automated backend regression testing with **229 passing tests**, covering auth, shops, curation, nearby discovery, external reviews, first-party user reviews, and AI review summaries.
 
 ---
 
@@ -217,7 +239,7 @@ The database is managed through PostgreSQL in Supabase with Row Level Security (
 
 # Current Data / AI Architecture Direction
 
-The project implements a hybrid review-data architecture:
+The project implements a hybrid review-data architecture with operational AI review summarization:
 
 ```text
 Google Places Reviews (external, transient)
@@ -228,8 +250,8 @@ Google Places Reviews (external, transient)
                   ↓
          Unified Review Domain
                   ↓
-               AI Layer
-       summarization / recommendations
+                AI Layer
+     (ReviewSummaryService / Gemini)
                   ↓
              LOKAL Mobile
 ```
@@ -240,21 +262,21 @@ First-party LOKAL reviews are persisted in Supabase with author name snapshottin
 
 The review domain merges first-party LOKAL reviews and external reviews into a unified provider-neutral representation (`UnifiedReview`), exposing separate external and community metrics so downstream consumers can clearly distinguish first-party feedback.
 
-The AI layer remains a future consumer of the unified review domain, designed to ingest normalized reviews for summarization and "Must-Try" recommendations without coupling to specific review sources.
+The AI layer ingests sanitized reviews from the unified review domain to generate structured review summaries (`ReviewSummaryService`), using `GeminiReviewSummarizer` via HTTP requests to Google Gemini API. Summaries are cached in-memory with a 1-hour TTL and generation-guarded invalidation, without creating a persistent summary database table.
 
-Independent-business eligibility and curation are maintained as a separate domain concern, ensuring review operations respect public discovery eligibility rules.
+Independent-business eligibility and curation are maintained as a separate domain concern, ensuring review and AI summary operations respect public discovery eligibility rules (`APPROVED` required).
 
 ---
 
 # Next Task
 
-The next feature should be defined through the next GitHub Issue after reviewing the completed mobile authentication architecture and current application state.
+The next feature should be defined through the next GitHub Issue after reviewing the completed AI review summaries architecture and current application state.
 
-With the unified review domain active with both first-party and external reviews and the mobile client providing full user authentication and session management, the project is ready to build toward the AI layer (e.g. **AI Review Summaries / Issue #26**).
+With user authentication, unified reviews, and AI review summarization active, the logical next capability is **AI Must-Try Recommendations** (menu and beverage recommendations derived from review insights) or another feature prioritized by the Product Owner.
 
 Before implementation:
 
-1. Review the current database schema, curation layer, review service, and mobile review presentation.
+1. Review the current database schema, curation layer, review service, AI summarizer, and mobile cards.
 2. Define the product requirement and observable acceptance criteria for the next capability.
 3. Review dependencies, latency implications, and external AI provider trade-offs.
 4. Create and approve the next GitHub Issue.
@@ -266,7 +288,7 @@ Before implementation:
 
 **None.**
 
-The unified review domain is functional with separate external and first-party metrics. External reviews remain transient and compliant with provider policies, while first-party reviews are securely persisted in Supabase. Mobile user authentication and session persistence are operational and tested. AI processing of unified review content remains the planned next step.
+The unified review domain and AI review summarization are operational. External reviews remain transient and compliant with provider policies, while first-party reviews are securely persisted in Supabase. In-memory summary caching with generation versioning is active. Mobile user authentication, review mutations, and non-blocking summary cards are operational and fully tested.
 
 ---
 
@@ -274,6 +296,12 @@ The unified review domain is functional with separate external and first-party m
 
 The recent development cycles established the following engineering practices:
 
+* **Generation-Guarded In-Memory Caching**: When caching asynchronous LLM responses in memory without a persistent database, protect the cache with an atomic generation/version check. Long-running in-flight summarization requests must not write back stale pre-mutation summaries if an invalidation occurred while the request was in flight.
+* **Application-Level Validation Boundary for LLM Outputs**: Never rely solely on vendor "structured output" flags or schema requests. Always validate the returned content with Pydantic (`ReviewSummaryContent.model_validate_json`) and fail closed to HTTP 502 Bad Gateway if the model returns malformed, incomplete, or schema-nonconforming responses.
+* **Dedicated Reasoning Budget Control on LLM Providers**: For bounded structured JSON synthesis tasks on thinking-enabled models (such as `gemini-2.5-flash`), explicitly configure `"thinkingConfig": {"thinkingBudget": 0}` to disable internal reasoning tokens so they do not exhaust the `maxOutputTokens` allocation and trigger unintended `MAX_TOKENS` truncations.
+* **Deterministic Race-Condition Testing with Controlled Promises**: Replace arbitrary `setTimeout` delays in asynchronous race tests with manually resolvable promises (`shopAPromise`). This guarantees deterministic test execution regardless of event-loop timing or test environment CPU load.
+* **Fail-Closed Provider Shape Parsing**: Wrap raw provider JSON parsing and dictionary/list extraction in explicit exception handlers (`ValueError`, `TypeError`, `AttributeError`, `KeyError`, `IndexError`) to convert unexpected upstream provider shapes into sanitized `ExternalProviderError` (mapped to HTTP 502) rather than unhandled 500 server errors.
+* **Safe Provider Error Logging**: Log only non-sensitive diagnostic metadata (e.g. HTTP status codes and safe error categories). Never dump raw `response.text`, user review text, or request payloads in server logs.
 * **Monotonic Generation Guards for Async State Transitions**: Protect complex client-side authentication and session flows (restoration, retry, login, logout) with a monotonic generation ref that increments on each new operation and at the completion of critical cleanup in `finally` blocks. This ensures stale or out-of-order async responses never overwrite state or reintroduce credentials.
 * **Fail-Safe Client Credential Purging**: Local credential deletion on logout must be executed inside a `finally` block so that network failures, timeouts, or backend 5xx errors never trap the user in an authenticated local state.
 * **Strict Runtime Security Invariants**: Never allow production applications to silently fall back from hardware-backed secure storage (e.g. `expo-secure-store`) to in-memory storage; fallbacks must be strictly isolated to headless test harnesses.
@@ -329,4 +357,4 @@ After implementation:
 
 ---
 
-**Last Updated:** Phase 2 — Core Application Features (after completion of GitHub Issue #29 and merge of PR #30)
+**Last Updated:** Phase 2 — Core Application Features (after completion of GitHub Issue #31 and merge of PR #32)
