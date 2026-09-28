@@ -39,7 +39,9 @@ from app.services.reviews.recommendations import (
     InMemoryRecommendationCache,
     GeminiReviewRecommender,
     ReviewRecommendationService,
+    build_gemini_generation_config,
     get_recommendation_cache,
+    has_negative_context,
     validate_and_convert_recommendations,
 )
 from app.services.reviews.service import ReviewService
@@ -84,8 +86,72 @@ class TestGroundingValidator(unittest.TestCase):
         self.assertEqual(result[1].item_name, "Pistachio Croissant")
         self.assertEqual(result[1].reason, "Praised for its flaky layers and pistachio taste.")
 
-    def test_evidence_excerpt_not_present_in_source_review(self) -> None:
-        """Excerpt string not present in cited review fails validation."""
+    def test_per_item_filtering_preserves_valid_and_drops_invalid(self) -> None:
+        """Individual invalid recommendations are dropped while valid recommendations are retained."""
+        internal = InternalRecommendationContent(
+            items=[
+                InternalRecommendationItem(
+                    item_name="Spanish Latte",
+                    reason="Rich and creamy.",
+                    supporting_review_index=0,
+                    supporting_evidence="The spanish latte is incredible and super smooth!",
+                ),
+                InternalRecommendationItem(
+                    item_name="Bagel",
+                    reason="Customer mentioned bagel.",
+                    supporting_review_index=1,
+                    supporting_evidence="avoid the burnt bagel",
+                ),
+                InternalRecommendationItem(
+                    item_name="Cold Brew",
+                    reason="Decent cold brew.",
+                    supporting_review_index=2,  # Rating is 3.0 (< 4.0)
+                    supporting_evidence="The cold brew was decent, nothing special.",
+                ),
+                InternalRecommendationItem(
+                    item_name="Pistachio Croissant",
+                    reason="Flaky layers.",
+                    supporting_review_index=3,
+                    supporting_evidence="Loved the pistachio croissant, perfectly flaky.",
+                ),
+                InternalRecommendationItem(
+                    item_name="Fake Item",
+                    reason="Imaginary item.",
+                    supporting_review_index=0,
+                    supporting_evidence="Fabricated excerpt completely absent from review text",
+                ),
+            ]
+        )
+
+        result = validate_and_convert_recommendations(internal, self.sample_reviews)
+        self.assertEqual(len(result), 2)
+        self.assertEqual(result[0].item_name, "Spanish Latte")
+        self.assertEqual(result[1].item_name, "Pistachio Croissant")
+
+    def test_all_invalid_items_returns_empty_list(self) -> None:
+        """When every recommendation fails grounding checks, an empty list is returned."""
+        internal = InternalRecommendationContent(
+            items=[
+                InternalRecommendationItem(
+                    item_name="Bagel",
+                    reason="Customer mentioned bagel.",
+                    supporting_review_index=1,
+                    supporting_evidence="avoid the burnt bagel",
+                ),
+                InternalRecommendationItem(
+                    item_name="Cold Brew",
+                    reason="Decent cold brew.",
+                    supporting_review_index=2,
+                    supporting_evidence="The cold brew was decent, nothing special.",
+                ),
+            ]
+        )
+
+        result = validate_and_convert_recommendations(internal, self.sample_reviews)
+        self.assertEqual(result, [])
+
+    def test_evidence_excerpt_not_present_in_source_review_dropped(self) -> None:
+        """Excerpt string not present in cited review is dropped."""
         internal = InternalRecommendationContent(
             items=[
                 InternalRecommendationItem(
@@ -96,12 +162,11 @@ class TestGroundingValidator(unittest.TestCase):
                 )
             ]
         )
-        with self.assertRaises(ExternalProviderError) as ctx:
-            validate_and_convert_recommendations(internal, self.sample_reviews)
-        self.assertIn("not present in referenced review", str(ctx.exception))
+        result = validate_and_convert_recommendations(internal, self.sample_reviews)
+        self.assertEqual(result, [])
 
-    def test_evidence_excerpt_from_wrong_review(self) -> None:
-        """Excerpt belonging to review at index 3 cited with index 0 fails validation."""
+    def test_evidence_excerpt_from_wrong_review_dropped(self) -> None:
+        """Excerpt belonging to review at index 3 cited with index 0 is dropped."""
         internal = InternalRecommendationContent(
             items=[
                 InternalRecommendationItem(
@@ -112,12 +177,11 @@ class TestGroundingValidator(unittest.TestCase):
                 )
             ]
         )
-        with self.assertRaises(ExternalProviderError) as ctx:
-            validate_and_convert_recommendations(internal, self.sample_reviews)
-        self.assertIn("not present in referenced review", str(ctx.exception))
+        result = validate_and_convert_recommendations(internal, self.sample_reviews)
+        self.assertEqual(result, [])
 
-    def test_item_present_in_review_but_absent_from_evidence_excerpt(self) -> None:
-        """Excerpt from the review that does not contain the item name fails validation."""
+    def test_item_present_in_review_but_absent_from_evidence_excerpt_dropped(self) -> None:
+        """Excerpt from the review that does not contain the item name is dropped."""
         internal = InternalRecommendationContent(
             items=[
                 InternalRecommendationItem(
@@ -129,12 +193,11 @@ class TestGroundingValidator(unittest.TestCase):
                 )
             ]
         )
-        with self.assertRaises(ExternalProviderError) as ctx:
-            validate_and_convert_recommendations(internal, self.sample_reviews)
-        self.assertIn("does not occur in supporting evidence", str(ctx.exception))
+        result = validate_and_convert_recommendations(internal, self.sample_reviews)
+        self.assertEqual(result, [])
 
-    def test_high_rated_review_with_negative_mention_avoid_burnt_bagel(self) -> None:
-        """5-star review containing 'avoid the burnt bagel' is rejected by negative-context guard."""
+    def test_high_rated_review_with_negative_mention_avoid_burnt_bagel_dropped(self) -> None:
+        """5-star review containing 'avoid the burnt bagel' is dropped by negative-context guard."""
         internal = InternalRecommendationContent(
             items=[
                 InternalRecommendationItem(
@@ -145,17 +208,16 @@ class TestGroundingValidator(unittest.TestCase):
                 )
             ]
         )
-        with self.assertRaises(ExternalProviderError) as ctx:
-            validate_and_convert_recommendations(internal, self.sample_reviews)
-        self.assertIn("negative context in evidence", str(ctx.exception))
+        result = validate_and_convert_recommendations(internal, self.sample_reviews)
+        self.assertEqual(result, [])
 
-    def test_representative_negative_contexts_rejected(self) -> None:
-        """Obvious negative indicators (skip, don't get, bitter, terrible) are rejected."""
+    def test_representative_negative_contexts_dropped(self) -> None:
+        """Obvious negative indicators (skip, don't get) are dropped."""
         test_cases = [
-            (5, "Matcha", "skip the bitter matcha", "skip"),
-            (4, "Iced Americano", "Don't get the iced americano though", "don't get"),
+            (5, "Matcha", "skip the bitter matcha"),
+            (4, "Iced Americano", "Don't get the iced americano though"),
         ]
-        for idx, item, evidence, expected_token in test_cases:
+        for idx, item, evidence in test_cases:
             internal = InternalRecommendationContent(
                 items=[
                     InternalRecommendationItem(
@@ -166,12 +228,11 @@ class TestGroundingValidator(unittest.TestCase):
                     )
                 ]
             )
-            with self.assertRaises(ExternalProviderError) as ctx:
-                validate_and_convert_recommendations(internal, self.sample_reviews)
-            self.assertIn("negative context in evidence", str(ctx.exception))
+            result = validate_and_convert_recommendations(internal, self.sample_reviews)
+            self.assertEqual(result, [])
 
-    def test_referenced_review_rating_below_four_rejected(self) -> None:
-        """Referencing a 3-star review (rating < 4.0) fails validation."""
+    def test_referenced_review_rating_below_four_dropped(self) -> None:
+        """Referencing a 3-star review (rating < 4.0) is dropped."""
         internal = InternalRecommendationContent(
             items=[
                 InternalRecommendationItem(
@@ -182,12 +243,11 @@ class TestGroundingValidator(unittest.TestCase):
                 )
             ]
         )
-        with self.assertRaises(ExternalProviderError) as ctx:
-            validate_and_convert_recommendations(internal, self.sample_reviews)
-        self.assertIn("non-positive review", str(ctx.exception))
+        result = validate_and_convert_recommendations(internal, self.sample_reviews)
+        self.assertEqual(result, [])
 
-    def test_out_of_bounds_index_rejected(self) -> None:
-        """Out-of-bounds review index fails validation."""
+    def test_out_of_bounds_index_dropped(self) -> None:
+        """Out-of-bounds review index is dropped."""
         internal = InternalRecommendationContent(
             items=[
                 InternalRecommendationItem(
@@ -198,9 +258,101 @@ class TestGroundingValidator(unittest.TestCase):
                 )
             ]
         )
-        with self.assertRaises(ExternalProviderError) as ctx:
-            validate_and_convert_recommendations(internal, self.sample_reviews)
-        self.assertIn("out-of-bounds", str(ctx.exception))
+        result = validate_and_convert_recommendations(internal, self.sample_reviews)
+        self.assertEqual(result, [])
+
+    def test_positive_negated_constructions_accepted(self) -> None:
+        """Clearly positive negated constructions are not rejected by the negative guard."""
+        reviews = [
+            ReviewInput(rating=5.0, text="This pastry is never stale, always freshly baked."),
+            ReviewInput(rating=4.5, text="The latte is not bland at all, perfectly spiced."),
+            ReviewInput(rating=5.0, text="Definitely worth not skipping the chocolate croissant."),
+            ReviewInput(rating=5.0, text="Don't skip the sea salt latte, it is heaven."),
+            ReviewInput(rating=4.5, text="The cold brew is far from bland, very rich."),
+        ]
+        internal = InternalRecommendationContent(
+            items=[
+                InternalRecommendationItem(
+                    item_name="Pastry",
+                    reason="Always fresh.",
+                    supporting_review_index=0,
+                    supporting_evidence="This pastry is never stale",
+                ),
+                InternalRecommendationItem(
+                    item_name="Latte",
+                    reason="Well spiced.",
+                    supporting_review_index=1,
+                    supporting_evidence="The latte is not bland at all",
+                ),
+                InternalRecommendationItem(
+                    item_name="Chocolate Croissant",
+                    reason="Highly recommended.",
+                    supporting_review_index=2,
+                    supporting_evidence="Definitely worth not skipping the chocolate croissant",
+                ),
+                InternalRecommendationItem(
+                    item_name="Sea Salt Latte",
+                    reason="Heavenly drink.",
+                    supporting_review_index=3,
+                    supporting_evidence="Don't skip the sea salt latte",
+                ),
+                InternalRecommendationItem(
+                    item_name="Cold Brew",
+                    reason="Rich profile.",
+                    supporting_review_index=4,
+                    supporting_evidence="The cold brew is far from bland",
+                ),
+            ]
+        )
+
+        result = validate_and_convert_recommendations(internal, reviews)
+        self.assertEqual(len(result), 5)
+        self.assertEqual([r.item_name for r in result], [
+            "Pastry",
+            "Latte",
+            "Chocolate Croissant",
+            "Sea Salt Latte",
+            "Cold Brew",
+        ])
+
+    def test_has_negative_context_helper(self) -> None:
+        """Direct unit testing of has_negative_context heuristic guard."""
+        # Clearly positive or positive negated phrases -> False
+        positive_cases = [
+            "The spanish latte is incredible and super smooth!",
+            "This pastry is never stale.",
+            "The latte is not bland at all.",
+            "Definitely worth not skipping.",
+            "Don't skip the matcha.",
+            "Far from bland, excellent taste.",
+            "Without being burnt, perfectly roasted.",
+            "Crispy without being stale.",
+        ]
+        for phrase in positive_cases:
+            self.assertFalse(
+                has_negative_context(phrase),
+                f"Expected '{phrase}' not to trigger negative context guard.",
+            )
+
+        # Clearly negative or avoidance phrases -> True
+        negative_cases = [
+            "avoid the burnt bagel",
+            "skip the bitter matcha",
+            "Don't get the iced americano though",
+            "never order the cold brew",
+            "would not recommend the pastry",
+            "waste of money and time",
+            "the latte was bland",
+            "stale pastry",
+            "horrible service and awful coffee",
+            "undrinkable espresso",
+            "disappointing drinks",
+        ]
+        for phrase in negative_cases:
+            self.assertTrue(
+                has_negative_context(phrase),
+                f"Expected '{phrase}' to trigger negative context guard.",
+            )
 
 
 class TestGeminiReviewRecommender(unittest.IsolatedAsyncioTestCase):
@@ -257,30 +409,109 @@ class TestGeminiReviewRecommender(unittest.IsolatedAsyncioTestCase):
                 items[0].reason, "Reviewers love its rich and creamy texture."
             )
 
-    async def test_thinking_budget_configured_for_gemini_2_5(self) -> None:
-        expected_json = json.dumps({"items": []})
-        mock_response_data = {
+            # Verify header-based auth and clean URL
+            called_url = mock_post.call_args[0][0]
+            self.assertEqual(called_url, f"{GEMINI_API_BASE_URL}/{self.model}:generateContent")
+            self.assertNotIn("key=", called_url)
+            called_headers = mock_post.call_args[1]["headers"]
+            self.assertEqual(called_headers.get("x-goog-api-key"), self.api_key)
+
+    def test_build_gemini_generation_config_flash_2_5(self) -> None:
+        schema = {"type": "object"}
+        config = build_gemini_generation_config("gemini-2.5-flash", schema)
+        self.assertEqual(config["maxOutputTokens"], 600)
+        self.assertEqual(config["temperature"], 0.2)
+        self.assertEqual(config["responseSchema"], schema)
+        self.assertIn("thinkingConfig", config)
+        self.assertEqual(config["thinkingConfig"]["thinkingBudget"], 0)
+
+    def test_build_gemini_generation_config_pro_2_5(self) -> None:
+        schema = {"type": "object"}
+        config = build_gemini_generation_config("gemini-2.5-pro", schema)
+        self.assertEqual(config["maxOutputTokens"], 2048)
+        self.assertEqual(config["temperature"], 0.2)
+        self.assertEqual(config["responseSchema"], schema)
+        self.assertIn("thinkingConfig", config)
+        self.assertEqual(config["thinkingConfig"]["thinkingBudget"], 1024)
+
+    def test_build_gemini_generation_config_legacy_models(self) -> None:
+        schema = {"type": "object"}
+        for model_name in ["gemini-1.5-flash", "gemini-1.5-pro", "gemini-1.0-pro"]:
+            config = build_gemini_generation_config(model_name, schema)
+            self.assertEqual(config["maxOutputTokens"], 600)
+            self.assertEqual(config["temperature"], 0.2)
+            self.assertEqual(config["responseSchema"], schema)
+            self.assertNotIn("thinkingConfig", config)
+
+    async def test_recommend_drops_invalid_items_and_keeps_valid(self) -> None:
+        reviews = [
+            ReviewInput(rating=5.0, text="The iced spanish latte is rich and creamy!"),
+            ReviewInput(rating=5.0, text="Overall 5 stars! But avoid the burnt bagel."),
+        ]
+        raw_json = json.dumps({
+            "items": [
+                {
+                    "item_name": "Spanish Latte",
+                    "reason": "Rich and creamy texture.",
+                    "supporting_review_index": 0,
+                    "supporting_evidence": "The iced spanish latte is rich and creamy!",
+                },
+                {
+                    "item_name": "Bagel",
+                    "reason": "Customer mentioned bagel.",
+                    "supporting_review_index": 1,
+                    "supporting_evidence": "avoid the burnt bagel",
+                },
+            ]
+        })
+        mock_response = MagicMock(spec=httpx.Response)
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
             "candidates": [
                 {
-                    "content": {"parts": [{"text": expected_json}]},
+                    "content": {"parts": [{"text": raw_json}]},
                     "finishReason": "STOP",
                 }
             ]
         }
-        mock_response = MagicMock(spec=httpx.Response)
-        mock_response.status_code = 200
-        mock_response.json.return_value = mock_response_data
 
         with patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_post:
             mock_post.return_value = mock_response
-            await self.recommender.recommend(self.sample_reviews)
+            items = await self.recommender.recommend(reviews)
 
-            called_kwargs = mock_post.call_args[1]
-            body = called_kwargs["json"]
-            self.assertIn("thinkingConfig", body["generationConfig"])
-            self.assertEqual(
-                body["generationConfig"]["thinkingConfig"]["thinkingBudget"], 0
-            )
+            # Invalid bagel dropped, valid Spanish Latte kept
+            self.assertEqual(len(items), 1)
+            self.assertEqual(items[0].item_name, "Spanish Latte")
+
+    async def test_recommend_all_items_invalid_returns_empty_list(self) -> None:
+        reviews = [
+            ReviewInput(rating=5.0, text="Overall 5 stars! But avoid the burnt bagel."),
+        ]
+        raw_json = json.dumps({
+            "items": [
+                {
+                    "item_name": "Bagel",
+                    "reason": "Customer mentioned bagel.",
+                    "supporting_review_index": 0,
+                    "supporting_evidence": "avoid the burnt bagel",
+                },
+            ]
+        })
+        mock_response = MagicMock(spec=httpx.Response)
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "candidates": [
+                {
+                    "content": {"parts": [{"text": raw_json}]},
+                    "finishReason": "STOP",
+                }
+            ]
+        }
+
+        with patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_post:
+            mock_post.return_value = mock_response
+            items = await self.recommender.recommend(reviews)
+            self.assertEqual(items, [])
 
     async def test_missing_api_key_raises_external_provider_error(self) -> None:
         recommender = GeminiReviewRecommender(api_key=None)

@@ -1,5 +1,6 @@
 import json
 import logging
+import re
 from threading import Lock
 import time
 from typing import Any, Optional, Protocol, Union, runtime_checkable
@@ -25,15 +26,57 @@ MIN_REVIEWS_FOR_RECOMMENDATIONS = 3
 MAX_REVIEWS_TO_ANALYZE = 10
 MAX_REVIEW_TEXT_CHARS = 500
 
-# Deterministic heuristic negative-context indicators.
+# Deterministic heuristic negative-context indicators and negators.
 # NOTE: This is a deterministic heuristic safeguard against obvious negative or avoidance
 # constructions in cited evidence, not an exhaustive natural-language sentiment analysis engine.
-NEGATIVE_INDICATORS = {
+AVOIDANCE_PATTERNS = [
+    re.compile(
+        r"\b(?:do\s+not|don'?t|never|would\s+not|wouldn'?t|cannot|can'?t|should\s+not|shouldn'?t)\s+"
+        r"(?:get|order|buy|try|bother)\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\b(?:do\s+not|don'?t|would\s+not|wouldn'?t|cannot|can'?t)\s+recommend\b",
+        re.IGNORECASE,
+    ),
+    re.compile(r"\bnot\s+(?:recommended|worth)\b", re.IGNORECASE),
+    re.compile(r"\bwaste\s+of\b", re.IGNORECASE),
+]
+
+NEGATORS = {
+    "not",
+    "never",
+    "no",
+    "hardly",
+    "barely",
+    "without",
+    "rarely",
+    "neither",
+    "isnt",
+    "isn't",
+    "wasnt",
+    "wasn't",
+    "arent",
+    "aren't",
+    "werent",
+    "weren't",
+    "dont",
+    "don't",
+    "cant",
+    "can't",
+    "cannot",
+    "wont",
+    "won't",
+}
+
+NEGATIVE_DESCRIPTORS = {
     "avoid",
-    "don't get",
-    "dont get",
-    "do not get",
+    "avoided",
+    "avoiding",
     "skip",
+    "skips",
+    "skipped",
+    "skipping",
     "worst",
     "terrible",
     "horrible",
@@ -42,13 +85,56 @@ NEGATIVE_INDICATORS = {
     "stale",
     "bland",
     "overpriced",
-    "disappointing",
     "undrinkable",
-    "not recommend",
-    "never order",
+    "disappointing",
+    "disappointment",
     "disliked",
-    "waste of",
 }
+
+
+def has_negative_context(text: str) -> bool:
+    """Check whether text contains unnegated negative or avoidance indicators.
+
+    Uses a phrase-aware heuristic to ensure negated negative constructions
+    (e.g., 'never stale', 'not bland at all', 'worth not skipping', 'don't skip')
+    are not falsely flagged as negative.
+
+    NOTE: This is a deterministic heuristic safeguard against obvious negative or avoidance
+    constructions in cited evidence, not an exhaustive natural-language sentiment analysis engine.
+    """
+    norm = text.lower()
+
+    # 1. Check phrase-level avoidance patterns
+    for pattern in AVOIDANCE_PATTERNS:
+        if pattern.search(norm):
+            return True
+
+    # 2. Tokenize and check for unnegated negative descriptors or avoidance verbs
+    tokens = re.findall(r"[a-z']+", norm)
+
+    for i, token in enumerate(tokens):
+        clean_token = token.replace("'", "")
+        for neg_word in NEGATIVE_DESCRIPTORS:
+            if token == neg_word or clean_token == neg_word.replace("'", ""):
+                # Look back up to 3 tokens for a negator
+                window_start = max(0, i - 3)
+                prior_tokens = tokens[window_start:i]
+
+                # Check if any prior token in the window is a negator
+                is_negated = any(
+                    p in NEGATORS or p.replace("'", "") in NEGATORS
+                    for p in prior_tokens
+                )
+
+                # Also check for "far from" or "anything but" in the prior substring
+                sub_prior = " ".join(prior_tokens)
+                if "far from" in sub_prior or "anything but" in sub_prior:
+                    is_negated = True
+
+                if not is_negated:
+                    return True
+
+    return False
 
 
 class InternalRecommendationItem(BaseModel):
@@ -84,12 +170,16 @@ def validate_and_convert_recommendations(
 ) -> list[RecommendationItem]:
     """Validate internal provider recommendations against five-point grounding rules.
 
-    Grounding validation checks:
+    Grounding validation checks per item:
     1. supporting_review_index is in bounds for usable_reviews.
     2. referenced review has positive rating >= 4.0.
     3. supporting_evidence is a normalized substring of the referenced review text.
     4. item_name (or core distinguishing tokens) occurs within supporting_evidence.
     5. supporting_evidence does not contain obvious negative/avoidance indicators.
+
+    Individual recommendations failing content-level grounding checks are logged
+    and excluded, preserving valid items from the same response. If all items are
+    rejected, an empty list is returned.
 
     Args:
         internal_content: Structured provider output containing internal evidence.
@@ -97,9 +187,6 @@ def validate_and_convert_recommendations(
 
     Returns:
         List of public RecommendationItem objects with internal metadata stripped.
-
-    Raises:
-        ExternalProviderError: If any recommendation fails grounding or evidence checks.
     """
     public_items: list[RecommendationItem] = []
 
@@ -108,24 +195,20 @@ def validate_and_convert_recommendations(
         idx = item.supporting_review_index
         if idx < 0 or idx >= len(reviews):
             logger.warning(
-                f"Recommendation '{item.item_name}' cited out-of-bounds review index {idx} "
+                f"Dropping recommendation '{item.item_name}': cited out-of-bounds review index {idx} "
                 f"(reviews count={len(reviews)})."
             )
-            raise ExternalProviderError(
-                "AI provider returned an out-of-bounds supporting review index."
-            )
+            continue
 
         source_review = reviews[idx]
 
         # 2. Rating check: source review must be positive (>= 4.0)
         if source_review.rating < 4.0:
             logger.warning(
-                f"Recommendation '{item.item_name}' cited non-positive review index {idx} "
+                f"Dropping recommendation '{item.item_name}': cited non-positive review index {idx} "
                 f"with rating {source_review.rating}."
             )
-            raise ExternalProviderError(
-                "AI provider referenced a non-positive review for recommendation."
-            )
+            continue
 
         norm_review_text = _normalize_text(source_review.text)
         norm_evidence = _normalize_text(item.supporting_evidence)
@@ -133,11 +216,9 @@ def validate_and_convert_recommendations(
         # 3. Substring check: supporting_evidence must exist in cited review
         if norm_evidence not in norm_review_text:
             logger.warning(
-                f"Recommendation '{item.item_name}' evidence excerpt not found in cited review {idx}."
+                f"Dropping recommendation '{item.item_name}': evidence excerpt not found in cited review {idx}."
             )
-            raise ExternalProviderError(
-                "AI provider supporting evidence is not present in referenced review."
-            )
+            continue
 
         # 4. Item containment check: item_name or core tokens must appear in evidence
         norm_item = _normalize_text(item.item_name)
@@ -149,22 +230,16 @@ def validate_and_convert_recommendations(
         )
         if not has_item:
             logger.warning(
-                f"Recommended item '{item.item_name}' does not occur in supporting evidence '{item.supporting_evidence}'."
+                f"Dropping recommendation '{item.item_name}': does not occur in supporting evidence '{item.supporting_evidence}'."
             )
-            raise ExternalProviderError(
-                f"Recommended item '{item.item_name}' does not occur in supporting evidence."
-            )
+            continue
 
         # 5. Deterministic negative-context guard
-        for neg_indicator in NEGATIVE_INDICATORS:
-            if neg_indicator in norm_evidence:
-                logger.warning(
-                    f"Recommended item '{item.item_name}' contains negative indicator '{neg_indicator}' "
-                    f"in supporting evidence."
-                )
-                raise ExternalProviderError(
-                    f"AI provider recommended item with negative context in evidence: '{neg_indicator}'."
-                )
+        if has_negative_context(norm_evidence):
+            logger.warning(
+                f"Dropping recommendation '{item.item_name}': detected negative/avoidance context in evidence."
+            )
+            continue
 
         public_items.append(
             RecommendationItem(
@@ -183,6 +258,38 @@ class ReviewRecommender(Protocol):
     async def recommend(self, reviews: list[ReviewInput]) -> list[RecommendationItem]:
         """Generate structured menu recommendations from sanitized reviews."""
         ...
+
+
+def build_gemini_generation_config(
+    model: str,
+    response_schema: dict[str, Any],
+) -> dict[str, Any]:
+    """Build model-specific Gemini generation configuration.
+
+    - gemini-2.5-flash: disable thinking (thinkingBudget: 0) for low-latency
+      and set maxOutputTokens to 600.
+    - gemini-2.5-pro: thinking is required; set thinkingBudget to 1024 and
+      maxOutputTokens to 2048.
+    - Other models (e.g. gemini-1.5-flash, gemini-1.5-pro): omit thinkingConfig
+      entirely and set maxOutputTokens to 600.
+    """
+    model_lower = model.lower()
+    config: dict[str, Any] = {
+        "temperature": 0.2,
+        "responseMimeType": "application/json",
+        "responseSchema": response_schema,
+    }
+
+    if "2.5-pro" in model_lower:
+        config["maxOutputTokens"] = 2048
+        config["thinkingConfig"] = {"thinkingBudget": 1024}
+    elif "2.5-flash" in model_lower:
+        config["maxOutputTokens"] = 600
+        config["thinkingConfig"] = {"thinkingBudget": 0}
+    else:
+        config["maxOutputTokens"] = 600
+
+    return config
 
 
 class GeminiReviewRecommender:
@@ -209,7 +316,7 @@ class GeminiReviewRecommender:
 
         Raises:
             ExternalProviderError: If the provider request fails, times out,
-                returns 429/5xx, non-STOP finish reason, malformed schema, or ungrounded items.
+                returns 429/5xx, non-STOP finish reason, or malformed schema.
         """
         if not self.api_key:
             logger.error("GEMINI_API_KEY is not configured.")
@@ -287,14 +394,7 @@ class GeminiReviewRecommender:
             "required": ["items"],
         }
 
-        generation_config: dict[str, Any] = {
-            "temperature": 0.2,
-            "maxOutputTokens": 600,
-            "responseMimeType": "application/json",
-            "responseSchema": response_schema,
-        }
-        if "2.5" in self.model:
-            generation_config["thinkingConfig"] = {"thinkingBudget": 0}
+        generation_config = build_gemini_generation_config(self.model, response_schema)
 
         body = {
             "system_instruction": {"parts": [{"text": system_instruction}]},
@@ -307,8 +407,11 @@ class GeminiReviewRecommender:
             "generationConfig": generation_config,
         }
 
-        url = f"{GEMINI_API_BASE_URL}/{self.model}:generateContent?key={self.api_key}"
-        headers = {"Content-Type": "application/json"}
+        url = f"{GEMINI_API_BASE_URL}/{self.model}:generateContent"
+        headers = {
+            "Content-Type": "application/json",
+            "x-goog-api-key": self.api_key,
+        }
 
         try:
             async with httpx.AsyncClient(timeout=self.timeout) as client:
@@ -514,7 +617,7 @@ class ReviewRecommendationService:
         Raises:
             HTTPException: 404 if shop does not exist or is not APPROVED.
             HTTPException: 503 if GEMINI_API_KEY is not configured.
-            HTTPException: 502 if the AI provider fails, times out, or returns ungrounded output.
+            HTTPException: 502 if the AI provider fails, times out, or returns a malformed response.
         """
         str_shop_id = str(shop_id)
 

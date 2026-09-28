@@ -503,7 +503,7 @@ export default function ShopDetailCard({ shop, onClose, authToken }: ShopDetailC
             {!isLoadingRecommendations &&
               !recommendationsError &&
               recommendationsData &&
-              recommendationsData.review_count_analyzed < 3 && (
+              recommendationsData.status === 'insufficient_reviews' && (
                 <View style={styles.aiRecommendationsInsufficient}>
                   <Text style={styles.aiRecommendationsInsufficientText}>
                     ✨ Not enough customer reviews yet to generate recommendations.
@@ -514,7 +514,7 @@ export default function ShopDetailCard({ shop, onClose, authToken }: ShopDetailC
             {!isLoadingRecommendations &&
               !recommendationsError &&
               recommendationsData &&
-              recommendationsData.review_count_analyzed >= 3 &&
+              recommendationsData.status === 'available' &&
               recommendationsData.items.length === 0 && (
                 <View style={styles.aiRecommendationsEmpty}>
                   <Text style={styles.aiRecommendationsEmptyText}>
@@ -526,6 +526,7 @@ export default function ShopDetailCard({ shop, onClose, authToken }: ShopDetailC
             {!isLoadingRecommendations &&
               !recommendationsError &&
               recommendationsData &&
+              recommendationsData.status === 'available' &&
               recommendationsData.items.length > 0 && (
                 <View style={styles.aiRecommendationsCard}>
                   <View style={styles.aiRecommendationsHeader}>

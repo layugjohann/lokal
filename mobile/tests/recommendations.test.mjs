@@ -248,6 +248,17 @@ class ShopDetailCardRecommendationsStateHarness {
     this.currentRecommendationsRequestId = 0;
   }
 
+  // Simulates UI condition branches in ShopDetailCard.tsx based on semantic status
+  getRenderedRecommendationState() {
+    if (this.isLoadingRecommendations) return 'loading';
+    if (this.recommendationsError) return 'error';
+    if (!this.recommendationsData) return 'none';
+    if (this.recommendationsData.status === 'insufficient_reviews') return 'insufficient_reviews';
+    if (this.recommendationsData.status === 'available' && this.recommendationsData.items.length === 0) return 'available_empty';
+    if (this.recommendationsData.status === 'available' && this.recommendationsData.items.length > 0) return 'available_with_items';
+    return 'none';
+  }
+
   // Simulates useEffect cleanup and re-trigger when shop.id or authToken changes in ShopDetailCard.tsx
   switchContext(newShop, newAuthToken = this.authToken) {
     this.currentRecommendationsRequestId += 1;
@@ -417,3 +428,49 @@ test('Stale recommendation protection: auth token invalidation during in-flight 
   assert.strictEqual(harness.recommendationsData, null);
   assert.strictEqual(harness.isLoadingRecommendations, false);
 });
+
+test('ShopDetailCard semantic status rendering: insufficient_reviews status renders insufficient message', async () => {
+  const harness = new ShopDetailCardRecommendationsStateHarness(
+    { id: 'shop-1', name: 'Shop 1' },
+    'token-xyz'
+  );
+  await harness.loadRecommendations(async () => ({
+    shop_id: 'shop-1',
+    status: 'insufficient_reviews',
+    items: [],
+    review_count_analyzed: 2,
+  }));
+
+  assert.strictEqual(harness.getRenderedRecommendationState(), 'insufficient_reviews');
+});
+
+test('ShopDetailCard semantic status rendering: available status with 0 items renders empty message', async () => {
+  const harness = new ShopDetailCardRecommendationsStateHarness(
+    { id: 'shop-1', name: 'Shop 1' },
+    'token-xyz'
+  );
+  await harness.loadRecommendations(async () => ({
+    shop_id: 'shop-1',
+    status: 'available',
+    items: [],
+    review_count_analyzed: 5,
+  }));
+
+  assert.strictEqual(harness.getRenderedRecommendationState(), 'available_empty');
+});
+
+test('ShopDetailCard semantic status rendering: available status with items renders recommendations card', async () => {
+  const harness = new ShopDetailCardRecommendationsStateHarness(
+    { id: 'shop-1', name: 'Shop 1' },
+    'token-xyz'
+  );
+  await harness.loadRecommendations(async () => ({
+    shop_id: 'shop-1',
+    status: 'available',
+    items: [{ item_name: 'Spanish Latte', reason: 'Delicious' }],
+    review_count_analyzed: 5,
+  }));
+
+  assert.strictEqual(harness.getRenderedRecommendationState(), 'available_with_items');
+});
+
