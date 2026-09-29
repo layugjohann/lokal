@@ -9,12 +9,17 @@ from ....schemas import (
     MessageResponse,
     ReviewCreate,
     ReviewUpdate,
+    ShopRecommendationsResponse,
     ShopReviewsResponse,
     ShopReviewSummaryResponse,
     UnifiedReview,
     UserResponse,
 )
-from ....services.reviews import ReviewService, ReviewSummaryService
+from ....services.reviews import (
+    ReviewRecommendationService,
+    ReviewService,
+    ReviewSummaryService,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +34,11 @@ def get_review_service() -> ReviewService:
 def get_review_summary_service() -> ReviewSummaryService:
     """Dependency provider for ReviewSummaryService."""
     return ReviewSummaryService()
+
+
+def get_review_recommendation_service() -> ReviewRecommendationService:
+    """Dependency provider for ReviewRecommendationService."""
+    return ReviewRecommendationService()
 
 
 @router.post(
@@ -171,3 +181,32 @@ async def get_shop_review_summary(
         supabase=supabase,
         review_service=review_service,
     )
+
+
+@router.get(
+    "/{shop_id}/reviews/recommendations",
+    response_model=ShopRecommendationsResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Retrieve AI-generated Must Try recommendations for a coffee shop",
+)
+async def get_shop_recommendations(
+    shop_id: UUID,
+    _current_user: Annotated[UserResponse, Depends(get_current_user)],
+    supabase: Annotated[Client, Depends(get_authenticated_supabase)],
+    recommendation_service: Annotated[
+        ReviewRecommendationService, Depends(get_review_recommendation_service)
+    ],
+    review_service: Annotated[ReviewService, Depends(get_review_service)],
+) -> ShopRecommendationsResponse:
+    """Retrieve grounded AI menu recommendations for an approved coffee shop.
+
+    Requires authentication and fail-closed curation approval.
+    Returns 404 Not Found if the coffee shop is pending review or excluded.
+    Returns status 'insufficient_reviews' if fewer than 3 usable text reviews are available.
+    """
+    return await recommendation_service.get_shop_recommendations(
+        shop_id=shop_id,
+        supabase=supabase,
+        review_service=review_service,
+    )
+
