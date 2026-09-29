@@ -28,7 +28,11 @@ class FavoriteService:
     """Service layer managing coffee shop favorites for authenticated users."""
 
     def _get_shop_curation_status(self, shop_id: str, supabase: Client) -> str:
-        """Retrieve the curation status of a shop. Defaults to PENDING_REVIEW (fail-closed)."""
+        """Retrieve the curation status of a shop. Defaults to PENDING_REVIEW when missing (fail-closed).
+
+        Raises:
+            HTTPException: 500 if a database or unexpected error occurs.
+        """
         try:
             curation_res = (
                 supabase.table("shop_curation")
@@ -39,9 +43,18 @@ class FavoriteService:
             if curation_res.data:
                 return curation_res.data[0].get("status", "PENDING_REVIEW")
             return "PENDING_REVIEW"
+        except APIError as exc:
+            logger.error(f"Database error fetching curation status for shop {shop_id}: {exc.message}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="A database error occurred while verifying coffee shop curation status.",
+            ) from exc
         except Exception as exc:
-            logger.warning(f"Failed to fetch curation status for shop {shop_id}: {exc}")
-            return "PENDING_REVIEW"
+            logger.error(f"Unexpected error fetching curation status for shop {shop_id}: {exc}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="An unexpected error occurred while processing the request.",
+            ) from exc
 
     def get_favorite_status(
         self,

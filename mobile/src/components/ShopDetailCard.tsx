@@ -368,7 +368,7 @@ export default function ShopDetailCard({ shop, onClose, authToken }: ShopDetailC
       setFavoriteError('Please sign in to favorite this coffee shop.');
       return;
     }
-    if (isMutatingFavorite) {
+    if (isLoadingFavorite || isMutatingFavorite) {
       return;
     }
 
@@ -387,13 +387,6 @@ export default function ShopDetailCard({ shop, onClose, authToken }: ShopDetailC
         await removeFavorite(activeShopId, activeToken);
       } else {
         await addFavorite(activeShopId, activeToken);
-      }
-      if (
-        mutationId === currentFavoriteMutationId.current &&
-        activeShopId === shop.id &&
-        activeToken === authToken
-      ) {
-        setIsFavorite(!previousFavorite);
       }
     } catch (err) {
       if (
@@ -436,7 +429,7 @@ export default function ShopDetailCard({ shop, onClose, authToken }: ShopDetailC
           <TouchableOpacity
             style={[styles.favoriteButton, isFavorite && styles.favoriteButtonActive]}
             onPress={handleToggleFavorite}
-            disabled={isMutatingFavorite}
+            disabled={isLoadingFavorite || isMutatingFavorite}
             activeOpacity={0.7}
             accessibilityRole="button"
             accessibilityLabel={isFavorite ? 'Remove from favorites' : 'Add to favorites'}

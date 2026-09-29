@@ -176,6 +176,68 @@ class TestFavoritesEndpoints(unittest.TestCase):
         self.assertEqual(response.status_code, 404)
         self.assertIn("not approved", response.json()["detail"])
 
+    def test_get_favorite_status_curation_missing_row_defaults_to_pending(self):
+        """When shop_curation row is missing, defaults fail-closed to PENDING_REVIEW (404)."""
+        self.mock_supabase.tables["shops"] = MockQueryBuilder([
+            {"id": self.shop_id, "name": "Shop Without Curation"}
+        ])
+        self.mock_supabase.tables["shop_curation"] = MockQueryBuilder([])
+
+        response = self.client.get(
+            f"/api/v1/shops/{self.shop_id}/favorite",
+            headers={"Authorization": "Bearer test-token"},
+        )
+        self.assertEqual(response.status_code, 404)
+        self.assertIn("not approved", response.json()["detail"])
+
+    def test_get_favorite_status_curation_database_error_surfaces_as_500(self):
+        """Database APIError while checking curation status raises HTTP 500."""
+        self.mock_supabase.tables["shops"] = MockQueryBuilder([
+            {"id": self.shop_id, "name": "Craft Coffee"}
+        ])
+        curation_builder = MockQueryBuilder()
+        curation_builder.mock_execute.side_effect = APIError({"code": "XX000", "message": "DB connection dead"})
+        self.mock_supabase.tables["shop_curation"] = curation_builder
+
+        response = self.client.get(
+            f"/api/v1/shops/{self.shop_id}/favorite",
+            headers={"Authorization": "Bearer test-token"},
+        )
+        self.assertEqual(response.status_code, 500)
+        self.assertIn("A database error occurred while verifying coffee shop curation status.", response.json()["detail"])
+
+    def test_get_favorite_status_curation_unexpected_error_surfaces_as_500(self):
+        """Unexpected exception while checking curation status raises HTTP 500."""
+        self.mock_supabase.tables["shops"] = MockQueryBuilder([
+            {"id": self.shop_id, "name": "Craft Coffee"}
+        ])
+        curation_builder = MockQueryBuilder()
+        curation_builder.mock_execute.side_effect = RuntimeError("Unexpected internal crash")
+        self.mock_supabase.tables["shop_curation"] = curation_builder
+
+        response = self.client.get(
+            f"/api/v1/shops/{self.shop_id}/favorite",
+            headers={"Authorization": "Bearer test-token"},
+        )
+        self.assertEqual(response.status_code, 500)
+        self.assertIn("An unexpected error occurred while processing the request.", response.json()["detail"])
+
+    def test_create_favorite_curation_database_error_surfaces_as_500(self):
+        """Database APIError while checking curation status during favorite creation raises HTTP 500."""
+        self.mock_supabase.tables["shops"] = MockQueryBuilder([
+            {"id": self.shop_id, "name": "Craft Coffee"}
+        ])
+        curation_builder = MockQueryBuilder()
+        curation_builder.mock_execute.side_effect = APIError({"code": "XX000", "message": "DB connection dead"})
+        self.mock_supabase.tables["shop_curation"] = curation_builder
+
+        response = self.client.post(
+            f"/api/v1/shops/{self.shop_id}/favorite",
+            headers={"Authorization": "Bearer test-token"},
+        )
+        self.assertEqual(response.status_code, 500)
+        self.assertIn("A database error occurred while verifying coffee shop curation status.", response.json()["detail"])
+
     def test_create_favorite_success(self):
         """Returns 201 Created with favorite details when favoriting an approved shop."""
         self._setup_approved_shop()

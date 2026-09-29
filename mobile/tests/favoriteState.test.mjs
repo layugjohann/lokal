@@ -68,7 +68,7 @@ class ShopDetailCardFavoriteStateHarness {
       this.favoriteError = 'Please sign in to favorite this coffee shop.';
       return;
     }
-    if (this.isMutatingFavorite) {
+    if (this.isLoadingFavorite || this.isMutatingFavorite) {
       return;
     }
 
@@ -270,3 +270,18 @@ test('Unauthenticated user attempting to toggle favorite sets sign-in notice and
   assert.strictEqual(harness.isFavorite, false);
   assert.strictEqual(harness.favoriteError, 'Please sign in to favorite this coffee shop.');
 });
+
+test('toggleFavorite returns early and does not mutate while favorite status is still loading', async () => {
+  const harness = new ShopDetailCardFavoriteStateHarness({ id: 'shop-1', name: 'Shop 1' }, 'token-1');
+  harness.isLoadingFavorite = true;
+
+  let called = false;
+  await harness.toggleFavorite(async () => {
+    called = true;
+  });
+
+  assert.strictEqual(called, false);
+  assert.strictEqual(harness.isFavorite, false);
+  assert.strictEqual(harness.isMutatingFavorite, false);
+});
+
