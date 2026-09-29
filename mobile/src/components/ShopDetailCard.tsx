@@ -58,8 +58,8 @@ export default function ShopDetailCard({ shop, onClose, authToken }: ShopDetailC
   const currentRecommendationsRequestId = useRef<number>(0);
 
   // Favorite coffee shop state
-  const [isFavorite, setIsFavorite] = useState<boolean>(false);
-  const [isLoadingFavorite, setIsLoadingFavorite] = useState<boolean>(true);
+  const [isFavorite, setIsFavorite] = useState<boolean | null>(authToken ? null : false);
+  const [isLoadingFavorite, setIsLoadingFavorite] = useState<boolean>(Boolean(authToken));
   const [isMutatingFavorite, setIsMutatingFavorite] = useState<boolean>(false);
   const [favoriteError, setFavoriteError] = useState<string | null>(null);
   const currentFavoriteRequestId = useRef<number>(0);
@@ -223,8 +223,8 @@ export default function ShopDetailCard({ shop, onClose, authToken }: ShopDetailC
     setSummaryError(null);
     setRecommendationsData(null);
     setRecommendationsError(null);
-    setIsFavorite(false);
-    setIsLoadingFavorite(true);
+    setIsFavorite(authToken ? null : false);
+    setIsLoadingFavorite(Boolean(authToken));
     setIsMutatingFavorite(false);
     setFavoriteError(null);
 
@@ -368,7 +368,7 @@ export default function ShopDetailCard({ shop, onClose, authToken }: ShopDetailC
       setFavoriteError('Please sign in to favorite this coffee shop.');
       return;
     }
-    if (isLoadingFavorite || isMutatingFavorite) {
+    if (isFavorite === null || isLoadingFavorite || isMutatingFavorite) {
       return;
     }
 
@@ -427,12 +427,22 @@ export default function ShopDetailCard({ shop, onClose, authToken }: ShopDetailC
         </Text>
         <View style={styles.headerActions}>
           <TouchableOpacity
-            style={[styles.favoriteButton, isFavorite && styles.favoriteButtonActive]}
+            style={[
+              styles.favoriteButton,
+              isFavorite && styles.favoriteButtonActive,
+              (isFavorite === null || isLoadingFavorite || isMutatingFavorite) && styles.favoriteButtonDisabled,
+            ]}
             onPress={handleToggleFavorite}
-            disabled={isLoadingFavorite || isMutatingFavorite}
+            disabled={isFavorite === null || isLoadingFavorite || isMutatingFavorite}
             activeOpacity={0.7}
             accessibilityRole="button"
-            accessibilityLabel={isFavorite ? 'Remove from favorites' : 'Add to favorites'}
+            accessibilityLabel={
+              isFavorite === null
+                ? 'Favorite status unavailable'
+                : isFavorite
+                ? 'Remove from favorites'
+                : 'Add to favorites'
+            }
           >
             {isMutatingFavorite ? (
               <ActivityIndicator size="small" color={isFavorite ? '#D9534F' : '#8C7D73'} />
@@ -457,14 +467,27 @@ export default function ShopDetailCard({ shop, onClose, authToken }: ShopDetailC
       {favoriteError ? (
         <View style={styles.favoriteErrorBanner}>
           <Text style={styles.favoriteErrorText}>{favoriteError}</Text>
-          <TouchableOpacity
-            onPress={() => setFavoriteError(null)}
-            style={styles.favoriteErrorDismiss}
-            accessibilityRole="button"
-            accessibilityLabel="Dismiss favorite error"
-          >
-            <Text style={styles.favoriteErrorDismissText}>✕</Text>
-          </TouchableOpacity>
+          <View style={styles.favoriteErrorActions}>
+            {authToken && isFavorite === null ? (
+              <TouchableOpacity
+                onPress={loadFavorite}
+                style={styles.favoriteRetryButton}
+                activeOpacity={0.7}
+                accessibilityRole="button"
+                accessibilityLabel="Retry loading favorite status"
+              >
+                <Text style={styles.favoriteRetryText}>Retry</Text>
+              </TouchableOpacity>
+            ) : null}
+            <TouchableOpacity
+              onPress={() => setFavoriteError(null)}
+              style={styles.favoriteErrorDismiss}
+              accessibilityRole="button"
+              accessibilityLabel="Dismiss favorite error"
+            >
+              <Text style={styles.favoriteErrorDismissText}>✕</Text>
+            </TouchableOpacity>
+          </View>
         </View>
       ) : null}
 
@@ -1007,6 +1030,9 @@ const styles = StyleSheet.create({
   favoriteButtonActive: {
     backgroundColor: '#FDF2F2',
   },
+  favoriteButtonDisabled: {
+    opacity: 0.5,
+  },
   favoriteIcon: {
     fontSize: 16,
     color: '#8C7D73',
@@ -1032,6 +1058,22 @@ const styles = StyleSheet.create({
     flex: 1,
     fontSize: 12,
     color: '#9C3434',
+  },
+  favoriteErrorActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  favoriteRetryButton: {
+    paddingVertical: 3,
+    paddingHorizontal: 8,
+    backgroundColor: '#9C3434',
+    borderRadius: 5,
+  },
+  favoriteRetryText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#FFFFFF',
   },
   favoriteErrorDismiss: {
     padding: 2,

@@ -6,13 +6,17 @@ class ShopDetailCardFavoriteStateHarness {
     this.shop = initialShop;
     this.authToken = initialAuthToken;
 
-    this.isFavorite = false;
-    this.isLoadingFavorite = false;
+    this.isFavorite = initialAuthToken ? null : false;
+    this.isLoadingFavorite = Boolean(initialAuthToken);
     this.isMutatingFavorite = false;
     this.favoriteError = null;
 
     this.currentFavoriteRequestId = 0;
     this.currentFavoriteMutationId = 0;
+  }
+
+  isControlDisabled() {
+    return this.isFavorite === null || this.isLoadingFavorite || this.isMutatingFavorite;
   }
 
   switchContext(newShop, newAuthToken = this.authToken) {
@@ -24,7 +28,7 @@ class ShopDetailCardFavoriteStateHarness {
 
     this.currentFavoriteRequestId += 1;
     this.currentFavoriteMutationId += 1;
-    this.isFavorite = false;
+    this.isFavorite = this.authToken ? null : false;
     this.isMutatingFavorite = false;
     this.favoriteError = null;
     if (!this.authToken) {
@@ -68,7 +72,7 @@ class ShopDetailCardFavoriteStateHarness {
       this.favoriteError = 'Please sign in to favorite this coffee shop.';
       return;
     }
-    if (this.isLoadingFavorite || this.isMutatingFavorite) {
+    if (this.isFavorite === null || this.isLoadingFavorite || this.isMutatingFavorite) {
       return;
     }
 
@@ -84,13 +88,6 @@ class ShopDetailCardFavoriteStateHarness {
 
     try {
       await mutateFn(activeShopId, !previousFavorite, activeToken);
-      if (
-        mutationId === this.currentFavoriteMutationId &&
-        activeShopId === this.shop.id &&
-        activeToken === this.authToken
-      ) {
-        this.isFavorite = !previousFavorite;
-      }
     } catch (err) {
       if (
         mutationId === this.currentFavoriteMutationId &&
@@ -118,6 +115,129 @@ class ShopDetailCardFavoriteStateHarness {
     }
   }
 }
+
+test('successful status load updates state and makes control actionable', async () => {
+  const harness = new ShopDetailCardFavoriteStateHarness({ id: 'shop-1', name: 'Shop 1' }, 'token-1');
+  assert.strictEqual(harness.isFavorite, null);
+  assert.strictEqual(harness.isLoadingFavorite, true);
+  assert.strictEqual(harness.isControlDisabled(), true);
+
+  await harness.loadFavorite(async (shopId) => {
+    assert.strictEqual(shopId, 'shop-1');
+    return { shop_id: 'shop-1', is_favorite: false, favorited_at: null };
+  });
+
+  assert.strictEqual(harness.isFavorite, false);
+  assert.strictEqual(harness.isLoadingFavorite, false);
+  assert.strictEqual(harness.favoriteError, null);
+  assert.strictEqual(harness.isControlDisabled(), false);
+});
+
+test('failed status load leaves status unknown, sets error, and keeps control disabled', async () => {
+  const harness = new ShopDetailCardFavoriteStateHarness({ id: 'shop-1', name: 'Shop 1' }, 'token-1');
+  assert.strictEqual(harness.isFavorite, null);
+  assert.strictEqual(harness.isControlDisabled(), true);
+
+  await harness.loadFavorite(async () => {
+    throw new Error('Network error loading favorite status');
+  });
+
+  // State must NOT default to false (which would indicate non-favorite); it must remain unknown (null)
+  assert.strictEqual(harness.isFavorite, null);
+  assert.strictEqual(harness.isLoadingFavorite, false);
+  assert.strictEqual(harness.favoriteError, 'Network error loading favorite status');
+  assert.strictEqual(harness.isControlDisabled(), true);
+
+  // Calling toggleFavorite while status is unknown must return early and not mutate
+  let mutateCalled = false;
+  await harness.toggleFavorite(async () => {
+    mutateCalled = true;
+  });
+  assert.strictEqual(mutateCalled, false);
+  assert.strictEqual(harness.isFavorite, null);
+});
+
+test('retry after failed status load successfully recovers status and enables control', async () => {
+  const harness = new ShopDetailCardFavoriteStateHarness({ id: 'shop-1', name: 'Shop 1' }, 'token-1');
+
+  // Initial load fails
+  await harness.loadFavorite(async () => {
+    throw new Error('Initial network timeout');
+  });
+  assert.strictEqual(harness.isFavorite, null);
+  assert.strictEqual(harness.isControlDisabled(), true);
+  assert.strictEqual(harness.favoriteError, 'Initial network timeout');
+
+  // Retry action calls loadFavorite again and succeeds
+  await harness.loadFavorite(async () => {
+    return { shop_id: 'shop-1', is_favorite: true, favorited_at: '2026-09-30T01:00:00Z' };
+  });
+
+  assert.strictEqual(harness.isFavorite, true);
+  assert.strictEqual(harness.isLoadingFavorite, false);
+  assert.strictEqual(harness.favoriteError, null);
+  assert.strictEqual(harness.isControlDisabled(), false);
+});
+
+test('successful favorite mutation transitions state from false to true and remains true', async () => {
+  const harness = new ShopDetailCardFavoriteStateHarness({ id: 'shop-1', name: 'Shop 1' }, 'token-1');
+  // Initial status loaded as false
+  await harness.loadFavorite(async () => ({
+    shop_id: 'shop-1',
+    is_favorite: false,
+    favorited_at: null,
+  }));
+  assert.strictEqual(harness.isFavorite, false);
+  assert.strictEqual(harness.isControlDisabled(), false);
+
+  let mutateCalled = false;
+  const togglePromise = harness.toggleFavorite(async (shopId, targetState) => {
+    mutateCalled = true;
+    assert.strictEqual(shopId, 'shop-1');
+    assert.strictEqual(targetState, true);
+  });
+
+  // Optimistic update
+  assert.strictEqual(harness.isFavorite, true);
+  assert.strictEqual(harness.isMutatingFavorite, true);
+
+  await togglePromise;
+  assert.strictEqual(mutateCalled, true);
+  assert.strictEqual(harness.isFavorite, true);
+  assert.strictEqual(harness.isMutatingFavorite, false);
+  assert.strictEqual(harness.favoriteError, null);
+  assert.strictEqual(harness.isControlDisabled(), false);
+});
+
+test('successful unfavorite mutation transitions state from true to false and remains false', async () => {
+  const harness = new ShopDetailCardFavoriteStateHarness({ id: 'shop-1', name: 'Shop 1' }, 'token-1');
+  // Initial status loaded as true
+  await harness.loadFavorite(async () => ({
+    shop_id: 'shop-1',
+    is_favorite: true,
+    favorited_at: '2026-09-30T01:00:00Z',
+  }));
+  assert.strictEqual(harness.isFavorite, true);
+  assert.strictEqual(harness.isControlDisabled(), false);
+
+  let mutateCalled = false;
+  const togglePromise = harness.toggleFavorite(async (shopId, targetState) => {
+    mutateCalled = true;
+    assert.strictEqual(shopId, 'shop-1');
+    assert.strictEqual(targetState, false);
+  });
+
+  // Optimistic update
+  assert.strictEqual(harness.isFavorite, false);
+  assert.strictEqual(harness.isMutatingFavorite, true);
+
+  await togglePromise;
+  assert.strictEqual(mutateCalled, true);
+  assert.strictEqual(harness.isFavorite, false);
+  assert.strictEqual(harness.isMutatingFavorite, false);
+  assert.strictEqual(harness.favoriteError, null);
+  assert.strictEqual(harness.isControlDisabled(), false);
+});
 
 test('loadFavorite loads and updates isFavorite to true on success', async () => {
   const harness = new ShopDetailCardFavoriteStateHarness({ id: 'shop-1', name: 'Shop 1' }, 'token-1');
@@ -178,30 +298,13 @@ test('Stale loadFavorite protection: Shop A -> Shop B while load is in flight ig
   assert.strictEqual(harness.shop.id, 'shop-B');
 });
 
-test('toggleFavorite performs optimistic update immediately and confirms on success', async () => {
-  const harness = new ShopDetailCardFavoriteStateHarness({ id: 'shop-1', name: 'Shop 1' }, 'token-1');
-  assert.strictEqual(harness.isFavorite, false);
-
-  let mutateCalled = false;
-  const togglePromise = harness.toggleFavorite(async (shopId, targetState) => {
-    mutateCalled = true;
-    assert.strictEqual(shopId, 'shop-1');
-    assert.strictEqual(targetState, true);
-  });
-
-  // Optimistic update should take effect immediately
-  assert.strictEqual(harness.isFavorite, true);
-  assert.strictEqual(harness.isMutatingFavorite, true);
-
-  await togglePromise;
-  assert.strictEqual(mutateCalled, true);
-  assert.strictEqual(harness.isFavorite, true);
-  assert.strictEqual(harness.isMutatingFavorite, false);
-});
-
 test('toggleFavorite rolls back to previous state and sets error banner on mutation failure', async () => {
   const harness = new ShopDetailCardFavoriteStateHarness({ id: 'shop-1', name: 'Shop 1' }, 'token-1');
-  harness.isFavorite = false;
+  await harness.loadFavorite(async () => ({
+    shop_id: 'shop-1',
+    is_favorite: false,
+    favorited_at: null,
+  }));
 
   await harness.toggleFavorite(async () => {
     throw new Error('Network error favoriting shop');
@@ -211,11 +314,16 @@ test('toggleFavorite rolls back to previous state and sets error banner on mutat
   assert.strictEqual(harness.isFavorite, false);
   assert.strictEqual(harness.isMutatingFavorite, false);
   assert.strictEqual(harness.favoriteError, 'Network error favoriting shop');
+  assert.strictEqual(harness.isControlDisabled(), false);
 });
 
 test('Stale toggleFavorite protection: Shop A -> Shop B while mutation is in flight ignores mutation result', async () => {
   const harness = new ShopDetailCardFavoriteStateHarness({ id: 'shop-A', name: 'Shop A' }, 'token-1');
-  harness.isFavorite = false;
+  await harness.loadFavorite(async () => ({
+    shop_id: 'shop-A',
+    is_favorite: false,
+    favorited_at: null,
+  }));
 
   let resolveMutationA;
   const mutationAPromise = new Promise((resolve) => {
@@ -227,14 +335,14 @@ test('Stale toggleFavorite protection: Shop A -> Shop B while mutation is in fli
 
   // User rapidly navigates away to Shop B
   harness.switchContext({ id: 'shop-B', name: 'Shop B' });
-  assert.strictEqual(harness.isFavorite, false); // reset for Shop B
+  assert.strictEqual(harness.isFavorite, null); // reset for Shop B
 
   // Mutation for Shop A now resolves
   resolveMutationA();
   await togglePromiseA;
 
   // Shop B must not inherit Shop A's favorited state
-  assert.strictEqual(harness.isFavorite, false);
+  assert.strictEqual(harness.isFavorite, null);
   assert.strictEqual(harness.shop.id, 'shop-B');
 });
 
@@ -281,7 +389,6 @@ test('toggleFavorite returns early and does not mutate while favorite status is 
   });
 
   assert.strictEqual(called, false);
-  assert.strictEqual(harness.isFavorite, false);
+  assert.strictEqual(harness.isFavorite, null);
   assert.strictEqual(harness.isMutatingFavorite, false);
 });
-
