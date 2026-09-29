@@ -8,9 +8,9 @@ This document provides a snapshot of the **current state of the `main` branch** 
 
 **Phase 2 — Core Application Features**
 
-The project bootstrapping phase is complete. The mobile application foundation, FastAPI backend, Supabase integration, database schema, user authentication, maps/location integration, coffee shop CRUD API, nearby coffee shop discovery, independent business eligibility and curation, external review data layer, first-party LOKAL user reviews, mobile user authentication with secure session management, and AI-generated review summaries are established.
+The project bootstrapping phase is complete. The mobile application foundation, FastAPI backend, Supabase integration, database schema, user authentication, maps/location integration, coffee shop CRUD API, nearby coffee shop discovery, independent business eligibility and curation, external review data layer, first-party LOKAL user reviews, mobile user authentication with secure session management, AI-generated review summaries, and AI-generated "Must Try" recommendations are established.
 
-The project is now building application-level features that expand LOKAL's AI capabilities, including AI must-try recommendations.
+The project is now building application-level features that expand LOKAL's core user experience and community discovery capabilities.
 
 ---
 
@@ -18,17 +18,24 @@ The project is now building application-level features that expand LOKAL's AI ca
 
 🟢 **On Track**
 
-The core application stack is operational. The latest completed feature, **AI-Generated Review Summaries (GitHub Issue #31)**, introduces LOKAL's first AI-powered capability: concise, objective synthesized review summaries with highlight chips for approved coffee shops.
+The core application stack is operational. The latest completed feature, **AI-Generated "Must Try" Recommendations (GitHub Issue #33)**, introduces grounded, review-backed menu and beverage recommendations for approved coffee shops, helping users decide what to order based on aggregate customer praise.
 
-Review summaries are powered by the Google Gemini API (`gemini-2.5-flash`) via a clean provider abstraction (`ReviewSummarizer` protocol) and lightweight native HTTP client (`httpx`), avoiding heavy AI frameworks like LangChain or LlamaIndex. Gemini is configured with `thinkingBudget: 0` to preserve the entire output token allowance for structured JSON synthesis, and non-`STOP` completions are rejected. Responses are validated against an application-level Pydantic schema (`ReviewSummaryContent`), failing closed to HTTP 502 Bad Gateway on malformed or schema-nonconforming outputs.
+Recommendations are generated using the Google Gemini API via a clean provider abstraction (`ReviewRecommender` protocol) and native `httpx` client. Model-specific generation configurations dynamically tune thinking budgets (`thinkingBudget: 0` for `gemini-2.5-flash`; `thinkingBudget: 1024` for `gemini-2.5-pro`; omitted for non-thinking models like `gemini-1.5-*`), with security-conscious header-based API key authentication (`x-goog-api-key`).
 
-To maintain a zero-cost MVP architecture without Redis or a persistent summary dataset, summaries are cached in an in-memory 1-hour TTL cache (`InMemorySummaryCache`, 500 shops max capacity). A thread-safe, per-shop generation/version mechanism protects against race conditions where in-flight summarization requests could otherwise overwrite recent review mutations with stale pre-mutation summaries. First-party review creation, editing, and deletion immediately invalidate the cache and advance the generation version.
+A strict application-level five-point grounding boundary validates internal provider recommendations against cited reviews:
+1. Supporting review index is in bounds.
+2. Referenced review has a positive rating ($\ge 4.0$).
+3. Supporting evidence is a normalized substring of the referenced review text.
+4. Item name (or core distinguishing tokens) appears in the supporting evidence.
+5. Supporting evidence does not contain negative/avoidance indicators, enforced through a phrase-aware deterministic heuristic guard that recognizes negated positive constructions (e.g. `never stale`, `not bland at all`, `without being burnt`, `don't skip`) while halting on substantive words and clause boundaries (`not fresh, stale`, `no milk, burnt`).
 
-User privacy and prompt-injection safety are strictly enforced: reviews are stripped of reviewer author names, user IDs, review IDs, and visit dates; rating-only reviews are excluded; and remaining reviews are passed inside `<reviews>` tags with explicit anti-override system instructions. Summaries require a minimum threshold of 3 usable reviews with text.
+Grounding validation is executed per-item: individual ungrounded recommendations are dropped while valid recommendations are retained. If all items fail grounding, the service returns HTTP 200 OK with `status="available"` and `items=[]`, reserving HTTP 502 Bad Gateway strictly for provider/transport or structural schema failures. Internal evidence metadata is stripped prior to constructing the public response contract (`item_name`, `reason`).
 
-On the mobile client, `ShopDetailCard` renders the AI summary card asynchronously without blocking the shop presentation. It handles loading, available, insufficient reviews (< 3 reviews), and error states with localized retries. Monotonic request counters protect the UI against shop-switching race conditions and out-of-order responses, and review mutations automatically trigger a fresh summary refresh.
+Like review summaries, recommendations are cached in an in-memory 1-hour TTL cache (`InMemoryRecommendationCache`, 500 shops max capacity) protected by thread-safe generation/version tracking. First-party review creation, updating, and deletion immediately invalidate the cache and advance the generation version.
 
-The engineering workflow is formalized as the **AI-Assisted Engineering Workflow**, including implementation planning, Product Owner approval, dedicated feature branches, automated verification, CodeRabbit review, iterative review resolution, and human-controlled merging.
+On the mobile client, `ShopDetailCard` renders the "Must Try" card asynchronously without blocking the shop view. It uses semantic response statuses to cleanly distinguish loading, available with recommendations, available with no specific menu items found, insufficient reviews ($< 3$ usable reviews), and error states with localized retries. Monotonic request sequence counters protect against out-of-order race conditions on rapid shop switching, and first-party review mutations automatically refresh recommendations.
+
+The engineering workflow remains formalized under the **AI-Assisted Engineering Workflow**.
 
 The next feature cycle should begin only after the current state is synchronized and the next GitHub Issue and implementation plan have been approved.
 
@@ -36,79 +43,87 @@ The next feature cycle should begin only after the current state is synchronized
 
 # Latest Completed Feature
 
-## GitHub Issue #31 — AI-Generated Review Summaries
+## GitHub Issue #33 — AI-Generated "Must Try" Recommendations
 
 **Status:** ✅ Completed
 
 ### Completed Work
 
 * **Provider Abstraction & Native Gemini Integration**:
-  * Implemented `ReviewSummarizer` (Protocol) and `GeminiReviewSummarizer` in `backend/app/services/reviews/summary.py`.
-  * Targeted Gemini REST API `v1beta/models/{model}:generateContent` using native `httpx` (no LangChain, LlamaIndex, or heavy AI SDKs).
-  * Configurable through `GEMINI_API_KEY` and `GEMINI_MODEL` (default: `gemini-2.5-flash`).
-  * Added `"thinkingConfig": {"thinkingBudget": 0}` in `generationConfig` for `gemini-2.5-flash` so internal reasoning tokens do not consume `maxOutputTokens=500`.
-  * Enforced completion validation: accepts `finishReason == "STOP"` or absent, rejecting all truncated/safety completions (`MAX_TOKENS`, `SAFETY`, etc.) with `ExternalProviderError`.
-  * Fail-closed provider parsing: caught `ValueError`, `TypeError`, `AttributeError`, `KeyError`, and `IndexError` during response JSON extraction, converting malformed structures into `ExternalProviderError` without leaking raw provider bodies in logs.
-* **Application-Level Validation Boundary**:
-  * Gemini is requested to output structured JSON matching a JSON schema.
-  * Implemented `ReviewSummaryContent` Pydantic model (`summary: str`, `positive_themes: list[str]`, `negative_themes: list[str]`).
-  * Application strictly validates raw text with `ReviewSummaryContent.model_validate_json()`, mapping any validation or parsing failure to `ExternalProviderError` and HTTP 502 Bad Gateway.
-* **Privacy & Prompt Injection Protections**:
-  * Strips all reviewer user IDs, author names, review IDs, and visit dates. Only `{"rating": r.rating, "text": r.text}` is sent.
-  * Excludes rating-only reviews (empty or whitespace text).
-  * Bounds inputs: maximum 10 usable reviews, each truncated to 500 characters.
-  * Wraps input inside `<reviews>` XML tags and passes explicit system instructions commanding the model to treat review contents as untrusted data and ignore embedded instructions or prompt overrides.
-  * Enforces minimum review threshold: requires at least 3 usable reviews with text, returning `status: "insufficient_reviews"` with empty theme lists and null summary when fewer than 3 reviews are available.
+  * Implemented `ReviewRecommender` (Protocol) and `GeminiReviewRecommender` in `backend/app/services/reviews/recommendations.py`.
+  * Targeted Gemini REST API `v1beta/models/{model}:generateContent` using native `httpx` (no LangChain, LlamaIndex, or heavy AI frameworks).
+  * Implemented `build_gemini_generation_config` with model-specific generation parameters:
+    * `gemini-2.5-flash`: `thinkingBudget: 0`, `maxOutputTokens: 600` for low-latency JSON synthesis.
+    * `gemini-2.5-pro`: `thinkingBudget: 1024`, `maxOutputTokens: 2048` satisfying required thinking constraints.
+    * Legacy / non-thinking models (`gemini-1.5-flash`, `gemini-1.5-pro`): omits `thinkingConfig` completely, with `maxOutputTokens: 600`.
+  * Enforced header-based authentication via `x-goog-api-key: <API_KEY>`, avoiding API key leakage in URL query parameters and access logs.
+  * Enforced provider completion validation: accepts `finishReason == "STOP"` or absent, rejecting truncated/safety completions (`MAX_TOKENS`, `SAFETY`, etc.) with `ExternalProviderError`.
+  * Wrapped provider parsing in fail-closed error handling (`ValueError`, `TypeError`, `AttributeError`, `KeyError`, `IndexError`) to convert unexpected structures into `ExternalProviderError` without leaking raw responses in logs.
+* **Internal Evidence Contract & Application-Level Grounding Validation**:
+  * Configured Gemini to output structured JSON conforming to `InternalRecommendationContent` containing `items` with `item_name`, `reason`, `supporting_review_index`, and `supporting_evidence`.
+  * Validated raw provider output with `InternalRecommendationContent.model_validate_json()`, mapping malformed JSON or schema non-conformance to `ExternalProviderError` (HTTP 502 Bad Gateway).
+  * Implemented server-side five-point grounding verification in `validate_and_convert_recommendations`:
+    1. Bounds check: `supporting_review_index` must be a valid index in usable reviews.
+    2. Rating check: cited review must have `rating >= 4.0`.
+    3. Excerpt substring check: `supporting_evidence` must exist as a normalized substring of the cited review text.
+    4. Item containment check: `item_name` or core distinguishing tokens must occur within `supporting_evidence`.
+    5. Phrase-aware negative-context guard: `has_negative_context` heuristic checks for avoidance action patterns (`don't get`, `never order`, `would not recommend`, `waste of`) and negative descriptors (`burnt`, `stale`, `bland`, `overpriced`, `undrinkable`, `worst`, etc.). Negator backward scan evaluates adjacent tokens and permitted connectors (`being`, `too`, `very`, `particularly`, `remotely`, `even`, `so`, `to`, `be`, `at`, `all`), halting immediately on non-connector tokens or clause boundaries to prevent negator bleeding across substantive words (`not fresh, stale`, `no milk, burnt`).
+  * Per-item validation: individual recommendations failing grounding checks are logged as warnings and skipped; valid items from the same response are retained.
+  * If all recommendations fail grounding checks, returns `items=[]` with `status="available"` (HTTP 200 OK) rather than converting the request to HTTP 502.
+  * Internal evidence fields (`supporting_review_index`, `supporting_evidence`) are strictly stripped before constructing the public `RecommendationItem` response.
 * **Generation-Guarded In-Memory Caching**:
-  * Implemented `InMemorySummaryCache` with 1-hour TTL (`ttl_seconds=3600.0`) and 500-shop capacity limit with oldest-entry eviction.
-  * Guarded with `threading.Lock()` and dual versioning (`_epoch`, `_versions`).
-  * `get_shop_summary` captures `generation = cache.get_generation(shop_id)` prior to review fetching and Gemini summarization.
-  * Stores via `cache.set_if_generation(..., generation)` atomically verifying the generation has not changed.
-  * Prevents race conditions where an in-flight read could overwrite a cache invalidation triggered by a concurrent user review mutation.
-  * Hooked immediate cache invalidation and generation advancement into `ReviewService.create_user_review`, `update_user_review`, and `delete_user_review`.
+  * Implemented `InMemoryRecommendationCache` with 1-hour TTL (`ttl_seconds=3600.0`) and 500-shop capacity limit with oldest-entry eviction.
+  * Thread-safe access via `threading.Lock()` and generation/epoch version tracking.
+  * `get_shop_recommendations` captures `generation = cache.get_generation(shop_id)` prior to review retrieval and Gemini recommendation, storing results atomically via `cache.set_if_generation(..., generation)` only if generation has not advanced.
+  * Prevents concurrent race conditions where in-flight recommendation fetches could repopulate the cache with stale recommendations after review mutations.
+  * Hooked cache invalidation and generation advancement into `ReviewService.create_user_review`, `update_user_review`, and `delete_user_review`.
 * **API Endpoint & Curation Protection**:
-  * Added `GET /api/v1/shops/{shop_id}/reviews/summary` in `backend/app/api/v1/endpoints/reviews.py`.
+  * Added `GET /api/v1/shops/{shop_id}/reviews/recommendations` in `backend/app/api/v1/endpoints/reviews.py`.
   * Enforced authentication via `get_current_user`.
-  * Enforced fail-closed curation: returns `404 Not Found` if the shop is `PENDING_REVIEW` or `EXCLUDED`.
-  * Returns `503 Service Unavailable` if `GEMINI_API_KEY` is unconfigured.
-  * Returns `502 Bad Gateway` if Gemini fails, times out, or returns invalid schema data.
+  * Enforced fail-closed shop curation check: returns `404 Not Found` if shop does not exist or is not `APPROVED`.
+  * Returns `503 Service Unavailable` if `GEMINI_API_KEY` is not configured.
+  * Requires a minimum of 3 usable reviews with text; returns `status: "insufficient_reviews"` with `items: []` if fewer than 3 reviews are available.
 * **Non-Blocking Mobile Experience**:
-  * Added `fetchShopReviewSummary(shopId, authToken)` in `mobile/src/services/reviewService.ts`.
-  * Integrated AI review summary card in `mobile/src/components/ShopDetailCard.tsx`.
-  * Loads summary asynchronously in the background after shop details are visible without blocking navigation or reviews.
-  * Renders loading spinner, available state with summary paragraph and chips for positive and negative themes, empty/insufficient reviews card, and error state with localized retry button.
-  * Monotonic request counter (`currentSummaryRequestId`) discards out-of-order responses and prevents stale data from overwriting active state when switching shops.
-  * Automatically refetches summary after user review creation, editing, or deletion.
+  * Added `fetchShopRecommendations(shopId, authToken)` in `mobile/src/services/reviewService.ts`.
+  * Integrated "Must Try" recommendation card in `mobile/src/components/ShopDetailCard.tsx`.
+  * Decoupled from numeric thresholds using semantic backend response statuses:
+    * `status === 'insufficient_reviews'`: displays *"✨ Not enough customer reviews yet to generate recommendations."*
+    * `status === 'available' && items.length === 0`: displays *"✨ No specific menu recommendations found in the available reviews."*
+    * `status === 'available' && items.length > 0`: displays the *"☕ Must Try"* card with item names, reasons, and review count attribution.
+    * Loading spinner and error state with localized retry button.
+  * Monotonic request counter (`currentRecommendationsRequestId`) discards out-of-order responses and prevents stale data from displaying when switching shops.
+  * Automatically refetches recommendations after user review creation, updating, or deletion.
 * **Automated Verification**:
-  * Backend regression suite: **229 tests passing** in 1.6s (`python -m unittest discover -s backend/tests`).
-  * Mobile test suite: **71 tests passing** in 348ms (`npm test --prefix mobile`).
+  * Backend regression suite: **270 tests passing** in 2.0s (`PYTHONPATH=backend python -m unittest discover -s backend/tests -t backend`).
+  * Mobile test suite: **86 tests passing** in 365ms (`npm test --prefix mobile`).
   * Mobile TypeScript verification: **0 errors** (`npx tsc --noEmit`).
-  * Deterministic race testing: verified shop-switching and failed stale responses using controlled promises.
+  * Explicit regression tests for compound descriptors (`not fresh, stale`, `no milk, burnt`), positive negated phrases (`never stale`, `not bland at all`, `without being burnt`), header-based auth, model generation configs, and per-item filtering.
 * **Pull Request**:
-  * Pull Request #32 was reviewed by CodeRabbit, actionable findings were resolved iteratively (fail-closed parsing, non-STOP rejection, thinking token budget configuration, cache generation tracking, and deterministic race tests), and the PR was approved and merged into `main` by the Product Owner (commit `af26f0df`).
+  * Pull Request #34 was reviewed by CodeRabbit, actionable findings were resolved iteratively (per-item validation, phrase-aware negative context heuristic, model-specific generation configs, header auth, semantic mobile states, and bounded negator scanning), approved, and merged into `main` by the Product Owner (merge commit `aa8d4992`).
 
 ---
 
 # Project Progress
 
-| Feature / Milestone                              | Status      |
-| ------------------------------------------------ | ----------- |
-| Engineering Foundation                           | ✅ Complete |
-| Issue #1 — Initialize Mobile Application         | ✅ Complete |
-| Issue #3 — Initialize FastAPI Backend            | ✅ Complete |
-| Issue #5 — Initialize Supabase Integration       | ✅ Complete |
-| Issue #7 — Database Schema                       | ✅ Complete |
-| Issue #9 — User Authentication                   | ✅ Complete |
-| Issue #11 — Maps & Location Integration          | ✅ Complete |
-| Issue #13 — Coffee Shop CRUD API                 | ✅ Complete |
-| Issue #15 — Coffee Shop Discovery & Search       | ✅ Complete |
-| Issue #19 — External Review Data Layer            | ✅ Complete |
+| Feature / Milestone                                          | Status      |
+| ------------------------------------------------------------ | ----------- |
+| Engineering Foundation                                       | ✅ Complete |
+| Issue #1 — Initialize Mobile Application                     | ✅ Complete |
+| Issue #3 — Initialize FastAPI Backend                        | ✅ Complete |
+| Issue #5 — Initialize Supabase Integration                   | ✅ Complete |
+| Issue #7 — Database Schema                                   | ✅ Complete |
+| Issue #9 — User Authentication                               | ✅ Complete |
+| Issue #11 — Maps & Location Integration                      | ✅ Complete |
+| Issue #13 — Coffee Shop CRUD API                             | ✅ Complete |
+| Issue #15 — Coffee Shop Discovery & Search                   | ✅ Complete |
+| Issue #19 — External Review Data Layer                        | ✅ Complete |
 | Issue #22 — Independent Business Eligibility & Shop Curation | ✅ Complete |
-| Issue #24 — LOKAL User Reviews                   | ✅ Complete |
-| Issue #29 — Mobile User Authentication & Session Management | ✅ Complete |
-| AI-Assisted Engineering Workflow                 | ✅ Complete |
-| Issue #31 — AI-Generated Review Summaries        | ✅ Complete |
-| AI Must-Try Recommendations                      | ⏳ Planned  |
+| Issue #24 — LOKAL User Reviews                               | ✅ Complete |
+| Issue #29 — Mobile User Authentication & Session Management  | ✅ Complete |
+| AI-Assisted Engineering Workflow                             | ✅ Complete |
+| Issue #31 — AI-Generated Review Summaries                    | ✅ Complete |
+| Issue #33 — AI-Generated "Must Try" Recommendations          | ✅ Complete |
+| Favorite Coffee Shops                                        | ⏳ Planned  |
 
 ---
 
@@ -134,6 +149,18 @@ The React Native (Expo) mobile application currently provides:
   * Error state presentation with localized retry action.
   * Monotonic request counter (`currentSummaryRequestId`) preventing stale out-of-order responses from overwriting active state when switching shops.
   * Automatic summary refresh triggered immediately after user review creation, editing, or deletion.
+* **AI-Generated "Must Try" Recommendations**:
+  * Non-blocking "Must Try" recommendation card within `ShopDetailCard`.
+  * Asynchronous background fetching initiated after shop selection alongside review summaries.
+  * Displays specific menu and beverage recommendations grounded in actual customer reviews, pairing each item with a concise reason for the recommendation.
+  * Review count attribution banner indicating how many customer reviews were evaluated.
+  * Distinct semantic UI states driven by backend status enums:
+    * `insufficient_reviews`: renders *"✨ Not enough customer reviews yet to generate recommendations."* when usable review count is $< 3$.
+    * `available` with 0 items: renders *"✨ No specific menu recommendations found in the available reviews."* when 3+ usable reviews exist but contain no positive item mentions.
+    * `available` with $>0$ items: renders the full "Must Try" card with recommended item list.
+  * Error state presentation with localized retry button.
+  * Monotonic request counter (`currentRecommendationsRequestId`) discarding out-of-order responses and preventing stale recommendations from displaying when rapidly switching shops.
+  * Automatic recommendation refresh triggered immediately after user review creation, editing, or deletion.
 * Interactive map visualization via `react-native-maps`.
 * Device foreground location permission requests via `expo-location`.
 * Automatic user coordinate acquisition and map re-centering.
@@ -158,12 +185,12 @@ The React Native (Expo) mobile application currently provides:
   * Review deletion flow with confirmation dialog and error handling.
   * Full optimistic UI updates and localized error banner display with retry capabilities.
 * **Stale Async & Mutation Race Protection**:
-  * Monotonic request counter (`currentRequestId`), mutation counter (`currentMutationId`), and summary request counter (`currentSummaryRequestId`) in `ShopDetailCard` ensuring late-arriving responses or mutations from previously selected shops or previous auth sessions are discarded.
-  * Component lifecycle keying in `NearbyShopsSheet` (`${selectedShop.id}:${authToken || 'anon'}`) ensuring complete reset of review form, submission, deletion, and summary states on shop selection change.
+  * Monotonic request counters (`currentRequestId`, `currentSummaryRequestId`, `currentRecommendationsRequestId`) and mutation counter (`currentMutationId`) in `ShopDetailCard` ensuring late-arriving responses or mutations from previously selected shops or previous auth sessions are discarded.
+  * Component lifecycle keying in `NearbyShopsSheet` (`${selectedShop.id}:${authToken || 'anon'}`) ensuring complete reset of review form, submission, deletion, summary, and recommendation states on shop selection change.
 * Non-blocking review loading and retry behavior.
 * Zero external UI dependencies, maintaining scope discipline and clean architecture.
 
-Must-Try recommendations and background location tracking remain outside the current implementation scope.
+Favorite coffee shops and background location tracking remain outside the current implementation scope.
 
 ---
 
@@ -199,13 +226,23 @@ The FastAPI backend currently provides:
   * 3-review minimum usable text threshold check; excludes rating-only reviews.
   * `InMemorySummaryCache` (1-hour TTL, 500 capacity) with thread-safe per-shop generation tracking preventing in-flight stale cache repopulation.
   * Automatic cache invalidation and generation advancement on first-party review creation, editing, and deletion.
+* **AI Must-Try Recommendation Layer & Endpoint**:
+  * `GET /api/v1/shops/{shop_id}/reviews/recommendations`: Protected endpoint returning structured AI "Must Try" menu and beverage recommendations for an approved coffee shop.
+  * `ReviewRecommender` (Protocol) abstraction decoupling recommendation generation from specific AI vendors.
+  * `GeminiReviewRecommender` implementation targeting Google Gemini REST API via `httpx`, with header-based API key auth (`x-goog-api-key`) and model-specific generation configurations (`thinkingBudget: 0` for `gemini-2.5-flash`; `thinkingBudget: 1024` for `gemini-2.5-pro`; omitted for legacy models).
+  * Internal evidence contract (`InternalRecommendationContent`) capturing item name, reason, supporting review index, and verbatim review evidence excerpt.
+  * Application-level five-point grounding validation boundary (`validate_and_convert_recommendations`): verifies review index bounds, referenced review rating $\ge 4.0$, verbatim evidence substring match, item token containment, and phrase-aware negative context heuristic with bounded negator scanning.
+  * Per-item validation: filters individual ungrounded recommendations and returns valid items; returns HTTP 200 with `items=[]` if all items fail grounding; strips internal evidence fields before returning public response (`RecommendationItem`).
+  * 3-review minimum usable text threshold check; returns `status: "insufficient_reviews"` when fewer than 3 reviews are available.
+  * `InMemoryRecommendationCache` (1-hour TTL, 500 capacity) with thread-safe per-shop generation tracking preventing stale cache repopulation.
+  * Automatic cache invalidation and generation advancement on first-party review creation, editing, and deletion.
 * **Database Write Privilege Protection & Secure RPCs**:
   * Direct PostgREST `INSERT` and `UPDATE` on `reviews` revoked; writes routed through PostgreSQL `SECURITY DEFINER` RPCs (`create_user_review`, `update_user_review`) with `auth.uid()` derivation and revoked `PUBLIC` execution privileges.
   * Immutable author name snapshotting from user metadata with fallback to `'LOKAL User'`. Never exposes user emails or internal UUIDs in review responses.
   * Strict `source = 'lokal'` filtering across application lookups, updates, and deletes.
 * Google Places API (New) integration for transient external review retrieval with provider attribution and source links. No caching or persistence of Google review content.
 * Robust error handling distinguishing client input errors (`400`/`422`), missing records (`404`), unique constraint conflicts (`409`), external provider failures (`502`), service unavailability (`503`), and sanitized generic server failures (`500`).
-* Automated backend regression testing with **229 passing tests**, covering auth, shops, curation, nearby discovery, external reviews, first-party user reviews, and AI review summaries.
+* Automated backend regression testing with **270 passing tests**, covering auth, shops, curation, nearby discovery, external reviews, first-party user reviews, AI review summaries, and AI must-try recommendations.
 
 ---
 
@@ -239,7 +276,7 @@ The database is managed through PostgreSQL in Supabase with Row Level Security (
 
 # Current Data / AI Architecture Direction
 
-The project implements a hybrid review-data architecture with operational AI review summarization:
+The project implements a hybrid review-data architecture with operational AI review summarization and grounded menu recommendations:
 
 ```text
 Google Places Reviews (external, transient)
@@ -251,7 +288,7 @@ Google Places Reviews (external, transient)
          Unified Review Domain
                   ↓
                 AI Layer
-     (ReviewSummaryService / Gemini)
+  (ReviewSummaryService & ReviewRecommendationService / Gemini)
                   ↓
              LOKAL Mobile
 ```
@@ -262,23 +299,23 @@ First-party LOKAL reviews are persisted in Supabase with author name snapshottin
 
 The review domain merges first-party LOKAL reviews and external reviews into a unified provider-neutral representation (`UnifiedReview`), exposing separate external and community metrics so downstream consumers can clearly distinguish first-party feedback.
 
-The AI layer ingests sanitized reviews from the unified review domain to generate structured review summaries (`ReviewSummaryService`), using `GeminiReviewSummarizer` via HTTP requests to Google Gemini API. Summaries are cached in-memory with a 1-hour TTL and generation-guarded invalidation, without creating a persistent summary database table.
+The AI layer ingests sanitized reviews from the unified review domain to generate structured review summaries (`ReviewSummaryService`) and AI-grounded "Must Try" menu recommendations (`ReviewRecommendationService`), using `GeminiReviewSummarizer` and `GeminiReviewRecommender` via HTTP requests to Google Gemini API. Summaries and recommendations are cached in-memory with a 1-hour TTL and generation-guarded invalidation, without creating persistent summary or recommendation database tables.
 
-Independent-business eligibility and curation are maintained as a separate domain concern, ensuring review and AI summary operations respect public discovery eligibility rules (`APPROVED` required).
+Independent-business eligibility and curation are maintained as a separate domain concern, ensuring review and AI operations respect public discovery eligibility rules (`APPROVED` required).
 
 ---
 
 # Next Task
 
-The next feature should be defined through the next GitHub Issue after reviewing the completed AI review summaries architecture and current application state.
+The next feature should be defined through the next GitHub Issue after reviewing the completed AI review summaries and recommendations architecture and current application state.
 
-With user authentication, unified reviews, and AI review summarization active, the logical next capability is **AI Must-Try Recommendations** (menu and beverage recommendations derived from review insights) or another feature prioritized by the Product Owner.
+With user authentication, unified reviews, AI review summarization, and AI must-try recommendations active, the logical next capability is **Favorite Coffee Shops** (saving, viewing, and managing favorite independent coffee shops for authenticated users) or another feature prioritized by the Product Owner.
 
 Before implementation:
 
-1. Review the current database schema, curation layer, review service, AI summarizer, and mobile cards.
+1. Review the current database schema, curation layer, review service, AI services, and mobile cards.
 2. Define the product requirement and observable acceptance criteria for the next capability.
-3. Review dependencies, latency implications, and external AI provider trade-offs.
+3. Review dependencies, latency implications, and data modeling trade-offs.
 4. Create and approve the next GitHub Issue.
 5. Review the implementation plan before any branch is created or code is written.
 
@@ -288,7 +325,7 @@ Before implementation:
 
 **None.**
 
-The unified review domain and AI review summarization are operational. External reviews remain transient and compliant with provider policies, while first-party reviews are securely persisted in Supabase. In-memory summary caching with generation versioning is active. Mobile user authentication, review mutations, and non-blocking summary cards are operational and fully tested.
+The unified review domain, AI review summarization, and AI-generated "Must Try" recommendations are operational. External reviews remain transient and compliant with provider policies, while first-party reviews are securely persisted in Supabase. In-memory caching with generation versioning is active for both summaries and recommendations. Mobile user authentication, review mutations, non-blocking summary cards, and non-blocking recommendations cards are operational and fully tested.
 
 ---
 
@@ -296,8 +333,13 @@ The unified review domain and AI review summarization are operational. External 
 
 The recent development cycles established the following engineering practices:
 
-* **Generation-Guarded In-Memory Caching**: When caching asynchronous LLM responses in memory without a persistent database, protect the cache with an atomic generation/version check. Long-running in-flight summarization requests must not write back stale pre-mutation summaries if an invalidation occurred while the request was in flight.
-* **Application-Level Validation Boundary for LLM Outputs**: Never rely solely on vendor "structured output" flags or schema requests. Always validate the returned content with Pydantic (`ReviewSummaryContent.model_validate_json`) and fail closed to HTTP 502 Bad Gateway if the model returns malformed, incomplete, or schema-nonconforming responses.
+* **Per-Item Grounding Validation**: LLM-generated recommendations must be grounded strictly against the source reviews. Validating supporting review index, rating threshold ($\ge 4.0$), verbatim evidence substring presence, item token presence in evidence, and negative-context heuristic checks on an individual item basis ensures hallucinations or ungrounded claims are dropped without failing the entire response.
+* **Phrase-Aware Bounded Negator Scanning**: When evaluating candidate evidence for negative context (e.g. `avoid`, `skip`, `burnt`), scanning backward for negators must be bounded to immediate preceding tokens or permitted connector phrases (e.g. `at all`, `being`, `to be`). Scanning unbounded windows or ignoring punctuation resets risks falsely treating a negator for an earlier clause (e.g. `not fresh, stale` or `no milk, burnt`) as negating the target descriptor.
+* **Model-Specific Reasoning Budget Configuration**: Different Gemini models handle `thinkingConfig` differently; while `gemini-2.5-flash` requires `thinkingBudget: 0` to prevent reasoning token starvation of output tokens, other models (such as `gemini-2.5-pro`) may require a positive budget (e.g. `1024`) or omit the field. Provider implementations should adapt the request payload dynamically based on the configured model name.
+* **Header-Based AI Provider Authentication**: Passing external API keys via request headers (`x-goog-api-key`) rather than URL query parameters prevents credential leakage in server logs, proxy logs, and HTTP tracebacks.
+* **Semantic State Distinction in Client AI Cards**: Distinct product states (e.g. `insufficient_reviews` vs `available` with 0 recommendations vs `available` with $>0$ recommendations) should be represented explicitly in domain status fields rather than inferred from array lengths alone, ensuring unambiguous UI rendering and messaging.
+* **Generation-Guarded In-Memory Caching**: When caching asynchronous LLM responses in memory without a persistent database, protect the cache with an atomic generation/version check. Long-running in-flight summarization or recommendation requests must not write back stale pre-mutation data if an invalidation occurred while the request was in flight.
+* **Application-Level Validation Boundary for LLM Outputs**: Never rely solely on vendor "structured output" flags or schema requests. Always validate the returned content with Pydantic (`ReviewSummaryContent.model_validate_json` / `InternalRecommendationContent.model_validate_json`) and fail closed to HTTP 502 Bad Gateway if the model returns malformed, incomplete, or schema-nonconforming responses.
 * **Dedicated Reasoning Budget Control on LLM Providers**: For bounded structured JSON synthesis tasks on thinking-enabled models (such as `gemini-2.5-flash`), explicitly configure `"thinkingConfig": {"thinkingBudget": 0}` to disable internal reasoning tokens so they do not exhaust the `maxOutputTokens` allocation and trigger unintended `MAX_TOKENS` truncations.
 * **Deterministic Race-Condition Testing with Controlled Promises**: Replace arbitrary `setTimeout` delays in asynchronous race tests with manually resolvable promises (`shopAPromise`). This guarantees deterministic test execution regardless of event-loop timing or test environment CPU load.
 * **Fail-Closed Provider Shape Parsing**: Wrap raw provider JSON parsing and dictionary/list extraction in explicit exception handlers (`ValueError`, `TypeError`, `AttributeError`, `KeyError`, `IndexError`) to convert unexpected upstream provider shapes into sanitized `ExternalProviderError` (mapped to HTTP 502) rather than unhandled 500 server errors.
@@ -357,4 +399,4 @@ After implementation:
 
 ---
 
-**Last Updated:** Phase 2 — Core Application Features (after completion of GitHub Issue #31 and merge of PR #32)
+**Last Updated:** Phase 2 — Core Application Features (after completion of GitHub Issue #33 and merge of PR #34)
