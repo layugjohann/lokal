@@ -18,13 +18,11 @@ The project is now building application-level features that expand LOKAL's core 
 
 🟢 **On Track**
 
-The core application stack is operational. The latest completed feature, **Favorite Coffee Shops (GitHub Issue #35)**, enables authenticated users to mark approved independent coffee shops as favorites directly from the shop detail card, providing persistent state across sessions and responsive, optimistic UI interactions.
+The core application stack is operational. The latest completed milestone, **Harden Supabase Public-Schema Access and RLS Policies (GitHub Issue #37)**, hardened database security across all six public tables (`shops`, `menu_items`, `shop_curation`, `shop_curation_audit`, `reviews`, `favorites`), eliminated the Supabase Security Advisor `rls_disabled_in_public` finding, and established a strict least-privilege authorization model.
 
-Favoriting is backed by PostgreSQL in Supabase through Row Level Security (RLS) policies and a dedicated `SECURITY DEFINER` RPC (`create_user_favorite`), preventing direct client-side table writes and enforcing cross-user isolation so authenticated users can only view, create, or delete their own favorite records.
+Direct PostgREST mutation access on `shops` has been revoked for all client roles (`anon`, `authenticated`, `public`). The intended security boundary is enforced: ordinary users can only read approved coffee shops, while shop mutations (`POST /api/v1/shops`, `PATCH /api/v1/shops/{id}`, `DELETE /api/v1/shops/{id}`) and curation evaluation/inspection (`GET /api/v1/shops/{id}/curation`, `POST /api/v1/shops/{id}/curation/evaluate`) must proceed through the trusted FastAPI gateway using curator authorization (`require_curator`) and a dedicated fail-closed service-role database client (`get_service_role_supabase`). Column-level grants restrict public direct Data API visibility on `shop_curation` strictly to `(shop_id, status)` for approved shops, preventing unauthorized exposure of internal curation metadata, notes, and confidence scores.
 
-The FastAPI backend exposes RESTful endpoints at `/api/v1/shops/{shop_id}/favorite` (`GET`, `POST`, `DELETE`) with fail-closed curation verification: only coffee shops with `APPROVED` curation status can be favorited or have their favorite status retrieved. If a coffee shop is non-existent, `PENDING_REVIEW`, or `EXCLUDED`, the API returns `404 Not Found`.
-
-On the mobile client, `ShopDetailCard` features an interactive heart toggle in the card header. An explicit three-state model (`boolean | null`) cleanly distinguishes between confirmed favorited (`true`), confirmed non-favorited (`false`), and unknown/loading/error (`null`). The favorite button remains disabled while status is unknown or in-flight, preventing transient network failures from being misinterpreted as confirmed non-favorited states. The error presentation includes an actionable **Retry** button allowing immediate recovery, while monotonic request and mutation sequence counters protect against asynchronous race conditions on rapid shop transitions.
+Database security and RLS policies are verified through an executable 55-assertion pgTAP test suite (`supabase/tests/01_rls_and_permissions.sql`) alongside the full 297-test backend regression suite and 109-test mobile regression suite.
 
 The engineering workflow remains formalized under the **AI-Assisted Engineering Workflow**.
 
@@ -34,65 +32,54 @@ The next feature cycle should begin only after the current state is synchronized
 
 # Latest Completed Feature
 
-## GitHub Issue #35 — Favorite Coffee Shops
+## GitHub Issue #37 — Harden Supabase Public-Schema Access and RLS Policies
 
 **Status:** ✅ Completed
 
 ### Completed Work
 
-* **Database Schema, Access Privileges & Security Definer RPC**:
-  * Implemented migration `supabase/migrations/20260930000000_favorite_coffee_shops.sql`.
-  * Created table `favorites`:
-    * `id UUID PRIMARY KEY DEFAULT gen_random_uuid()`
-    * `user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE`
-    * `shop_id UUID NOT NULL REFERENCES shops(id) ON DELETE CASCADE`
-    * `created_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now())`
-    * Enforced uniqueness per user and shop: `CONSTRAINT uq_favorites_user_shop UNIQUE (user_id, shop_id)`
-    * Created composite index `idx_favorites_user_shop ON favorites (user_id, shop_id)`.
-  * Hardened table write access privileges:
-    * Revoked direct `INSERT` and `UPDATE` on `favorites` from `anon`, `authenticated`, and `public`.
-    * Granted `SELECT` and `DELETE` strictly to `authenticated`.
-  * Row Level Security (RLS) enforcement:
-    * `SELECT` policy `auth.uid() = user_id` ensuring authenticated callers can query only their own favorites.
-    * `DELETE` policy `auth.uid() = user_id` ensuring authenticated callers can delete only their own favorites.
-  * PostgreSQL `SECURITY DEFINER` RPC `create_user_favorite(p_shop_id UUID)`:
-    * Executes with database owner privileges with `search_path = public`.
-    * Validates caller authentication (`auth.uid() IS NOT NULL`).
-    * Verifies target coffee shop exists and has `shop_curation.status = 'APPROVED'`.
-    * Inserts record with server-derived `auth.uid()`, handling duplicate conflict idempotently.
-    * Explicitly revokes execution privileges from `PUBLIC` and grants execution strictly to `authenticated`.
-* **FastAPI Backend Service & Endpoints**:
-  * Implemented `FavoriteService` in `backend/app/services/favorites.py` using request-scoped authenticated Supabase client.
-  * Fail-closed curation validation:
-    * Missing `shop_curation` row defaults to `PENDING_REVIEW` (fails closed with 404).
-    * Database or transport errors (`APIError` or unexpected exceptions) surface as HTTP 500 without masking infrastructure failures as unapproved states.
-  * Implemented REST endpoints in `backend/app/api/v1/endpoints/favorites.py`:
-    * `GET /api/v1/shops/{shop_id}/favorite`: Checks whether the authenticated caller has favorited the coffee shop; returns `FavoriteStatusResponse(shop_id, is_favorite, favorited_at)` with HTTP 200 OK. Returns HTTP 404 if the shop does not exist or is not approved.
-    * `POST /api/v1/shops/{shop_id}/favorite`: Adds the coffee shop to caller's favorites via `create_user_favorite` RPC. Returns HTTP 201 Created on newly created favorite, or HTTP 200 OK if already favorited (idempotent). Returns HTTP 404 if the shop is not approved.
-    * `DELETE /api/v1/shops/{shop_id}/favorite`: Removes the coffee shop from caller's favorites. Returns HTTP 204 No Content (idempotent).
-  * Pydantic schemas in `backend/app/schemas/favorite.py`:
-    * `FavoriteStatusResponse` with `shop_id`, `is_favorite`, and `favorited_at`.
-* **Mobile Client Service & State Management**:
-  * Implemented `mobile/src/services/favoriteService.ts`:
-    * `fetchFavoriteStatus(shopId, authToken)`: Queries backend favorite status.
-    * `addFavorite(shopId, authToken)`: Posts favorite mutation.
-    * `removeFavorite(shopId, authToken)`: Deletes favorite mutation.
-  * Integrated interactive favorite toggle in `mobile/src/components/ShopDetailCard.tsx`:
-    * Header heart icon toggle with distinct normal (`styles.favoriteButton`), active favorited (`styles.favoriteButtonActive`), and disabled (`styles.favoriteButtonDisabled`) styling.
-    * Discrete tri-state model: `isFavorite: boolean | null` distinguishing confirmed favorited (`true`), confirmed non-favorited (`false`), and unknown/loading/error (`null`).
-    * Guarded mutation: button is disabled when `isFavorite === null || isLoadingFavorite || isMutatingFavorite`, preventing premature mutations while status is in-flight or unknown.
-    * Immediate optimistic UI toggle with automatic rollback on network/server failure.
-    * Actionable error banner: when status loading fails, displays error banner with localized **Retry** button calling `loadFavorite()`, allowing recovery without restarting or navigating away.
-    * Unauthenticated handling: displays informative prompt (*"Please sign in to favorite this coffee shop."*) without executing network mutations.
-    * Monotonic sequence counters (`currentFavoriteRequestId`, `currentFavoriteMutationId`) preventing out-of-order stale responses or mutations across rapid shop switching or session changes.
+* **Database Security, Least-Privilege Grants & Row Level Security (RLS)**:
+  * Implemented migration `supabase/migrations/20261001000000_harden_public_schema_and_rls.sql`.
+  * Enabled and enforced Row Level Security across all six exposed public tables: `shops`, `menu_items`, `shop_curation`, `shop_curation_audit`, `reviews`, and `favorites`, resolving the Supabase Security Advisor `rls_disabled_in_public` finding.
+  * Least-privilege grant and revocation matrix:
+    * `shops`: Revoked default `ALL` privileges from `anon`, `authenticated`, and `public`. Granted `SELECT` to `anon` and `authenticated`. Revoked direct client `INSERT`, `UPDATE`, and `DELETE` grants from all client roles; granted full `ALL` access to `service_role`.
+    * `shop_curation`: Revoked direct table-level `SELECT` from `anon`, `authenticated`, and `public`. Granted column-level `SELECT (shop_id, status)` strictly to `anon` and `authenticated`. Internal curation metadata (`curator_notes`, `evidence_source`, `confidence`, `curator_id`, `location_count`) is restricted from direct public consumption; full curation records are accessible only to curators via FastAPI using `service_role`.
+    * `menu_items`: Revoked all access from `anon`, `authenticated`, and `public`. Restricted strictly to `service_role` (no direct PostgREST Data API exposure).
+    * `shop_curation_audit`: Revoked all access from `anon` and `public`. Granted `SELECT` to `authenticated` with an RLS policy restricting visibility strictly to callers with JWT `role IN ('curator', 'admin')`. Mutations restricted to `service_role`.
+    * `reviews` and `favorites`: Preserved strict row-level ownership isolation (`auth.uid() = user_id`) on `SELECT` and `DELETE`; direct client `INSERT` and `UPDATE` remain revoked, requiring writes to flow through security-definer RPCs or FastAPI.
+  * Scoped RLS Policies:
+    * `shops`: Ordinary read policy allows `anon` and `authenticated` callers to read approved shops (`status = 'APPROVED'`). Privileged read policy allows users with `role IN ('curator', 'admin')` to read all shops. Direct client mutation policies are dropped.
+    * `shop_curation`: Ordinary read policy restricts `anon` and `authenticated` access to rows where `status = 'APPROVED'`. Curator/admin read policy allows reading curation status for non-approved shops. Full access granted to `service_role`.
+    * `menu_items` and `shop_curation_audit`: Dedicated `service_role` policies with audit read access for authenticated curators/admins.
+* **Dedicated Service-Role Backend Client & Fail-Closed Dependency**:
+  * Implemented `get_service_role_supabase_client()` in `backend/app/core/supabase.py`:
+    * Requires `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY`.
+    * Never falls back to `SUPABASE_ANON_KEY`.
+  * Implemented `get_service_role_supabase()` dependency in `backend/app/api/deps.py`:
+    * Yields the authenticated service-role client.
+    * Fails closed with `HTTP 503 Service Unavailable` if `SUPABASE_SERVICE_ROLE_KEY` is not configured, preventing unauthenticated fallback or silent degradation.
+    * Service-role credentials remain strictly server-side and are never exposed to mobile or client code.
+* **FastAPI Shop & Curation Authorization**:
+  * Protected shop mutations in `backend/app/api/v1/endpoints/shops.py`:
+    * Added `require_curator` and `get_service_role_supabase()` dependencies to `create_shop` (`POST /api/v1/shops`), `update_shop` (`PATCH /api/v1/shops/{id}`), and `delete_shop` (`DELETE /api/v1/shops/{id}`).
+    * Ordinary authenticated users receive `403 Forbidden` on mutation attempts.
+  * Protected curation endpoints in `backend/app/api/v1/endpoints/curation.py`:
+    * Added `require_curator` and `get_service_role_supabase()` to `get_shop_curation` (`GET /api/v1/shops/{id}/curation`) and `evaluate_shop_curation` (`POST /api/v1/shops/{id}/curation/evaluate`).
+    * Ordinary authenticated users receive `403 Forbidden` when attempting to inspect full curation metadata or trigger curation evaluations.
+    * Simplified redundant `force=True` curator check once the entire evaluation endpoint is curator-protected.
+* **Database pgTAP Authorization Test Suite**:
+  * Implemented and expanded `supabase/tests/01_rls_and_permissions.sql` containing **55 planned assertions** (`plan(55)`):
+    * Metadata verification (Tests 1–22): Confirms RLS enabled on all 6 tables, table privileges, and column privileges for `anon` and `authenticated`.
+    * `anon` executable tests (Tests 23–32): Proves `anon` can read approved shops and cannot read pending shops; confirms `INSERT`/`UPDATE`/`DELETE` on `shops` throws `42501`; confirms column-restricted `SELECT` on `shop_curation`; confirms `SELECT` on `menu_items` and `shop_curation_audit` throws `42501`.
+    * Ordinary `authenticated` executable tests (Tests 33–48): Proves ordinary users can read approved shops and cannot read pending shops; confirms direct `INSERT`/`UPDATE`/`DELETE` on `shops` throws `42501`; confirms `shop_curation_audit` returns 0 rows via RLS; confirms cross-user ownership isolation on reviews and favorites (cannot read or delete other users' records; can delete own record).
+    * Curator `authenticated` executable tests (Tests 49–55): Proves curators can read approved and pending shops; can read pending curation status; can read curation audit logs; confirms direct PostgREST shop mutations remain denied (must use FastAPI gateway).
 * **Automated Verification**:
-  * Backend test suite: **291 passing tests** (`PYTHONPATH=backend python -m unittest discover -s backend/tests -t backend`).
-  * Focused backend favorite tests: **21 tests** covering status retrieval, addition, deletion, idempotency, unapproved shop rejection, database error propagation, and cross-user isolation.
-  * Mobile test suite: **109 passing tests** (`npm test --prefix mobile`).
-  * Focused mobile favorite tests: **27 tests** across `favoriteState.test.mjs` (13 tests) and `favoriteService.test.mjs` (14 tests), verifying actionable status after load, disabled control on failed load, retry recovery, optimistic rollback, unauthenticated notices, and monotonic race protection.
-  * TypeScript verification: **0 errors** (`npx tsc --noEmit`).
+  * Database pgTAP test suite: **55 / 55 assertions passed** (100%).
+  * Backend regression suite: **297 passing tests** (`PYTHONPATH=backend ./backend/.venv/bin/python -m unittest discover -s backend/tests -t backend`), adding 6 focused authorization and service-role failure tests in `test_shops.py` and `test_curation.py`.
+  * Mobile regression suite: **109 passing tests** (`npm test --prefix mobile`).
+  * Mobile TypeScript compiler: **0 errors** (`./mobile/node_modules/.bin/tsc --noEmit --project mobile/tsconfig.json`).
 * **Pull Request**:
-  * Pull Request #36 reviewed by CodeRabbit, actionable findings resolved iteratively (fail-closed curation database error propagation, mutation loading locks, discrete unknown state modeling, and error banner retry actions), approved, and merged into `main` by the Product Owner (merge commit `a530265d`).
+  * Pull Request #38 reviewed by CodeRabbit, actionable findings resolved iteratively (revoked direct authenticated shop mutation grants and policies, expanded executable pgTAP coverage), approved, and merged into `main` by the Product Owner (merge commit `a65d9d32`).
 
 ---
 
@@ -117,6 +104,7 @@ The next feature cycle should begin only after the current state is synchronized
 | Issue #31 — AI-Generated Review Summaries                    | ✅ Complete |
 | Issue #33 — AI-Generated "Must Try" Recommendations          | ✅ Complete |
 | Issue #35 — Favorite Coffee Shops                            | ✅ Complete |
+| Issue #37 — Harden Supabase Public Schema & RLS              | ✅ Complete |
 | User Favorites List / Profile Discovery                      | ⏳ Planned  |
 
 ---
@@ -207,13 +195,19 @@ The FastAPI backend currently provides:
   * `20260811000000_initial_schema.sql`: Core tables, PostGIS extensions, shops, and nearby search RPC.
   * `20260919000000_user_reviews.sql`: First-party user reviews schema, constraints, RLS policies, table privilege hardening, and secure write RPCs.
   * `20260930000000_favorite_coffee_shops.sql`: Favorites schema, unique constraints, RLS policies, table privilege hardening, and secure `create_user_favorite` RPC.
+  * `20261001000000_harden_public_schema_and_rls.sql`: Row Level Security enablement across all six public tables, least-privilege table and column grants, revocation of direct client shop mutations, and column-level curation protection.
 * User registration (`POST /api/v1/auth/register`) with email and password.
 * User authentication (`POST /api/v1/auth/login`) returning JWT session tokens.
 * Non-admin token-scoped user logout (`POST /api/v1/auth/logout`).
 * Authenticated user identification (`GET /api/v1/auth/me`) and reusable `get_current_user` dependency for protected routes.
-* Authenticated coffee shop management via REST API (`POST`, `GET`, `PATCH`, `DELETE` at `/api/v1/shops`).
+* Dedicated service-role database client (`backend/app/core/supabase.py`) and fail-closed FastAPI dependency `get_service_role_supabase()` (`backend/app/api/deps.py`) requiring `SUPABASE_SERVICE_ROLE_KEY` and returning `HTTP 503` if unconfigured.
+* Authenticated coffee shop management via REST API (`POST`, `GET`, `PATCH`, `DELETE` at `/api/v1/shops`):
+  * Public/authenticated read access for approved coffee shops.
+  * Privileged shop mutations (`POST`, `PATCH`, `DELETE`) protected by `require_curator` and executed through `get_service_role_supabase()`. Direct client PostgREST mutations are denied.
 * Authenticated nearby coffee shop discovery via `GET /api/v1/shops/nearby`.
-* Independent business eligibility and curation layer (`APPROVED`, `EXCLUDED`, `PENDING_REVIEW`) with fail-closed rules and audit trail.
+* Independent business eligibility and curation layer (`APPROVED`, `EXCLUDED`, `PENDING_REVIEW`):
+  * Curation inspection (`GET /api/v1/shops/{id}/curation`) and evaluation (`POST /api/v1/shops/{id}/curation/evaluate`) protected by `require_curator` and executed via `get_service_role_supabase()`.
+  * Column-level grant protection ensuring direct Data API callers can only query `(shop_id, status)` for approved shops without exposing internal notes or confidence scores.
 * **Favorite Coffee Shops Management & Endpoints**:
   * `GET /api/v1/shops/{shop_id}/favorite`: Checks caller's favorite status for an approved coffee shop; returns `FavoriteStatusResponse(shop_id, is_favorite, favorited_at)`. Returns `404 Not Found` if the shop does not exist or is not `APPROVED`.
   * `POST /api/v1/shops/{shop_id}/favorite`: Adds the shop to caller's favorites via PostgreSQL RPC `create_user_favorite`. Returns `201 Created` on new favorite or `200 OK` if already favorited (idempotent). Fails closed with `404 Not Found` if shop is not `APPROVED`.
@@ -251,19 +245,46 @@ The FastAPI backend currently provides:
   * Strict `source = 'lokal'` filtering across application review lookups, updates, and deletes.
 * Google Places API (New) integration for transient external review retrieval with provider attribution and source links. No caching or persistence of Google review content.
 * Robust error handling distinguishing client input errors (`400`/`422`), missing records (`404`), unique constraint conflicts (`409`), external provider failures (`502`), service unavailability (`503`), and sanitized generic server failures (`500`).
-* Automated backend regression testing with **291 passing tests**, covering auth, shops, curation, nearby discovery, external reviews, first-party user reviews, AI review summaries, AI must-try recommendations, and favorite coffee shops.
+* Automated backend regression testing with **297 passing tests**, covering auth, shops, curation, nearby discovery, external reviews, first-party user reviews, AI review summaries, AI must-try recommendations, favorite coffee shops, curator authorization, and service-role fail-closed behavior.
 
 ---
 
 # Current Database & Security Architecture
 
-The database is managed through PostgreSQL in Supabase with Row Level Security (RLS) and controlled stored procedures:
+The database is managed through PostgreSQL in Supabase with full Row Level Security (RLS) and controlled stored procedures across all public schema tables:
 
 * **Tables**:
   * `shops`: Core coffee shop details (name, address, coordinates, Google Place ID, etc.).
-  * `shop_curation`: Business eligibility status (`APPROVED`, `EXCLUDED`, `PENDING_REVIEW`), observed location counts, evidence metadata, and audit logs.
+  * `shop_curation`: Business eligibility status (`APPROVED`, `EXCLUDED`, `PENDING_REVIEW`), observed location counts, evidence metadata, confidence scores, and curator notes.
+  * `shop_curation_audit`: Append-only curation audit log capturing status transitions, timestamps, reasons, and curator IDs.
+  * `menu_items`: Coffee shop menu items (internal/service-role access only).
   * `reviews`: Stores first-party LOKAL user reviews and historical/external review metadata.
   * `favorites`: Stores authenticated user favorite coffee shops with uniqueness constraints and foreign key cascade deletions.
+* **Least-Privilege Table & Column Grants**:
+  * `shops`: `SELECT` granted to `anon` and `authenticated`. All direct client write grants (`INSERT`, `UPDATE`, `DELETE`) are revoked. Full `ALL` access granted strictly to `service_role`.
+  * `shop_curation`: Direct table `SELECT` revoked from `anon`, `authenticated`, and `public`. Column-level `SELECT (shop_id, status)` granted to `anon` and `authenticated`. Sensitive columns (`curator_notes`, `evidence_source`, `confidence`, `curator_id`, `location_count`) are restricted from client roles. Full access granted strictly to `service_role`.
+  * `menu_items`: All privileges revoked from `anon`, `authenticated`, and `public`. Granted strictly to `service_role`.
+  * `shop_curation_audit`: All privileges revoked from `anon` and `public`. `SELECT` granted to `authenticated`. Full access granted strictly to `service_role`.
+  * `reviews`: Direct `INSERT` and `UPDATE` revoked from client roles. `SELECT` and `DELETE` granted to `authenticated`. Full access granted to `service_role`.
+  * `favorites`: Direct `INSERT` and `UPDATE` revoked from client roles. `SELECT` and `DELETE` granted to `authenticated`. Full access granted to `service_role`.
+* **Row Level Security (RLS) Policies**:
+  * `shops`:
+    * Public/Authenticated `SELECT`: Allowed for coffee shops where `shop_curation.status = 'APPROVED'`, or where JWT `(auth.jwt() -> 'app_metadata' ->> 'role') IN ('curator', 'admin')`.
+    * Mutations: Direct client mutations are blocked; mutations must proceed via FastAPI gateway using `service_role`.
+  * `shop_curation`:
+    * Public/Authenticated `SELECT`: Allowed where `status = 'APPROVED'`, or where JWT role is curator/admin.
+    * Full access granted to `service_role`.
+  * `menu_items`:
+    * Full access granted strictly to `service_role`.
+  * `shop_curation_audit`:
+    * Authenticated `SELECT`: Allowed only where JWT `(auth.jwt() -> 'app_metadata' ->> 'role') IN ('curator', 'admin')`.
+    * Full access granted to `service_role`.
+  * `reviews`:
+    * `SELECT`: Authenticated users can select reviews for coffee shops with `shop_curation.status = 'APPROVED'` or their own reviews (`auth.uid() = user_id`).
+    * `DELETE`: Authenticated users can delete only their own reviews (`auth.uid() = user_id`).
+  * `favorites`:
+    * `SELECT`: Authenticated users can select only their own favorites (`auth.uid() = user_id`).
+    * `DELETE`: Authenticated users can delete only their own favorites (`auth.uid() = user_id`).
 * **Review Schema & Integrity**:
   * `user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE`
   * `author_name TEXT NOT NULL DEFAULT 'LOKAL User'`
@@ -276,22 +297,13 @@ The database is managed through PostgreSQL in Supabase with Row Level Security (
   * `created_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now())`
   * `uq_favorites_user_shop UNIQUE (user_id, shop_id)`: Enforces single favorite record per user per coffee shop.
   * Indexes: `idx_favorites_user_shop ON favorites (user_id, shop_id)`.
-* **Table Access Privileges**:
-  * Direct `INSERT` and `UPDATE` on `reviews` and `favorites` are revoked from `authenticated`, `anon`, and `public`.
-  * `SELECT` and `DELETE` are granted to `authenticated`.
 * **Controlled Security Definer RPCs**:
   * `create_user_review(p_shop_id, p_rating, p_content)`: Validates rating (1–5), verifies shop existence and `APPROVED` curation status, enforces uniqueness, resolves author display name snapshot from user profile metadata, and inserts review with server timestamps.
   * `update_user_review(p_shop_id, p_rating, p_content, p_update_content)`: Enforces field presence, validates rating, verifies shop is `APPROVED`, enforces caller ownership and `source = 'lokal'`, preserves server-managed fields, and updates `rating`, `content`, and `updated_at`.
   * `create_user_favorite(p_shop_id)`: Validates caller authentication (`auth.uid() IS NOT NULL`), verifies target shop existence and `APPROVED` curation status in `shop_curation`, inserts favorite record with server-derived `auth.uid()`, and handles duplicate conflicts idempotently.
   * Stored procedure execution privileges are revoked from `PUBLIC` and granted strictly to `authenticated`.
-* **Row Level Security (RLS) Policies**:
-  * `reviews`:
-    * `SELECT`: Authenticated users can select reviews for coffee shops with `shop_curation.status = 'APPROVED'` or their own reviews (`auth.uid() = user_id`).
-    * `DELETE`: Authenticated users can delete only their own reviews (`auth.uid() = user_id`).
-  * `favorites`:
-    * `SELECT`: Authenticated users can select only their own favorites (`auth.uid() = user_id`).
-    * `DELETE`: Authenticated users can delete only their own favorites (`auth.uid() = user_id`).
-  * Service role maintains administrative access for maintenance tasks.
+* **Automated Database Test Suite (`supabase/tests/01_rls_and_permissions.sql`)**:
+  * Executable pgTAP test suite containing **55 planned assertions** verifying RLS flags, table permissions, column privileges, and allow/deny query behaviors for `anon`, ordinary `authenticated`, and curator roles.
 
 ---
 
@@ -354,6 +366,10 @@ The unified review domain, AI review summarization, AI-generated "Must Try" reco
 
 The recent development cycles established the following engineering practices:
 
+* **Database Write Privilege Revocation over PostgREST**: Row Level Security (RLS) alone does not replace table-level grants. When mutations must enforce business logic (such as curator authorization, evidence recalculation, and audit logging), revoking table-level `INSERT`, `UPDATE`, and `DELETE` from client roles (`anon`, `authenticated`) eliminates PostgREST bypasses, ensuring mutations proceed strictly through the trusted FastAPI gateway.
+* **Fail-Closed Dedicated Service-Role Dependency**: Privileged server operations requiring database superuser or bypass privileges must not rely on clients that can fall back to the public `anon` key. Using a dedicated dependency (`get_service_role_supabase()`) that strictly validates `SUPABASE_SERVICE_ROLE_KEY` and raises HTTP 503 if unconfigured enforces fail-closed infrastructure guarantees.
+* **Column-Level Privilege Granularity for Public Schemas**: Sensitive metadata (e.g., internal curator notes, confidence scores, evidence sources) on otherwise readable public tables should be restricted via column-level `GRANT SELECT (shop_id, status)` to prevent exposure through direct PostgREST queries.
+* **Executable Database-Level Authorization Testing**: Database authorization test suites must not rely solely on metadata introspection (e.g. `pg_class.relrowsecurity`). Testing executable `SELECT`, `INSERT`, `UPDATE`, and `DELETE` queries under `SET LOCAL ROLE` with simulated JWT claims (`auth.uid()`, `auth.jwt()`) verifies actual allow/deny behavior and row isolation against real database execution.
 * **Discrete Unknown State in Toggle Controls**: Boolean toggle buttons (`isFavorite`) must not default to `false` when initial status retrieval is asynchronous. Using `null` to represent unconfirmed status ensures controls remain disabled during initial load or network failures, preventing erroneous mutation requests from executing against unverified states.
 * **In-Banner Retry Recovery for Disabled Controls**: When a component disables an interactive control because its initial state could not be loaded, the associated error presentation must offer an actionable retry mechanism so users are not stranded in a permanently disabled state without navigating away.
 * **Fail-Closed Curation Checking on Secondary Operations**: Auxiliary features (such as favorites or reviews) that depend on parent entity curation status must fail closed on missing curation records or database communication failures (`APIError`), treating unknown states as unapproved or error conditions rather than allowing unauthorized mutations.
@@ -424,4 +440,4 @@ After implementation:
 
 ---
 
-**Last Updated:** Phase 2 — Core Application Features (after completion of GitHub Issue #35 and merge of PR #36)
+**Last Updated:** Phase 2 — Core Application Features (after completion of GitHub Issue #37 and merge of PR #38)

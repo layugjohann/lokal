@@ -82,11 +82,11 @@ Responsibilities include:
 * Favorites
 * Application data
 * Secure authentication
+* Row Level Security (RLS) & least-privilege access control
 
 Future services may include:
 
 * File Storage
-* Row Level Security (RLS)
 * Realtime features
 
 ---
