@@ -1,6 +1,6 @@
 """API v1 endpoints package."""
 
-from . import auth, health, shops
+from . import auth, curation, favorites, health, reviews, shops
 
-__all__ = ["auth", "health", "shops"]
+__all__ = ["auth", "curation", "favorites", "health", "reviews", "shops"]
 

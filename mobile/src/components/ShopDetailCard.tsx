@@ -22,6 +22,11 @@ import {
   updateUserReview,
   deleteUserReview,
 } from '../services/reviewService';
+import {
+  fetchFavoriteStatus,
+  addFavorite,
+  removeFavorite,
+} from '../services/favoriteService';
 
 interface ShopDetailCardProps {
   shop: Shop;
@@ -51,6 +56,14 @@ export default function ShopDetailCard({ shop, onClose, authToken }: ShopDetailC
   const [isLoadingRecommendations, setIsLoadingRecommendations] = useState<boolean>(true);
   const [recommendationsError, setRecommendationsError] = useState<string | null>(null);
   const currentRecommendationsRequestId = useRef<number>(0);
+
+  // Favorite coffee shop state
+  const [isFavorite, setIsFavorite] = useState<boolean | null>(authToken ? null : false);
+  const [isLoadingFavorite, setIsLoadingFavorite] = useState<boolean>(Boolean(authToken));
+  const [isMutatingFavorite, setIsMutatingFavorite] = useState<boolean>(false);
+  const [favoriteError, setFavoriteError] = useState<string | null>(null);
+  const currentFavoriteRequestId = useRef<number>(0);
+  const currentFavoriteMutationId = useRef<number>(0);
 
   // User review form state
   const [isFormOpen, setIsFormOpen] = useState<boolean>(false);
@@ -158,11 +171,43 @@ export default function ShopDetailCard({ shop, onClose, authToken }: ShopDetailC
     }
   }, [shop.id, authToken]);
 
+  const loadFavorite = useCallback(async () => {
+    if (!authToken) {
+      setIsLoadingFavorite(false);
+      setIsFavorite(false);
+      setFavoriteError(null);
+      return;
+    }
+
+    const requestId = ++currentFavoriteRequestId.current;
+    setIsLoadingFavorite(true);
+    setFavoriteError(null);
+
+    try {
+      const data = await fetchFavoriteStatus(shop.id, authToken);
+      if (requestId === currentFavoriteRequestId.current) {
+        setIsFavorite(data.is_favorite);
+      }
+    } catch (err) {
+      if (requestId === currentFavoriteRequestId.current) {
+        const message =
+          err instanceof Error ? err.message : 'Unable to load favorite status.';
+        setFavoriteError(message);
+      }
+    } finally {
+      if (requestId === currentFavoriteRequestId.current) {
+        setIsLoadingFavorite(false);
+      }
+    }
+  }, [shop.id, authToken]);
+
   useEffect(() => {
     currentRequestId.current += 1;
     currentMutationId.current += 1;
     currentSummaryRequestId.current += 1;
     currentRecommendationsRequestId.current += 1;
+    currentFavoriteRequestId.current += 1;
+    currentFavoriteMutationId.current += 1;
 
     setIsFormOpen(false);
     setFormRating(5);
@@ -178,17 +223,24 @@ export default function ShopDetailCard({ shop, onClose, authToken }: ShopDetailC
     setSummaryError(null);
     setRecommendationsData(null);
     setRecommendationsError(null);
+    setIsFavorite(authToken ? null : false);
+    setIsLoadingFavorite(Boolean(authToken));
+    setIsMutatingFavorite(false);
+    setFavoriteError(null);
 
     loadReviews();
     loadSummary();
     loadRecommendations();
+    loadFavorite();
     return () => {
       currentRequestId.current += 1;
       currentMutationId.current += 1;
       currentSummaryRequestId.current += 1;
       currentRecommendationsRequestId.current += 1;
+      currentFavoriteRequestId.current += 1;
+      currentFavoriteMutationId.current += 1;
     };
-  }, [shop.id, authToken, loadReviews, loadSummary, loadRecommendations]);
+  }, [shop.id, authToken, loadReviews, loadSummary, loadRecommendations, loadFavorite]);
 
   const handleOpenUrl = async (url?: string | null) => {
     if (!url) return;
@@ -311,6 +363,58 @@ export default function ShopDetailCard({ shop, onClose, authToken }: ShopDetailC
     }
   };
 
+  const handleToggleFavorite = async () => {
+    if (!authToken) {
+      setFavoriteError('Please sign in to favorite this coffee shop.');
+      return;
+    }
+    if (isFavorite === null || isLoadingFavorite || isMutatingFavorite) {
+      return;
+    }
+
+    const mutationId = ++currentFavoriteMutationId.current;
+    const activeShopId = shop.id;
+    const activeToken = authToken;
+    const previousFavorite = isFavorite;
+
+    // Optimistically toggle state
+    setIsFavorite(!previousFavorite);
+    setIsMutatingFavorite(true);
+    setFavoriteError(null);
+
+    try {
+      if (previousFavorite) {
+        await removeFavorite(activeShopId, activeToken);
+      } else {
+        await addFavorite(activeShopId, activeToken);
+      }
+    } catch (err) {
+      if (
+        mutationId === currentFavoriteMutationId.current &&
+        activeShopId === shop.id &&
+        activeToken === authToken
+      ) {
+        // Rollback state on failure
+        setIsFavorite(previousFavorite);
+        const message =
+          err instanceof Error
+            ? err.message
+            : previousFavorite
+            ? 'Failed to remove favorite.'
+            : 'Failed to favorite coffee shop.';
+        setFavoriteError(message);
+      }
+    } finally {
+      if (
+        mutationId === currentFavoriteMutationId.current &&
+        activeShopId === shop.id &&
+        activeToken === authToken
+      ) {
+        setIsMutatingFavorite(false);
+      }
+    }
+  };
+
   const googleAttribution = reviewsData?.attributions.find(
     (attr: ProviderAttribution) => attr.provider === 'google'
   );
@@ -321,16 +425,71 @@ export default function ShopDetailCard({ shop, onClose, authToken }: ShopDetailC
         <Text style={styles.name} numberOfLines={2}>
           {shop.name}
         </Text>
-        <TouchableOpacity
-          style={styles.closeButton}
-          onPress={onClose}
-          activeOpacity={0.7}
-          accessibilityRole="button"
-          accessibilityLabel="Close shop details"
-        >
-          <Text style={styles.closeText}>✕</Text>
-        </TouchableOpacity>
+        <View style={styles.headerActions}>
+          <TouchableOpacity
+            style={[
+              styles.favoriteButton,
+              isFavorite && styles.favoriteButtonActive,
+              (isFavorite === null || isLoadingFavorite || isMutatingFavorite) && styles.favoriteButtonDisabled,
+            ]}
+            onPress={handleToggleFavorite}
+            disabled={isFavorite === null || isLoadingFavorite || isMutatingFavorite}
+            activeOpacity={0.7}
+            accessibilityRole="button"
+            accessibilityLabel={
+              isFavorite === null
+                ? 'Favorite status unavailable'
+                : isFavorite
+                ? 'Remove from favorites'
+                : 'Add to favorites'
+            }
+          >
+            {isMutatingFavorite ? (
+              <ActivityIndicator size="small" color={isFavorite ? '#D9534F' : '#8C7D73'} />
+            ) : (
+              <Text style={[styles.favoriteIcon, isFavorite && styles.favoriteIconActive]}>
+                {isFavorite ? '♥' : '♡'}
+              </Text>
+            )}
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.closeButton}
+            onPress={onClose}
+            activeOpacity={0.7}
+            accessibilityRole="button"
+            accessibilityLabel="Close shop details"
+          >
+            <Text style={styles.closeText}>✕</Text>
+          </TouchableOpacity>
+        </View>
       </View>
+
+      {favoriteError ? (
+        <View style={styles.favoriteErrorBanner}>
+          <Text style={styles.favoriteErrorText}>{favoriteError}</Text>
+          <View style={styles.favoriteErrorActions}>
+            {authToken && isFavorite === null ? (
+              <TouchableOpacity
+                onPress={loadFavorite}
+                style={styles.favoriteRetryButton}
+                activeOpacity={0.7}
+                accessibilityRole="button"
+                accessibilityLabel="Retry loading favorite status"
+              >
+                <Text style={styles.favoriteRetryText}>Retry</Text>
+              </TouchableOpacity>
+            ) : null}
+            <TouchableOpacity
+              onPress={() => setFavoriteError(null)}
+              style={styles.favoriteErrorDismiss}
+              accessibilityRole="button"
+              accessibilityLabel="Dismiss favorite error"
+            >
+              <Text style={styles.favoriteErrorDismissText}>✕</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      ) : null}
 
       <View style={styles.badgeRow}>
         {reviewsData?.lokal_reviews_count ? (
@@ -853,6 +1012,76 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#4A2E18',
     lineHeight: 22,
+  },
+  headerActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  favoriteButton: {
+    padding: 4,
+    borderRadius: 12,
+    backgroundColor: '#F3EFEA',
+    width: 28,
+    height: 28,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  favoriteButtonActive: {
+    backgroundColor: '#FDF2F2',
+  },
+  favoriteButtonDisabled: {
+    opacity: 0.5,
+  },
+  favoriteIcon: {
+    fontSize: 16,
+    color: '#8C7D73',
+    lineHeight: 18,
+  },
+  favoriteIconActive: {
+    color: '#D9534F',
+  },
+  favoriteErrorBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    backgroundColor: '#FDF2F2',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#F8D7DA',
+    marginBottom: 8,
+    gap: 8,
+  },
+  favoriteErrorText: {
+    flex: 1,
+    fontSize: 12,
+    color: '#9C3434',
+  },
+  favoriteErrorActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  favoriteRetryButton: {
+    paddingVertical: 3,
+    paddingHorizontal: 8,
+    backgroundColor: '#9C3434',
+    borderRadius: 5,
+  },
+  favoriteRetryText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#FFFFFF',
+  },
+  favoriteErrorDismiss: {
+    padding: 2,
+  },
+  favoriteErrorDismissText: {
+    fontSize: 12,
+    color: '#9C3434',
+    fontWeight: '600',
   },
   closeButton: {
     padding: 4,
