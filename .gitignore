@@ -43,3 +43,7 @@ web-build/
 
 # macOS
 .DS_Store
+
+# Supabase
+.temp/
+supabase/.temp/

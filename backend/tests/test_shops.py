@@ -13,16 +13,22 @@ from postgrest.exceptions import APIError
 from supabase_auth.errors import AuthApiError
 
 from app.main import app
-from app.api.deps import get_authenticated_supabase, get_current_user, get_supabase
+from app.api.deps import (
+    get_authenticated_supabase,
+    get_current_user,
+    get_service_role_supabase,
+    get_supabase,
+)
 from app.schemas.auth import UserResponse
 
 
 class DummyUser:
-    def __init__(self, user_id="11111111-2222-3333-4444-555555555555", email="test@example.com"):
+    def __init__(self, user_id="11111111-2222-3333-4444-555555555555", email="test@example.com", app_metadata=None):
         self.id = user_id
         self.email = email
         self.created_at = "2026-08-28T12:00:00Z"
         self.user_metadata = {"full_name": "Test User"}
+        self.app_metadata = app_metadata if app_metadata is not None else {"role": "curator"}
 
 
 class DummyUserResponse:
@@ -81,6 +87,7 @@ class TestShopEndpoints(unittest.TestCase):
         self.mock_supabase = MagicMock()
         app.dependency_overrides[get_supabase] = lambda: self.mock_supabase
         app.dependency_overrides[get_authenticated_supabase] = lambda: self.mock_supabase
+        app.dependency_overrides[get_service_role_supabase] = lambda: self.mock_supabase
         self.client = TestClient(app)
         self.auth_headers = {"Authorization": "Bearer valid-mock-token"}
         # Default mock auth user response
@@ -505,6 +512,43 @@ class TestShopEndpoints(unittest.TestCase):
         app.dependency_overrides[get_authenticated_supabase] = raise_503
         resp = self.client.get("/api/v1/shops", headers=self.auth_headers)
         self.assertEqual(resp.status_code, 503)
+
+    # --- Curator Authorization Tests ---
+    def test_ordinary_user_cannot_create_shop(self):
+        regular_user = DummyUser(app_metadata={"role": "user"})
+        self.mock_supabase.auth.get_user.return_value = DummyUserResponse(user=regular_user)
+        payload = {"name": "Cafe", "latitude": 14.5, "longitude": 121.0}
+        resp = self.client.post("/api/v1/shops", json=payload, headers=self.auth_headers)
+        self.assertEqual(resp.status_code, 403)
+        self.assertEqual(resp.json()["detail"], "Insufficient permissions to perform manual curation.")
+
+    def test_ordinary_user_cannot_update_shop(self):
+        regular_user = DummyUser(app_metadata={"role": "user"})
+        self.mock_supabase.auth.get_user.return_value = DummyUserResponse(user=regular_user)
+        resp = self.client.patch(f"/api/v1/shops/{self.sample_shop['id']}", json={"name": "New Name"}, headers=self.auth_headers)
+        self.assertEqual(resp.status_code, 403)
+        self.assertEqual(resp.json()["detail"], "Insufficient permissions to perform manual curation.")
+
+    def test_ordinary_user_cannot_delete_shop(self):
+        regular_user = DummyUser(app_metadata={"role": "user"})
+        self.mock_supabase.auth.get_user.return_value = DummyUserResponse(user=regular_user)
+        resp = self.client.delete(f"/api/v1/shops/{self.sample_shop['id']}", headers=self.auth_headers)
+        self.assertEqual(resp.status_code, 403)
+        self.assertEqual(resp.json()["detail"], "Insufficient permissions to perform manual curation.")
+
+    def test_service_role_supabase_dependency_fails_closed_when_key_missing(self):
+        from unittest.mock import patch
+        from app.api.deps import get_service_role_supabase
+        from app.core import supabase as supabase_core
+        from app.core.config import settings
+
+        with patch.object(supabase_core, "_service_role_supabase_client", None), \
+             patch.object(settings, "SUPABASE_URL", "https://test.supabase.co"), \
+             patch.object(settings, "SUPABASE_SERVICE_ROLE_KEY", ""):
+            with self.assertRaises(HTTPException) as ctx:
+                get_service_role_supabase()
+            self.assertEqual(ctx.exception.status_code, 503)
+            self.assertIn("SUPABASE_SERVICE_ROLE_KEY", ctx.exception.detail)
 
 
 class TestScopedSupabaseClient(unittest.TestCase):

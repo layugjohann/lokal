@@ -9,7 +9,12 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 
 from fastapi.testclient import TestClient
 from app.main import app
-from app.api.deps import get_authenticated_supabase, get_current_user, get_supabase
+from app.api.deps import (
+    get_authenticated_supabase,
+    get_current_user,
+    get_service_role_supabase,
+    get_supabase,
+)
 from app.core.config import settings
 from app.schemas.auth import UserResponse
 from app.schemas.curation import (
@@ -351,6 +356,7 @@ class TestCurationEndpoints(unittest.TestCase):
 
         app.dependency_overrides[get_supabase] = lambda: self.mock_supabase
         app.dependency_overrides[get_authenticated_supabase] = lambda: self.mock_supabase
+        app.dependency_overrides[get_service_role_supabase] = lambda: self.mock_supabase
         app.dependency_overrides[get_current_user] = lambda: UserResponse(
             id=self.dummy_user.id,
             email=self.dummy_user.email,
@@ -389,6 +395,45 @@ class TestCurationEndpoints(unittest.TestCase):
         data = resp.json()
         self.assertEqual(data["status"], "APPROVED")
         self.assertEqual(data["location_count"], 2)
+
+    def test_get_curation_forbidden_for_regular_user(self):
+        regular_user = DummyUser(email="regular@example.com", role="user")
+        app.dependency_overrides[get_current_user] = lambda: UserResponse(
+            id=regular_user.id,
+            email=regular_user.email,
+            created_at=regular_user.created_at,
+            user_metadata=regular_user.user_metadata,
+            app_metadata=regular_user.app_metadata,
+        )
+        resp = self.client.get(f"/api/v1/shops/{self.shop_id}/curation")
+        self.assertEqual(resp.status_code, 403)
+        self.assertIn("Insufficient permissions", resp.json()["detail"])
+
+    def test_evaluate_forbidden_for_regular_user(self):
+        regular_user = DummyUser(email="regular@example.com", role="user")
+        app.dependency_overrides[get_current_user] = lambda: UserResponse(
+            id=regular_user.id,
+            email=regular_user.email,
+            created_at=regular_user.created_at,
+            user_metadata=regular_user.user_metadata,
+            app_metadata=regular_user.app_metadata,
+        )
+        resp = self.client.post(f"/api/v1/shops/{self.shop_id}/curation/evaluate")
+        self.assertEqual(resp.status_code, 403)
+        self.assertIn("Insufficient permissions", resp.json()["detail"])
+
+    def test_evaluate_force_forbidden_for_regular_user(self):
+        regular_user = DummyUser(email="regular@example.com", role="user")
+        app.dependency_overrides[get_current_user] = lambda: UserResponse(
+            id=regular_user.id,
+            email=regular_user.email,
+            created_at=regular_user.created_at,
+            user_metadata=regular_user.user_metadata,
+            app_metadata=regular_user.app_metadata,
+        )
+        resp = self.client.post(f"/api/v1/shops/{self.shop_id}/curation/evaluate?force=true")
+        self.assertEqual(resp.status_code, 403)
+        self.assertIn("Insufficient permissions", resp.json()["detail"])
 
     def test_override_forbidden_for_regular_user(self):
         # Current user is a regular user (role="user", email="user@lokal.ph")

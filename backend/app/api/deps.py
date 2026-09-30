@@ -6,7 +6,11 @@ from supabase import Client
 from supabase_auth.errors import AuthApiError, AuthError
 
 from ..core.config import settings
-from ..core.supabase import create_scoped_supabase_client, get_supabase_client
+from ..core.supabase import (
+    create_scoped_supabase_client,
+    get_service_role_supabase_client,
+    get_supabase_client,
+)
 from ..schemas.auth import UserResponse
 
 logger = logging.getLogger(__name__)
@@ -25,6 +29,24 @@ def get_supabase() -> Client:
         return get_supabase_client()
     except ValueError as exc:
         logger.error(f"Supabase client initialization failed: {exc}")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=str(exc),
+        )
+
+
+def get_service_role_supabase() -> Client:
+    """FastAPI dependency to obtain the privileged service-role Supabase client.
+
+    Fails closed if SUPABASE_SERVICE_ROLE_KEY is unconfigured. Never falls back to the anon key.
+
+    Raises:
+        HTTPException: 503 Service Unavailable if service role key is missing.
+    """
+    try:
+        return get_service_role_supabase_client()
+    except ValueError as exc:
+        logger.error(f"Service role Supabase client initialization failed: {exc}")
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=str(exc),
