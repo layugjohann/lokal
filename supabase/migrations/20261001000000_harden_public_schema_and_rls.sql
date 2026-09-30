@@ -22,10 +22,9 @@ ALTER TABLE IF EXISTS favorites ENABLE ROW LEVEL SECURITY;
 REVOKE ALL ON menu_items FROM anon, authenticated, public;
 GRANT ALL ON menu_items TO service_role;
 
--- 2.2 shops: Public & authenticated may SELECT; mutations restricted to authenticated curators/admins & service_role
+-- 2.2 shops: Public & authenticated may SELECT; mutations restricted strictly to service_role (via FastAPI gateway)
 REVOKE ALL ON shops FROM anon, authenticated, public;
 GRANT SELECT ON shops TO anon, authenticated;
-GRANT INSERT, UPDATE, DELETE ON shops TO authenticated;
 GRANT ALL ON shops TO service_role;
 
 -- 2.3 shop_curation: Expose only non-sensitive columns (shop_id, status) to anon and authenticated
@@ -77,26 +76,11 @@ CREATE POLICY "Allow public read access on approved shops" ON shops
         OR (auth.jwt() -> 'app_metadata' ->> 'role') IN ('curator', 'admin')
     );
 
--- Authenticated Curators/Admins: INSERT allowed
+-- Clean up any direct authenticated mutation policies on shops;
+-- mutations must proceed through the trusted FastAPI gateway using service_role
 DROP POLICY IF EXISTS "Allow curator and admin to insert shops" ON shops;
-CREATE POLICY "Allow curator and admin to insert shops" ON shops
-    FOR INSERT TO authenticated
-    WITH CHECK (
-        (auth.jwt() -> 'app_metadata' ->> 'role') IN ('curator', 'admin')
-    );
-
--- Authenticated Curators/Admins: UPDATE allowed
 DROP POLICY IF EXISTS "Allow curator and admin to update shops" ON shops;
-CREATE POLICY "Allow curator and admin to update shops" ON shops
-    FOR UPDATE TO authenticated
-    USING ((auth.jwt() -> 'app_metadata' ->> 'role') IN ('curator', 'admin'))
-    WITH CHECK ((auth.jwt() -> 'app_metadata' ->> 'role') IN ('curator', 'admin'));
-
--- Authenticated Curators/Admins: DELETE allowed
 DROP POLICY IF EXISTS "Allow curator and admin to delete shops" ON shops;
-CREATE POLICY "Allow curator and admin to delete shops" ON shops
-    FOR DELETE TO authenticated
-    USING ((auth.jwt() -> 'app_metadata' ->> 'role') IN ('curator', 'admin'));
 
 -- Service Role: full access
 DROP POLICY IF EXISTS "Allow service role full access on shops" ON shops;

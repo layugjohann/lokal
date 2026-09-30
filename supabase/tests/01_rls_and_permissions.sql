@@ -2,7 +2,7 @@
 -- Tests table-level RLS flags, least-privilege grants/revocations, and column-level restrictions.
 
 BEGIN;
-SELECT plan(18);
+SELECT plan(22);
 
 -- ----------------------------------------------------------------------------
 -- 1. Verify Row Level Security is enabled on all 6 public tables
@@ -44,7 +44,17 @@ SELECT ok(NOT has_table_privilege('anon', 'public.reviews', 'INSERT'), 'anon lac
 SELECT ok(NOT has_table_privilege('anon', 'public.favorites', 'INSERT'), 'anon lacks INSERT on favorites');
 
 -- ----------------------------------------------------------------------------
--- 3. Verify column-level restrictions on shop_curation
+-- 3. Verify authenticated role table permissions on shops
+-- ----------------------------------------------------------------------------
+-- shops: authenticated may SELECT, but direct PostgREST mutations are denied;
+-- mutations must proceed through the trusted FastAPI backend gateway
+SELECT ok(has_table_privilege('authenticated', 'public.shops', 'SELECT'), 'authenticated has SELECT on shops');
+SELECT ok(NOT has_table_privilege('authenticated', 'public.shops', 'INSERT'), 'authenticated lacks INSERT on shops');
+SELECT ok(NOT has_table_privilege('authenticated', 'public.shops', 'UPDATE'), 'authenticated lacks UPDATE on shops');
+SELECT ok(NOT has_table_privilege('authenticated', 'public.shops', 'DELETE'), 'authenticated lacks DELETE on shops');
+
+-- ----------------------------------------------------------------------------
+-- 4. Verify column-level restrictions on shop_curation
 -- ----------------------------------------------------------------------------
 -- Non-sensitive columns are readable
 SELECT ok(has_column_privilege('anon', 'public.shop_curation', 'shop_id', 'SELECT'), 'anon has SELECT on shop_curation.shop_id');
