@@ -8,7 +8,7 @@ This document provides a snapshot of the **current state of the `main` branch** 
 
 **Phase 2 — Core Application Features**
 
-The project bootstrapping phase is complete. The mobile application foundation, FastAPI backend, Supabase integration, database schema, user authentication, maps/location integration, coffee shop CRUD API, nearby coffee shop discovery, independent business eligibility and curation, external review data layer, first-party LOKAL user reviews, mobile user authentication with secure session management, AI-generated review summaries, and AI-generated "Must Try" recommendations are established.
+The project bootstrapping phase is complete. The mobile application foundation, FastAPI backend, Supabase integration, database schema, user authentication, maps/location integration, coffee shop CRUD API, nearby coffee shop discovery, independent business eligibility and curation, external review data layer, first-party LOKAL user reviews, mobile user authentication with secure session management, AI-generated review summaries, AI-generated "Must Try" recommendations, and favorite coffee shops are established.
 
 The project is now building application-level features that expand LOKAL's core user experience and community discovery capabilities.
 
@@ -18,22 +18,13 @@ The project is now building application-level features that expand LOKAL's core 
 
 🟢 **On Track**
 
-The core application stack is operational. The latest completed feature, **AI-Generated "Must Try" Recommendations (GitHub Issue #33)**, introduces grounded, review-backed menu and beverage recommendations for approved coffee shops, helping users decide what to order based on aggregate customer praise.
+The core application stack is operational. The latest completed feature, **Favorite Coffee Shops (GitHub Issue #35)**, enables authenticated users to mark approved independent coffee shops as favorites directly from the shop detail card, providing persistent state across sessions and responsive, optimistic UI interactions.
 
-Recommendations are generated using the Google Gemini API via a clean provider abstraction (`ReviewRecommender` protocol) and native `httpx` client. Model-specific generation configurations dynamically tune thinking budgets (`thinkingBudget: 0` for `gemini-2.5-flash`; `thinkingBudget: 1024` for `gemini-2.5-pro`; omitted for non-thinking models like `gemini-1.5-*`), with security-conscious header-based API key authentication (`x-goog-api-key`).
+Favoriting is backed by PostgreSQL in Supabase through Row Level Security (RLS) policies and a dedicated `SECURITY DEFINER` RPC (`create_user_favorite`), preventing direct client-side table writes and enforcing cross-user isolation so authenticated users can only view, create, or delete their own favorite records.
 
-A strict application-level five-point grounding boundary validates internal provider recommendations against cited reviews:
-1. Supporting review index is in bounds.
-2. Referenced review has a positive rating ($\ge 4.0$).
-3. Supporting evidence is a normalized substring of the referenced review text.
-4. Item name (or core distinguishing tokens) appears in the supporting evidence.
-5. Supporting evidence does not contain negative/avoidance indicators, enforced through a phrase-aware deterministic heuristic guard that recognizes negated positive constructions (e.g. `never stale`, `not bland at all`, `without being burnt`, `don't skip`) while halting on substantive words and clause boundaries (`not fresh, stale`, `no milk, burnt`).
+The FastAPI backend exposes RESTful endpoints at `/api/v1/shops/{shop_id}/favorite` (`GET`, `POST`, `DELETE`) with fail-closed curation verification: only coffee shops with `APPROVED` curation status can be favorited or have their favorite status retrieved. If a coffee shop is non-existent, `PENDING_REVIEW`, or `EXCLUDED`, the API returns `404 Not Found`.
 
-Grounding validation is executed per-item: individual ungrounded recommendations are dropped while valid recommendations are retained. If all items fail grounding, the service returns HTTP 200 OK with `status="available"` and `items=[]`, reserving HTTP 502 Bad Gateway strictly for provider/transport or structural schema failures. Internal evidence metadata is stripped prior to constructing the public response contract (`item_name`, `reason`).
-
-Like review summaries, recommendations are cached in an in-memory 1-hour TTL cache (`InMemoryRecommendationCache`, 500 shops max capacity) protected by thread-safe generation/version tracking. First-party review creation, updating, and deletion immediately invalidate the cache and advance the generation version.
-
-On the mobile client, `ShopDetailCard` renders the "Must Try" card asynchronously without blocking the shop view. It uses semantic response statuses to cleanly distinguish loading, available with recommendations, available with no specific menu items found, insufficient reviews ($< 3$ usable reviews), and error states with localized retries. Monotonic request sequence counters protect against out-of-order race conditions on rapid shop switching, and first-party review mutations automatically refresh recommendations.
+On the mobile client, `ShopDetailCard` features an interactive heart toggle in the card header. An explicit three-state model (`boolean | null`) cleanly distinguishes between confirmed favorited (`true`), confirmed non-favorited (`false`), and unknown/loading/error (`null`). The favorite button remains disabled while status is unknown or in-flight, preventing transient network failures from being misinterpreted as confirmed non-favorited states. The error presentation includes an actionable **Retry** button allowing immediate recovery, while monotonic request and mutation sequence counters protect against asynchronous race conditions on rapid shop transitions.
 
 The engineering workflow remains formalized under the **AI-Assisted Engineering Workflow**.
 
@@ -43,63 +34,65 @@ The next feature cycle should begin only after the current state is synchronized
 
 # Latest Completed Feature
 
-## GitHub Issue #33 — AI-Generated "Must Try" Recommendations
+## GitHub Issue #35 — Favorite Coffee Shops
 
 **Status:** ✅ Completed
 
 ### Completed Work
 
-* **Provider Abstraction & Native Gemini Integration**:
-  * Implemented `ReviewRecommender` (Protocol) and `GeminiReviewRecommender` in `backend/app/services/reviews/recommendations.py`.
-  * Targeted Gemini REST API `v1beta/models/{model}:generateContent` using native `httpx` (no LangChain, LlamaIndex, or heavy AI frameworks).
-  * Implemented `build_gemini_generation_config` with model-specific generation parameters:
-    * `gemini-2.5-flash`: `thinkingBudget: 0`, `maxOutputTokens: 600` for low-latency JSON synthesis.
-    * `gemini-2.5-pro`: `thinkingBudget: 1024`, `maxOutputTokens: 2048` satisfying required thinking constraints.
-    * Legacy / non-thinking models (`gemini-1.5-flash`, `gemini-1.5-pro`): omits `thinkingConfig` completely, with `maxOutputTokens: 600`.
-  * Enforced header-based authentication via `x-goog-api-key: <API_KEY>`, avoiding API key leakage in URL query parameters and access logs.
-  * Enforced provider completion validation: accepts `finishReason == "STOP"` or absent, rejecting truncated/safety completions (`MAX_TOKENS`, `SAFETY`, etc.) with `ExternalProviderError`.
-  * Wrapped provider parsing in fail-closed error handling (`ValueError`, `TypeError`, `AttributeError`, `KeyError`, `IndexError`) to convert unexpected structures into `ExternalProviderError` without leaking raw responses in logs.
-* **Internal Evidence Contract & Application-Level Grounding Validation**:
-  * Configured Gemini to output structured JSON conforming to `InternalRecommendationContent` containing `items` with `item_name`, `reason`, `supporting_review_index`, and `supporting_evidence`.
-  * Validated raw provider output with `InternalRecommendationContent.model_validate_json()`, mapping malformed JSON or schema non-conformance to `ExternalProviderError` (HTTP 502 Bad Gateway).
-  * Implemented server-side five-point grounding verification in `validate_and_convert_recommendations`:
-    1. Bounds check: `supporting_review_index` must be a valid index in usable reviews.
-    2. Rating check: cited review must have `rating >= 4.0`.
-    3. Excerpt substring check: `supporting_evidence` must exist as a normalized substring of the cited review text.
-    4. Item containment check: `item_name` or core distinguishing tokens must occur within `supporting_evidence`.
-    5. Phrase-aware negative-context guard: `has_negative_context` heuristic checks for avoidance action patterns (`don't get`, `never order`, `would not recommend`, `waste of`) and negative descriptors (`burnt`, `stale`, `bland`, `overpriced`, `undrinkable`, `worst`, etc.). Negator backward scan evaluates adjacent tokens and permitted connectors (`being`, `too`, `very`, `particularly`, `remotely`, `even`, `so`, `to`, `be`, `at`, `all`), halting immediately on non-connector tokens or clause boundaries to prevent negator bleeding across substantive words (`not fresh, stale`, `no milk, burnt`).
-  * Per-item validation: individual recommendations failing grounding checks are logged as warnings and skipped; valid items from the same response are retained.
-  * If all recommendations fail grounding checks, returns `items=[]` with `status="available"` (HTTP 200 OK) rather than converting the request to HTTP 502.
-  * Internal evidence fields (`supporting_review_index`, `supporting_evidence`) are strictly stripped before constructing the public `RecommendationItem` response.
-* **Generation-Guarded In-Memory Caching**:
-  * Implemented `InMemoryRecommendationCache` with 1-hour TTL (`ttl_seconds=3600.0`) and 500-shop capacity limit with oldest-entry eviction.
-  * Thread-safe access via `threading.Lock()` and generation/epoch version tracking.
-  * `get_shop_recommendations` captures `generation = cache.get_generation(shop_id)` prior to review retrieval and Gemini recommendation, storing results atomically via `cache.set_if_generation(..., generation)` only if generation has not advanced.
-  * Prevents concurrent race conditions where in-flight recommendation fetches could repopulate the cache with stale recommendations after review mutations.
-  * Hooked cache invalidation and generation advancement into `ReviewService.create_user_review`, `update_user_review`, and `delete_user_review`.
-* **API Endpoint & Curation Protection**:
-  * Added `GET /api/v1/shops/{shop_id}/reviews/recommendations` in `backend/app/api/v1/endpoints/reviews.py`.
-  * Enforced authentication via `get_current_user`.
-  * Enforced fail-closed shop curation check: returns `404 Not Found` if shop does not exist or is not `APPROVED`.
-  * Returns `503 Service Unavailable` if `GEMINI_API_KEY` is not configured.
-  * Requires a minimum of 3 usable reviews with text; returns `status: "insufficient_reviews"` with `items: []` if fewer than 3 reviews are available.
-* **Non-Blocking Mobile Experience**:
-  * Added `fetchShopRecommendations(shopId, authToken)` in `mobile/src/services/reviewService.ts`.
-  * Integrated "Must Try" recommendation card in `mobile/src/components/ShopDetailCard.tsx`.
-  * Decoupled from numeric thresholds using semantic backend response statuses:
-    * `status === 'insufficient_reviews'`: displays *"✨ Not enough customer reviews yet to generate recommendations."*
-    * `status === 'available' && items.length === 0`: displays *"✨ No specific menu recommendations found in the available reviews."*
-    * `status === 'available' && items.length > 0`: displays the *"☕ Must Try"* card with item names, reasons, and review count attribution.
-    * Loading spinner and error state with localized retry button.
-  * Monotonic request counter (`currentRecommendationsRequestId`) discards out-of-order responses and prevents stale data from displaying when switching shops.
-  * Automatically refetches recommendations after user review creation, updating, or deletion.
+* **Database Schema, Access Privileges & Security Definer RPC**:
+  * Implemented migration `supabase/migrations/20260930000000_favorite_coffee_shops.sql`.
+  * Created table `favorites`:
+    * `id UUID PRIMARY KEY DEFAULT gen_random_uuid()`
+    * `user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE`
+    * `shop_id UUID NOT NULL REFERENCES shops(id) ON DELETE CASCADE`
+    * `created_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now())`
+    * Enforced uniqueness per user and shop: `CONSTRAINT uq_favorites_user_shop UNIQUE (user_id, shop_id)`
+    * Created composite index `idx_favorites_user_shop ON favorites (user_id, shop_id)`.
+  * Hardened table write access privileges:
+    * Revoked direct `INSERT` and `UPDATE` on `favorites` from `anon`, `authenticated`, and `public`.
+    * Granted `SELECT` and `DELETE` strictly to `authenticated`.
+  * Row Level Security (RLS) enforcement:
+    * `SELECT` policy `auth.uid() = user_id` ensuring authenticated callers can query only their own favorites.
+    * `DELETE` policy `auth.uid() = user_id` ensuring authenticated callers can delete only their own favorites.
+  * PostgreSQL `SECURITY DEFINER` RPC `create_user_favorite(p_shop_id UUID)`:
+    * Executes with database owner privileges with `search_path = public`.
+    * Validates caller authentication (`auth.uid() IS NOT NULL`).
+    * Verifies target coffee shop exists and has `shop_curation.status = 'APPROVED'`.
+    * Inserts record with server-derived `auth.uid()`, handling duplicate conflict idempotently.
+    * Explicitly revokes execution privileges from `PUBLIC` and grants execution strictly to `authenticated`.
+* **FastAPI Backend Service & Endpoints**:
+  * Implemented `FavoriteService` in `backend/app/services/favorites.py` using request-scoped authenticated Supabase client.
+  * Fail-closed curation validation:
+    * Missing `shop_curation` row defaults to `PENDING_REVIEW` (fails closed with 404).
+    * Database or transport errors (`APIError` or unexpected exceptions) surface as HTTP 500 without masking infrastructure failures as unapproved states.
+  * Implemented REST endpoints in `backend/app/api/v1/endpoints/favorites.py`:
+    * `GET /api/v1/shops/{shop_id}/favorite`: Checks whether the authenticated caller has favorited the coffee shop; returns `FavoriteStatusResponse(shop_id, is_favorite, favorited_at)` with HTTP 200 OK. Returns HTTP 404 if the shop does not exist or is not approved.
+    * `POST /api/v1/shops/{shop_id}/favorite`: Adds the coffee shop to caller's favorites via `create_user_favorite` RPC. Returns HTTP 201 Created on newly created favorite, or HTTP 200 OK if already favorited (idempotent). Returns HTTP 404 if the shop is not approved.
+    * `DELETE /api/v1/shops/{shop_id}/favorite`: Removes the coffee shop from caller's favorites. Returns HTTP 204 No Content (idempotent).
+  * Pydantic schemas in `backend/app/schemas/favorite.py`:
+    * `FavoriteStatusResponse` with `shop_id`, `is_favorite`, and `favorited_at`.
+* **Mobile Client Service & State Management**:
+  * Implemented `mobile/src/services/favoriteService.ts`:
+    * `fetchFavoriteStatus(shopId, authToken)`: Queries backend favorite status.
+    * `addFavorite(shopId, authToken)`: Posts favorite mutation.
+    * `removeFavorite(shopId, authToken)`: Deletes favorite mutation.
+  * Integrated interactive favorite toggle in `mobile/src/components/ShopDetailCard.tsx`:
+    * Header heart icon toggle with distinct normal (`styles.favoriteButton`), active favorited (`styles.favoriteButtonActive`), and disabled (`styles.favoriteButtonDisabled`) styling.
+    * Discrete tri-state model: `isFavorite: boolean | null` distinguishing confirmed favorited (`true`), confirmed non-favorited (`false`), and unknown/loading/error (`null`).
+    * Guarded mutation: button is disabled when `isFavorite === null || isLoadingFavorite || isMutatingFavorite`, preventing premature mutations while status is in-flight or unknown.
+    * Immediate optimistic UI toggle with automatic rollback on network/server failure.
+    * Actionable error banner: when status loading fails, displays error banner with localized **Retry** button calling `loadFavorite()`, allowing recovery without restarting or navigating away.
+    * Unauthenticated handling: displays informative prompt (*"Please sign in to favorite this coffee shop."*) without executing network mutations.
+    * Monotonic sequence counters (`currentFavoriteRequestId`, `currentFavoriteMutationId`) preventing out-of-order stale responses or mutations across rapid shop switching or session changes.
 * **Automated Verification**:
-  * Backend regression suite: **270 tests passing** in 2.0s (`PYTHONPATH=backend python -m unittest discover -s backend/tests -t backend`).
-  * Mobile test suite: **86 tests passing** in 365ms (`npm test --prefix mobile`).
-  * Mobile TypeScript verification: **0 errors** (`npx tsc --noEmit`).
-  * Explicit regression tests for compound descriptors (`not fresh, stale`, `no milk, burnt`), positive negated phrases (`never stale`, `not bland at all`, `without being burnt`), header-based auth, model generation configs, and per-item filtering.
+  * Backend test suite: **291 passing tests** (`PYTHONPATH=backend python -m unittest discover -s backend/tests -t backend`).
+  * Focused backend favorite tests: **21 tests** covering status retrieval, addition, deletion, idempotency, unapproved shop rejection, database error propagation, and cross-user isolation.
+  * Mobile test suite: **109 passing tests** (`npm test --prefix mobile`).
+  * Focused mobile favorite tests: **27 tests** across `favoriteState.test.mjs` (13 tests) and `favoriteService.test.mjs` (14 tests), verifying actionable status after load, disabled control on failed load, retry recovery, optimistic rollback, unauthenticated notices, and monotonic race protection.
+  * TypeScript verification: **0 errors** (`npx tsc --noEmit`).
 * **Pull Request**:
-  * Pull Request #34 was reviewed by CodeRabbit, actionable findings were resolved iteratively (per-item validation, phrase-aware negative context heuristic, model-specific generation configs, header auth, semantic mobile states, and bounded negator scanning), approved, and merged into `main` by the Product Owner (merge commit `aa8d4992`).
+  * Pull Request #36 reviewed by CodeRabbit, actionable findings resolved iteratively (fail-closed curation database error propagation, mutation loading locks, discrete unknown state modeling, and error banner retry actions), approved, and merged into `main` by the Product Owner (merge commit `a530265d`).
 
 ---
 
@@ -123,7 +116,8 @@ The next feature cycle should begin only after the current state is synchronized
 | AI-Assisted Engineering Workflow                             | ✅ Complete |
 | Issue #31 — AI-Generated Review Summaries                    | ✅ Complete |
 | Issue #33 — AI-Generated "Must Try" Recommendations          | ✅ Complete |
-| Favorite Coffee Shops                                        | ⏳ Planned  |
+| Issue #35 — Favorite Coffee Shops                            | ✅ Complete |
+| User Favorites List / Profile Discovery                      | ⏳ Planned  |
 
 ---
 
@@ -140,6 +134,14 @@ The React Native (Expo) mobile application currently provides:
   * Fail-safe sign-out ensuring local credentials are unconditionally deleted regardless of backend network availability.
   * Monotonic operation generation guards (`operationGenerationRef`) protecting the authentication provider against asynchronous race conditions across concurrent logins, retries, and logouts.
   * Automatic Bearer token propagation across nearby coffee shop searches, review operations, and AI summary requests.
+* **Favorite Coffee Shops**:
+  * Interactive favorite heart button integrated directly into the `ShopDetailCard` header.
+  * Discrete tri-state favorite modeling (`boolean | null`) separating confirmed favorited (`true`), confirmed non-favorited (`false`), and unconfirmed/loading/error (`null`).
+  * Control disablement during unconfirmed, loading, or mutating states (`opacity: 0.5`) with accessible labeling (`Favorite status unavailable`).
+  * Immediate optimistic UI toggle with automatic rollback on network or server error.
+  * In-banner retry action enabling immediate recovery upon status load failure without requiring the user to leave or re-select the shop.
+  * Unauthenticated guest handling providing an inline sign-in prompt without triggering network mutation requests.
+  * Monotonic request and mutation sequence counters (`currentFavoriteRequestId`, `currentFavoriteMutationId`) preventing race conditions and stale responses across rapid shop selection changes.
 * **AI-Generated Review Summaries**:
   * Non-blocking AI review summary card within `ShopDetailCard`.
   * Asynchronous background fetching initiated after shop selection, leaving the rest of the detail card responsive.
@@ -185,12 +187,12 @@ The React Native (Expo) mobile application currently provides:
   * Review deletion flow with confirmation dialog and error handling.
   * Full optimistic UI updates and localized error banner display with retry capabilities.
 * **Stale Async & Mutation Race Protection**:
-  * Monotonic request counters (`currentRequestId`, `currentSummaryRequestId`, `currentRecommendationsRequestId`) and mutation counter (`currentMutationId`) in `ShopDetailCard` ensuring late-arriving responses or mutations from previously selected shops or previous auth sessions are discarded.
-  * Component lifecycle keying in `NearbyShopsSheet` (`${selectedShop.id}:${authToken || 'anon'}`) ensuring complete reset of review form, submission, deletion, summary, and recommendation states on shop selection change.
+  * Monotonic request counters (`currentRequestId`, `currentSummaryRequestId`, `currentRecommendationsRequestId`, `currentFavoriteRequestId`) and mutation counters (`currentMutationId`, `currentFavoriteMutationId`) in `ShopDetailCard` ensuring late-arriving responses or mutations from previously selected shops or previous auth sessions are discarded.
+  * Component lifecycle keying in `NearbyShopsSheet` (`${selectedShop.id}:${authToken || 'anon'}`) ensuring complete reset of review form, submission, deletion, summary, recommendation, and favorite states on shop selection change.
 * Non-blocking review loading and retry behavior.
 * Zero external UI dependencies, maintaining scope discipline and clean architecture.
 
-Favorite coffee shops and background location tracking remain outside the current implementation scope.
+Background location tracking remains outside the current implementation scope.
 
 ---
 
@@ -204,6 +206,7 @@ The FastAPI backend currently provides:
 * Database schema migrations located in `supabase/migrations/`:
   * `20260811000000_initial_schema.sql`: Core tables, PostGIS extensions, shops, and nearby search RPC.
   * `20260919000000_user_reviews.sql`: First-party user reviews schema, constraints, RLS policies, table privilege hardening, and secure write RPCs.
+  * `20260930000000_favorite_coffee_shops.sql`: Favorites schema, unique constraints, RLS policies, table privilege hardening, and secure `create_user_favorite` RPC.
 * User registration (`POST /api/v1/auth/register`) with email and password.
 * User authentication (`POST /api/v1/auth/login`) returning JWT session tokens.
 * Non-admin token-scoped user logout (`POST /api/v1/auth/logout`).
@@ -211,6 +214,12 @@ The FastAPI backend currently provides:
 * Authenticated coffee shop management via REST API (`POST`, `GET`, `PATCH`, `DELETE` at `/api/v1/shops`).
 * Authenticated nearby coffee shop discovery via `GET /api/v1/shops/nearby`.
 * Independent business eligibility and curation layer (`APPROVED`, `EXCLUDED`, `PENDING_REVIEW`) with fail-closed rules and audit trail.
+* **Favorite Coffee Shops Management & Endpoints**:
+  * `GET /api/v1/shops/{shop_id}/favorite`: Checks caller's favorite status for an approved coffee shop; returns `FavoriteStatusResponse(shop_id, is_favorite, favorited_at)`. Returns `404 Not Found` if the shop does not exist or is not `APPROVED`.
+  * `POST /api/v1/shops/{shop_id}/favorite`: Adds the shop to caller's favorites via PostgreSQL RPC `create_user_favorite`. Returns `201 Created` on new favorite or `200 OK` if already favorited (idempotent). Fails closed with `404 Not Found` if shop is not `APPROVED`.
+  * `DELETE /api/v1/shops/{shop_id}/favorite`: Idempotently removes shop from caller's favorites (`204 No Content`).
+  * Scoped authenticated Supabase client propagation carrying caller's JWT for RLS and RPC execution.
+  * Fail-closed curation validation in `FavoriteService`: defaults missing curation records to `PENDING_REVIEW` and surfaces Supabase `APIError` and unexpected exceptions as HTTP 500 without masking database infrastructure failures.
 * **Unified Review Layer & Endpoints**:
   * `GET /api/v1/shops/{shop_id}/reviews`: Returns normalized unified reviews (LOKAL first-party reviews first, followed by external reviews) with separate LOKAL and external rating metrics. Returns `404 Not Found` if the shop is `PENDING_REVIEW` or `EXCLUDED`.
   * `POST /api/v1/shops/{shop_id}/reviews`: Submits a first-party review for an approved shop, enforcing the 1-review-per-user constraint, 1–5 rating range, and max 1000 characters content.
@@ -237,12 +246,12 @@ The FastAPI backend currently provides:
   * `InMemoryRecommendationCache` (1-hour TTL, 500 capacity) with thread-safe per-shop generation tracking preventing stale cache repopulation.
   * Automatic cache invalidation and generation advancement on first-party review creation, editing, and deletion.
 * **Database Write Privilege Protection & Secure RPCs**:
-  * Direct PostgREST `INSERT` and `UPDATE` on `reviews` revoked; writes routed through PostgreSQL `SECURITY DEFINER` RPCs (`create_user_review`, `update_user_review`) with `auth.uid()` derivation and revoked `PUBLIC` execution privileges.
+  * Direct PostgREST `INSERT` and `UPDATE` on `reviews` and `favorites` revoked; writes routed through PostgreSQL `SECURITY DEFINER` RPCs (`create_user_review`, `update_user_review`, `create_user_favorite`) with `auth.uid()` derivation and revoked `PUBLIC` execution privileges.
   * Immutable author name snapshotting from user metadata with fallback to `'LOKAL User'`. Never exposes user emails or internal UUIDs in review responses.
-  * Strict `source = 'lokal'` filtering across application lookups, updates, and deletes.
+  * Strict `source = 'lokal'` filtering across application review lookups, updates, and deletes.
 * Google Places API (New) integration for transient external review retrieval with provider attribution and source links. No caching or persistence of Google review content.
 * Robust error handling distinguishing client input errors (`400`/`422`), missing records (`404`), unique constraint conflicts (`409`), external provider failures (`502`), service unavailability (`503`), and sanitized generic server failures (`500`).
-* Automated backend regression testing with **270 passing tests**, covering auth, shops, curation, nearby discovery, external reviews, first-party user reviews, AI review summaries, and AI must-try recommendations.
+* Automated backend regression testing with **291 passing tests**, covering auth, shops, curation, nearby discovery, external reviews, first-party user reviews, AI review summaries, AI must-try recommendations, and favorite coffee shops.
 
 ---
 
@@ -254,22 +263,34 @@ The database is managed through PostgreSQL in Supabase with Row Level Security (
   * `shops`: Core coffee shop details (name, address, coordinates, Google Place ID, etc.).
   * `shop_curation`: Business eligibility status (`APPROVED`, `EXCLUDED`, `PENDING_REVIEW`), observed location counts, evidence metadata, and audit logs.
   * `reviews`: Stores first-party LOKAL user reviews and historical/external review metadata.
+  * `favorites`: Stores authenticated user favorite coffee shops with uniqueness constraints and foreign key cascade deletions.
 * **Review Schema & Integrity**:
   * `user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE`
   * `author_name TEXT NOT NULL DEFAULT 'LOKAL User'`
   * `source TEXT NOT NULL DEFAULT 'lokal'`
   * `uq_reviews_user_shop UNIQUE (user_id, shop_id)`: Enforces single review per user per coffee shop.
   * Indexes: `idx_reviews_shop_id` and `idx_reviews_user_id`.
+* **Favorite Schema & Integrity**:
+  * `user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE`
+  * `shop_id UUID NOT NULL REFERENCES shops(id) ON DELETE CASCADE`
+  * `created_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now())`
+  * `uq_favorites_user_shop UNIQUE (user_id, shop_id)`: Enforces single favorite record per user per coffee shop.
+  * Indexes: `idx_favorites_user_shop ON favorites (user_id, shop_id)`.
 * **Table Access Privileges**:
-  * Direct `INSERT` and `UPDATE` on `reviews` are revoked from `authenticated`, `anon`, and `public`.
+  * Direct `INSERT` and `UPDATE` on `reviews` and `favorites` are revoked from `authenticated`, `anon`, and `public`.
   * `SELECT` and `DELETE` are granted to `authenticated`.
 * **Controlled Security Definer RPCs**:
   * `create_user_review(p_shop_id, p_rating, p_content)`: Validates rating (1–5), verifies shop existence and `APPROVED` curation status, enforces uniqueness, resolves author display name snapshot from user profile metadata, and inserts review with server timestamps.
   * `update_user_review(p_shop_id, p_rating, p_content, p_update_content)`: Enforces field presence, validates rating, verifies shop is `APPROVED`, enforces caller ownership and `source = 'lokal'`, preserves server-managed fields, and updates `rating`, `content`, and `updated_at`.
+  * `create_user_favorite(p_shop_id)`: Validates caller authentication (`auth.uid() IS NOT NULL`), verifies target shop existence and `APPROVED` curation status in `shop_curation`, inserts favorite record with server-derived `auth.uid()`, and handles duplicate conflicts idempotently.
   * Stored procedure execution privileges are revoked from `PUBLIC` and granted strictly to `authenticated`.
 * **Row Level Security (RLS) Policies**:
-  * `SELECT`: Authenticated users can select reviews for coffee shops with `shop_curation.status = 'APPROVED'` or their own reviews (`auth.uid() = user_id`).
-  * `DELETE`: Authenticated users can delete only their own reviews (`auth.uid() = user_id`).
+  * `reviews`:
+    * `SELECT`: Authenticated users can select reviews for coffee shops with `shop_curation.status = 'APPROVED'` or their own reviews (`auth.uid() = user_id`).
+    * `DELETE`: Authenticated users can delete only their own reviews (`auth.uid() = user_id`).
+  * `favorites`:
+    * `SELECT`: Authenticated users can select only their own favorites (`auth.uid() = user_id`).
+    * `DELETE`: Authenticated users can delete only their own favorites (`auth.uid() = user_id`).
   * Service role maintains administrative access for maintenance tasks.
 
 ---
@@ -301,19 +322,19 @@ The review domain merges first-party LOKAL reviews and external reviews into a u
 
 The AI layer ingests sanitized reviews from the unified review domain to generate structured review summaries (`ReviewSummaryService`) and AI-grounded "Must Try" menu recommendations (`ReviewRecommendationService`), using `GeminiReviewSummarizer` and `GeminiReviewRecommender` via HTTP requests to Google Gemini API. Summaries and recommendations are cached in-memory with a 1-hour TTL and generation-guarded invalidation, without creating persistent summary or recommendation database tables.
 
-Independent-business eligibility and curation are maintained as a separate domain concern, ensuring review and AI operations respect public discovery eligibility rules (`APPROVED` required).
+Independent-business eligibility and curation are maintained as a separate domain concern, ensuring review, AI, and favorite operations respect public discovery eligibility rules (`APPROVED` required).
 
 ---
 
 # Next Task
 
-The next feature should be defined through the next GitHub Issue after reviewing the completed AI review summaries and recommendations architecture and current application state.
+The next feature should be defined through the next GitHub Issue after reviewing the completed favorite coffee shops architecture and current application state.
 
-With user authentication, unified reviews, AI review summarization, and AI must-try recommendations active, the logical next capability is **Favorite Coffee Shops** (saving, viewing, and managing favorite independent coffee shops for authenticated users) or another feature prioritized by the Product Owner.
+With user authentication, unified reviews, AI review summarization, AI must-try recommendations, and coffee shop favoriting active, the logical next capabilities include **User Favorites List / Profile Discovery** (viewing and navigating through the user's saved favorite coffee shops), **Advanced Search and Filtering** (filtering by rating, distance, or favorites), or another feature prioritized by the Product Owner.
 
 Before implementation:
 
-1. Review the current database schema, curation layer, review service, AI services, and mobile cards.
+1. Review the current database schema, curation layer, review service, favorites service, AI services, and mobile components.
 2. Define the product requirement and observable acceptance criteria for the next capability.
 3. Review dependencies, latency implications, and data modeling trade-offs.
 4. Create and approve the next GitHub Issue.
@@ -325,7 +346,7 @@ Before implementation:
 
 **None.**
 
-The unified review domain, AI review summarization, and AI-generated "Must Try" recommendations are operational. External reviews remain transient and compliant with provider policies, while first-party reviews are securely persisted in Supabase. In-memory caching with generation versioning is active for both summaries and recommendations. Mobile user authentication, review mutations, non-blocking summary cards, and non-blocking recommendations cards are operational and fully tested.
+The unified review domain, AI review summarization, AI-generated "Must Try" recommendations, and coffee shop favoriting are operational. External reviews remain transient and compliant with provider policies, while first-party reviews and user favorites are securely persisted in Supabase with RLS and security-definer RPC protection. In-memory caching with generation versioning is active for both summaries and recommendations. Mobile user authentication, review mutations, non-blocking summary cards, non-blocking recommendations cards, and interactive favorite toggles are operational and fully tested.
 
 ---
 
@@ -333,6 +354,10 @@ The unified review domain, AI review summarization, and AI-generated "Must Try" 
 
 The recent development cycles established the following engineering practices:
 
+* **Discrete Unknown State in Toggle Controls**: Boolean toggle buttons (`isFavorite`) must not default to `false` when initial status retrieval is asynchronous. Using `null` to represent unconfirmed status ensures controls remain disabled during initial load or network failures, preventing erroneous mutation requests from executing against unverified states.
+* **In-Banner Retry Recovery for Disabled Controls**: When a component disables an interactive control because its initial state could not be loaded, the associated error presentation must offer an actionable retry mechanism so users are not stranded in a permanently disabled state without navigating away.
+* **Fail-Closed Curation Checking on Secondary Operations**: Auxiliary features (such as favorites or reviews) that depend on parent entity curation status must fail closed on missing curation records or database communication failures (`APIError`), treating unknown states as unapproved or error conditions rather than allowing unauthorized mutations.
+* **Atomic Database-Level Favoriting with RPCs**: Routing favorite creation through a PostgreSQL `SECURITY DEFINER` RPC enforces curation requirements and uniqueness atomically at the database layer while automatically binding `auth.uid()`, preventing race conditions and bypassing client manipulation.
 * **Per-Item Grounding Validation**: LLM-generated recommendations must be grounded strictly against the source reviews. Validating supporting review index, rating threshold ($\ge 4.0$), verbatim evidence substring presence, item token presence in evidence, and negative-context heuristic checks on an individual item basis ensures hallucinations or ungrounded claims are dropped without failing the entire response.
 * **Phrase-Aware Bounded Negator Scanning**: When evaluating candidate evidence for negative context (e.g. `avoid`, `skip`, `burnt`), scanning backward for negators must be bounded to immediate preceding tokens or permitted connector phrases (e.g. `at all`, `being`, `to be`). Scanning unbounded windows or ignoring punctuation resets risks falsely treating a negator for an earlier clause (e.g. `not fresh, stale` or `no milk, burnt`) as negating the target descriptor.
 * **Model-Specific Reasoning Budget Configuration**: Different Gemini models handle `thinkingConfig` differently; while `gemini-2.5-flash` requires `thinkingBudget: 0` to prevent reasoning token starvation of output tokens, other models (such as `gemini-2.5-pro`) may require a positive budget (e.g. `1024`) or omit the field. Provider implementations should adapt the request payload dynamically based on the configured model name.
@@ -399,4 +424,4 @@ After implementation:
 
 ---
 
-**Last Updated:** Phase 2 — Core Application Features (after completion of GitHub Issue #33 and merge of PR #34)
+**Last Updated:** Phase 2 — Core Application Features (after completion of GitHub Issue #35 and merge of PR #36)
