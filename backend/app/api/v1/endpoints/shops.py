@@ -5,7 +5,12 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from postgrest.exceptions import APIError
 from supabase import Client
 
-from ...deps import get_authenticated_supabase, get_current_user, get_supabase
+from ...deps import (
+    get_authenticated_supabase,
+    get_current_user,
+    get_service_role_supabase,
+    require_curator,
+)
 from ....schemas import (
     MessageResponse,
     NearbyShopResponse,
@@ -28,11 +33,10 @@ router = APIRouter()
 )
 def create_shop(
     shop_in: ShopCreate,
-    _current_user: Annotated[UserResponse, Depends(get_current_user)],
-    supabase: Annotated[Client, Depends(get_authenticated_supabase)],
-    backend_supabase: Annotated[Client, Depends(get_supabase)],
+    _curator: Annotated[UserResponse, Depends(require_curator)],
+    supabase: Annotated[Client, Depends(get_service_role_supabase)],
 ) -> ShopResponse:
-    """Create a new coffee shop record in the database."""
+    """Create a new coffee shop record in the database (Curator only)."""
     payload = shop_in.model_dump(exclude_unset=True)
 
     try:
@@ -43,9 +47,9 @@ def create_shop(
                 detail="Failed to create coffee shop record.",
             )
         new_shop = result.data[0]
-        # Initialize curation status as PENDING_REVIEW via trusted backend client
+        # Initialize curation status as PENDING_REVIEW via trusted service-role client
         try:
-            curation_res = backend_supabase.table("shop_curation").insert({
+            curation_res = supabase.table("shop_curation").insert({
                 "shop_id": new_shop["id"],
                 "status": "PENDING_REVIEW",
                 "confidence": "LOW",
@@ -227,10 +231,10 @@ def get_shop(
 def update_shop(
     shop_id: UUID,
     shop_in: ShopUpdate,
-    _current_user: Annotated[UserResponse, Depends(get_current_user)],
-    supabase: Annotated[Client, Depends(get_authenticated_supabase)],
+    _curator: Annotated[UserResponse, Depends(require_curator)],
+    supabase: Annotated[Client, Depends(get_service_role_supabase)],
 ) -> ShopResponse:
-    """Update fields of an existing coffee shop record."""
+    """Update fields of an existing coffee shop record (Curator only)."""
     update_data = shop_in.model_dump(exclude_unset=True)
     if not update_data:
         raise HTTPException(
@@ -280,10 +284,10 @@ def update_shop(
 )
 def delete_shop(
     shop_id: UUID,
-    _current_user: Annotated[UserResponse, Depends(get_current_user)],
-    supabase: Annotated[Client, Depends(get_authenticated_supabase)],
+    _curator: Annotated[UserResponse, Depends(require_curator)],
+    supabase: Annotated[Client, Depends(get_service_role_supabase)],
 ) -> MessageResponse:
-    """Delete an existing coffee shop record by ID."""
+    """Delete an existing coffee shop record by ID (Curator only)."""
     try:
         result = supabase.table("shops").delete().eq("id", str(shop_id)).execute()
         if not result.data:

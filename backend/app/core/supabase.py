@@ -34,6 +34,39 @@ def get_supabase_client() -> Client:
     return _supabase_client
 
 
+_service_role_supabase_client: Client | None = None
+
+
+def get_service_role_supabase_client() -> Client:
+    """Initialize and return a reusable Supabase client authenticated strictly with SUPABASE_SERVICE_ROLE_KEY.
+
+    Fails closed if SUPABASE_SERVICE_ROLE_KEY is missing. Never falls back to the anon key.
+
+    Raises:
+        ValueError: If SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY is not configured,
+                    or if SUPABASE_URL does not begin with https://.
+    """
+    global _service_role_supabase_client
+
+    if _service_role_supabase_client is not None:
+        return _service_role_supabase_client
+
+    if not settings.SUPABASE_URL or not settings.SUPABASE_SERVICE_ROLE_KEY:
+        raise ValueError(
+            "SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY must be configured for privileged operations."
+        )
+
+    if not settings.SUPABASE_URL.lower().startswith("https://"):
+        raise ValueError(
+            "SUPABASE_URL must begin with https:// to ensure secure communication."
+        )
+
+    _service_role_supabase_client = create_client(
+        settings.SUPABASE_URL, settings.SUPABASE_SERVICE_ROLE_KEY
+    )
+    return _service_role_supabase_client
+
+
 def create_scoped_supabase_client(token: str) -> Client:
     """Create a new request-scoped Supabase client instance authenticated with the caller's bearer JWT.
 

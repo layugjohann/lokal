@@ -4,7 +4,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Query, status
 from supabase import Client
 
-from ...deps import get_current_user, get_supabase, require_curator
+from ...deps import get_service_role_supabase, require_curator
 from ....schemas import (
     CurationEvaluationResponse,
     CurationOverrideRequest,
@@ -23,14 +23,14 @@ curation_service = CurationService()
     "/{shop_id}/curation",
     response_model=ShopCurationResponse,
     status_code=status.HTTP_200_OK,
-    summary="Get coffee shop curation status",
+    summary="Get coffee shop curation status (Curator only)",
 )
 def get_shop_curation(
     shop_id: UUID,
-    _current_user: Annotated[UserResponse, Depends(get_current_user)],
-    supabase: Annotated[Client, Depends(get_supabase)],
+    _curator: Annotated[UserResponse, Depends(require_curator)],
+    supabase: Annotated[Client, Depends(get_service_role_supabase)],
 ) -> ShopCurationResponse:
-    """Retrieve the current curation and eligibility record for a coffee shop."""
+    """Retrieve the current curation and eligibility record for a coffee shop (Curator only)."""
     return curation_service.get_curation(shop_id=shop_id, supabase=supabase)
 
 
@@ -38,17 +38,15 @@ def get_shop_curation(
     "/{shop_id}/curation/evaluate",
     response_model=CurationEvaluationResponse,
     status_code=status.HTTP_200_OK,
-    summary="Trigger automated eligibility evaluation for a shop",
+    summary="Trigger automated eligibility evaluation for a shop (Curator only)",
 )
 async def evaluate_shop_curation(
     shop_id: UUID,
-    current_user: Annotated[UserResponse, Depends(get_current_user)],
-    supabase: Annotated[Client, Depends(get_supabase)],
+    _curator: Annotated[UserResponse, Depends(require_curator)],
+    supabase: Annotated[Client, Depends(get_service_role_supabase)],
     force: bool = Query(default=False, description="Re-evaluate even if manual override is active"),
 ) -> CurationEvaluationResponse:
-    """Run automated location-count evidence collection and update eligibility status."""
-    if force:
-        require_curator(current_user)
+    """Run automated location-count evidence collection and update eligibility status (Curator only)."""
     return await curation_service.evaluate_shop(shop_id=shop_id, supabase=supabase, force=force)
 
 
@@ -62,7 +60,7 @@ def override_shop_curation(
     shop_id: UUID,
     override_in: CurationOverrideRequest,
     curator: Annotated[UserResponse, Depends(require_curator)],
-    supabase: Annotated[Client, Depends(get_supabase)],
+    supabase: Annotated[Client, Depends(get_service_role_supabase)],
 ) -> ShopCurationResponse:
     """Apply an authorized manual override to approve or exclude a shop, logging an audit trail."""
     curator_uuid = UUID(curator.id)
