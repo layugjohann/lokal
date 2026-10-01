@@ -2,6 +2,9 @@ import type { FavoriteShop, FavoriteStatusResponse } from '../types/favorite';
 
 const DEFAULT_API_BASE_URL = 'http://localhost:8000';
 
+/**
+ * Resolves the base URL for the backend API, checking environment override first.
+ */
 export function getApiBaseUrl(): string {
   if (process.env.EXPO_PUBLIC_API_URL) {
     return process.env.EXPO_PUBLIC_API_URL;
@@ -9,6 +12,9 @@ export function getApiBaseUrl(): string {
   return DEFAULT_API_BASE_URL;
 }
 
+/**
+ * Constructs standard authorized request headers with Bearer token.
+ */
 function getAuthHeaders(authToken: string): Record<string, string> {
   if (!authToken || !authToken.trim()) {
     throw new Error('Authentication token is required.');

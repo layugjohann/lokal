@@ -16,15 +16,18 @@ export type FavoritesListener = (state: FavoritesState) => void;
  */
 export class FavoritesController {
   private requestId = 0;
+  private currentPrincipal: string | null;
   private state: FavoritesState;
   private listeners = new Set<FavoritesListener>();
   private fetchFn: (token: string) => Promise<FavoriteShop[]>;
 
   constructor(
     fetchFn: (token: string) => Promise<FavoriteShop[]> = fetchUserFavorites,
-    initialFavorites: FavoriteShop[] = []
+    initialFavorites: FavoriteShop[] = [],
+    initialPrincipal: string | null = null
   ) {
     this.fetchFn = fetchFn;
+    this.currentPrincipal = initialPrincipal;
     this.state = {
       favorites: initialFavorites,
       isLoading: false,
@@ -32,10 +35,16 @@ export class FavoritesController {
     };
   }
 
+  /**
+   * Returns the current immutable snapshot of favorites state.
+   */
   getState(): FavoritesState {
     return this.state;
   }
 
+  /**
+   * Subscribes a listener to favorites state updates and returns an unsubscribe cleanup function.
+   */
   subscribe(listener: FavoritesListener): () => void {
     this.listeners.add(listener);
     return () => {
@@ -48,14 +57,27 @@ export class FavoritesController {
     this.listeners.forEach((listener) => listener(nextState));
   }
 
+  /**
+   * Invalidates any active in-flight requests by bumping the monotonic request ID.
+   */
   cancel(): void {
     this.requestId += 1;
   }
 
-  async load(authToken?: string | null): Promise<void> {
-    const trimmed = authToken?.trim();
-    if (!trimmed) {
+  /**
+   * Authoritatively loads favorites for the given token and principal.
+   * Clears cached favorites immediately if the authenticated principal has changed.
+   */
+  async load(
+    authToken?: string | null,
+    principalId?: string | null
+  ): Promise<void> {
+    const trimmed = authToken?.trim() || null;
+    const effectivePrincipal = principalId !== undefined ? principalId : trimmed;
+
+    if (!trimmed || !effectivePrincipal) {
       this.requestId += 1;
+      this.currentPrincipal = null;
       this.setState({
         favorites: [],
         isLoading: false,
@@ -65,8 +87,11 @@ export class FavoritesController {
     }
 
     const currentId = ++this.requestId;
+    const isNewPrincipal = effectivePrincipal !== this.currentPrincipal;
+    this.currentPrincipal = effectivePrincipal;
+
     this.setState({
-      ...this.state,
+      favorites: isNewPrincipal ? [] : this.state.favorites,
       isLoading: true,
       errorMessage: null,
     });
@@ -88,13 +113,16 @@ export class FavoritesController {
       const message =
         err instanceof Error ? err.message : 'Unable to load favorite coffee shops.';
       this.setState({
-        ...this.state,
+        favorites: isNewPrincipal ? [] : this.state.favorites,
         isLoading: false,
         errorMessage: message,
       });
     }
   }
 
+  /**
+   * Optimistically removes a coffee shop from current favorites without waiting for network.
+   */
   removeOptimistic(shopId: string): void {
     this.setState({
       ...this.state,
@@ -111,7 +139,14 @@ export interface UseFavoritesResult {
   removeFavoriteOptimistic: (shopId: string) => void;
 }
 
-export function useFavorites(authToken?: string | null): UseFavoritesResult {
+/**
+ * Custom React hook managing the authenticated user's favorites list,
+ * providing monotonic request sequencing, optimistic removal, and state isolation.
+ */
+export function useFavorites(
+  authToken?: string | null,
+  principalId?: string | null
+): UseFavoritesResult {
   const controllerRef = useRef<FavoritesController | null>(null);
   if (!controllerRef.current) {
     controllerRef.current = new FavoritesController();
@@ -130,15 +165,15 @@ export function useFavorites(authToken?: string | null): UseFavoritesResult {
   }, [controller]);
 
   useEffect(() => {
-    controller.load(authToken);
+    controller.load(authToken, principalId);
     return () => {
       controller.cancel();
     };
-  }, [controller, authToken]);
+  }, [controller, authToken, principalId]);
 
   const refetch = useCallback(async () => {
-    await controller.load(authToken);
-  }, [controller, authToken]);
+    await controller.load(authToken, principalId);
+  }, [controller, authToken, principalId]);
 
   const removeFavoriteOptimistic = useCallback(
     (shopId: string) => {

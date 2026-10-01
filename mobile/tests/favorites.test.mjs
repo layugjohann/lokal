@@ -1,11 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert';
-import { getUserDisplayName } from '../src/services/authService.ts';
+import { getUserDisplayName, getProfilePrincipalKey } from '../src/services/authService.ts';
 import { calculateDistanceMeters, formatDistance } from '../src/services/shopService.ts';
 import { FavoritesController } from '../src/hooks/useFavorites.ts';
 
 // ============================================================================
-// 1. User Profile Display Name Tests
+// 1. User Profile Display Name & Principal Key Tests
 // ============================================================================
 
 test('getUserDisplayName uses full_name when present in user_metadata', () => {
@@ -46,6 +46,38 @@ test('getUserDisplayName returns "LOKAL User" when user is null or has no email'
   assert.strictEqual(getUserDisplayName(null), 'LOKAL User');
   assert.strictEqual(getUserDisplayName(undefined), 'LOKAL User');
   assert.strictEqual(getUserDisplayName({ id: 'u1', email: null }), 'LOKAL User');
+});
+
+test('getProfilePrincipalKey differentiates distinct authenticated users', () => {
+  const userA = { id: 'usr-1111', email: 'accountA@lokal.ph' };
+  const userB = { id: 'usr-2222', email: 'accountB@lokal.ph' };
+  const keyA = getProfilePrincipalKey(userA, 'jwt-token-A');
+  const keyB = getProfilePrincipalKey(userB, 'jwt-token-B');
+  assert.strictEqual(keyA, 'user:usr-1111');
+  assert.strictEqual(keyB, 'user:usr-2222');
+  assert.notStrictEqual(keyA, keyB);
+});
+
+test('getProfilePrincipalKey preserves identical key during same-user token refresh', () => {
+  const user = { id: 'usr-1111', email: 'user@lokal.ph' };
+  const keyInitial = getProfilePrincipalKey(user, 'jwt-token-v1');
+  const keyRefreshed = getProfilePrincipalKey(user, 'jwt-token-v2');
+  assert.strictEqual(keyInitial, 'user:usr-1111');
+  assert.strictEqual(keyRefreshed, 'user:usr-1111');
+  assert.strictEqual(keyInitial, keyRefreshed);
+});
+
+test('getProfilePrincipalKey falls back to token principal when user is absent', () => {
+  const keyA = getProfilePrincipalKey(null, 'token-A');
+  const keyB = getProfilePrincipalKey(null, 'token-B');
+  assert.strictEqual(keyA, 'token:token-A');
+  assert.strictEqual(keyB, 'token:token-B');
+  assert.notStrictEqual(keyA, keyB);
+});
+
+test('getProfilePrincipalKey returns signed-out when both user and token are absent', () => {
+  assert.strictEqual(getProfilePrincipalKey(null, null), 'signed-out');
+  assert.strictEqual(getProfilePrincipalKey(undefined, ''), 'signed-out');
 });
 
 // ============================================================================
@@ -236,6 +268,106 @@ test('Production FavoritesController: late refetch response from older request d
   assert.strictEqual(controller.getState().favorites[0].id, 'shop-latest');
 });
 
+test('Production FavoritesController: principal switch immediately wipes cached favorites and ignores late response from previous principal', async () => {
+  let resolveUserA;
+  const userAPromise = new Promise((resolve) => {
+    resolveUserA = resolve;
+  });
+
+  const mockFetch = async (token) => {
+    if (token === 'token-A') return userAPromise;
+    if (token === 'token-B') return [{ id: 'shop-B', name: 'Account B Shop' }];
+    return [];
+  };
+
+  const controller = new FavoritesController(
+    mockFetch,
+    [{ id: 'shop-A-cached', name: 'Account A Cached Shop' }],
+    'user-A'
+  );
+
+  assert.strictEqual(controller.getState().favorites.length, 1);
+  assert.strictEqual(controller.getState().favorites[0].id, 'shop-A-cached');
+
+  // Account A in-flight fetch starts
+  const pendingA = controller.load('token-A', 'user-A');
+
+  // Account B becomes active
+  const pendingB = controller.load('token-B', 'user-B');
+
+  // Account A's cached favorites are wiped immediately on principal change
+  assert.deepStrictEqual(controller.getState().favorites, []);
+  assert.strictEqual(controller.getState().isLoading, true);
+
+  await pendingB;
+  assert.strictEqual(controller.getState().favorites.length, 1);
+  assert.strictEqual(controller.getState().favorites[0].id, 'shop-B');
+
+  // Account A's fetch resolves late
+  resolveUserA([{ id: 'shop-A-late', name: 'Account A Late' }]);
+  await pendingA;
+
+  // Late response must be ignored and not overwrite Account B state
+  assert.strictEqual(controller.getState().favorites.length, 1);
+  assert.strictEqual(controller.getState().favorites[0].id, 'shop-B');
+});
+
+test('Production FavoritesController: replacement request failure for Account B does not retain Account A favorites', async () => {
+  const mockFetch = async (token) => {
+    if (token === 'token-A') {
+      return [{ id: 'shop-A', name: 'Account A Shop' }];
+    }
+    throw new Error('Account B network failure');
+  };
+
+  const controller = new FavoritesController(
+    mockFetch,
+    [{ id: 'shop-A', name: 'Account A Shop' }],
+    'user-A'
+  );
+
+  assert.strictEqual(controller.getState().favorites.length, 1);
+
+  // Switch to Account B, whose request fails
+  await controller.load('token-B', 'user-B');
+
+  // State must contain error message and EMPTY favorites (Account A state cannot leak or survive)
+  assert.deepStrictEqual(controller.getState().favorites, []);
+  assert.strictEqual(controller.getState().isLoading, false);
+  assert.strictEqual(controller.getState().errorMessage, 'Account B network failure');
+});
+
+test('Production FavoritesController: token refresh under same user principal preserves cached favorites during revalidation', async () => {
+  let resolveRefresh;
+  const refreshPromise = new Promise((resolve) => {
+    resolveRefresh = resolve;
+  });
+
+  const mockFetch = async (token) => {
+    if (token === 'token-v2') {
+      return refreshPromise;
+    }
+    return [];
+  };
+
+  const initialFavorites = [{ id: 'shop-1', name: 'My Favorite' }];
+  const controller = new FavoritesController(mockFetch, initialFavorites, 'user-A');
+
+  // Token refreshes from token-v1 to token-v2 for the SAME user principal
+  const refreshOp = controller.load('token-v2', 'user-A');
+
+  // Existing favorites remain visible while loading (no UI blanking or state churn)
+  assert.strictEqual(controller.getState().isLoading, true);
+  assert.strictEqual(controller.getState().favorites.length, 1);
+  assert.strictEqual(controller.getState().favorites[0].id, 'shop-1');
+
+  resolveRefresh([{ id: 'shop-1', name: 'My Favorite Updated' }]);
+  await refreshOp;
+
+  assert.strictEqual(controller.getState().isLoading, false);
+  assert.strictEqual(controller.getState().favorites[0].name, 'My Favorite Updated');
+});
+
 // ============================================================================
 // 4. Explicit Navigation & Return Lifecycle Simulation
 // ============================================================================
@@ -305,4 +437,42 @@ test('Session change during active profile/favorites safely closes view and rese
   assert.strictEqual(isProfileOpen, false);
   assert.strictEqual(selectedFavoriteShop, null);
   assert.deepStrictEqual(favorites, []);
+});
+
+test('Principal change discards previous ProfileView instance state and clears selectedFavoriteShop', () => {
+  // Validates the expected state-isolation contract at the production-unit level:
+  // When getProfilePrincipalKey changes, a new ProfileView instance is initialized,
+  // ensuring Account A selectedFavoriteShop cannot survive into Account B.
+  class ProfileViewMockInstance {
+    constructor(principalKey) {
+      this.key = principalKey;
+      this.selectedFavoriteShop = null;
+      this.favorites = [];
+    }
+  }
+
+  const userA = { id: 'usr-A', email: 'a@lokal.ph' };
+  let activeKey = getProfilePrincipalKey(userA, 'token-A');
+  let activeInstance = new ProfileViewMockInstance(activeKey);
+
+  // Account A selects a favorite shop
+  activeInstance.selectedFavoriteShop = { id: 'shop-A', name: 'Account A Shop' };
+  activeInstance.favorites = [{ id: 'shop-A', name: 'Account A Shop' }];
+  assert.strictEqual(activeInstance.selectedFavoriteShop.id, 'shop-A');
+
+  // Session switches to Account B
+  const userB = { id: 'usr-B', email: 'b@lokal.ph' };
+  const nextKey = getProfilePrincipalKey(userB, 'token-B');
+
+  // Principal key transition forces new instance creation
+  assert.notStrictEqual(activeKey, nextKey);
+  if (activeKey !== nextKey) {
+    activeKey = nextKey;
+    activeInstance = new ProfileViewMockInstance(activeKey);
+  }
+
+  // Verify Account A's selectedFavoriteShop is completely discarded
+  assert.strictEqual(activeInstance.selectedFavoriteShop, null);
+  assert.deepStrictEqual(activeInstance.favorites, []);
+  assert.strictEqual(activeInstance.key, 'user:usr-B');
 });

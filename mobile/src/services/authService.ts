@@ -240,3 +240,20 @@ export function getUserDisplayName(user?: AuthUser | null): string {
   return 'LOKAL User';
 }
 
+/**
+ * Resolves the stable principal key for ProfileView instance identity,
+ * ensuring account changes remount the view while token refreshes for the same user do not.
+ */
+export function getProfilePrincipalKey(
+  user?: AuthUser | null,
+  authToken?: string | null
+): string {
+  if (user?.id) {
+    return `user:${user.id}`;
+  }
+  if (authToken && authToken.trim()) {
+    return `token:${authToken.trim()}`;
+  }
+  return 'signed-out';
+}
+

@@ -12,6 +12,7 @@ import { useLocation } from '../hooks/useLocation';
 import { useNearbyShops } from '../hooks/useNearbyShops';
 import NearbyShopsSheet from './NearbyShopsSheet';
 import ProfileView from './ProfileView';
+import { getProfilePrincipalKey } from '../services/authService';
 import { formatDistance } from '../services/shopService';
 import { Shop } from '../types/shop';
 
@@ -167,6 +168,7 @@ export default function LokalMapView({ authToken }: LokalMapViewProps = {}) {
       )}
 
       <ProfileView
+        key={getProfilePrincipalKey(auth?.user, activeAuthToken)}
         visible={isProfileOpen && auth?.status === 'authenticated'}
         user={auth?.user ?? null}
         authToken={activeAuthToken}

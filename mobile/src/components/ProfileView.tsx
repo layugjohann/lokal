@@ -33,6 +33,10 @@ export interface ProfileViewProps {
   onLogout: () => void;
 }
 
+/**
+ * Modal view presenting the authenticated user's profile information,
+ * saved favorite coffee shops list, and seamless navigation to shop details.
+ */
 export default function ProfileView({
   user,
   authToken,
@@ -49,9 +53,12 @@ export default function ProfileView({
     errorMessage,
     refetch,
     removeFavoriteOptimistic,
-  } = useFavorites(visible && authToken ? authToken : null);
+  } = useFavorites(
+    visible && authToken ? authToken : null,
+    visible ? user?.id : null
+  );
 
-  // Reset selected shop when profile closes or auth token changes
+  // Reset selected shop when profile closes or auth token becomes unavailable
   useEffect(() => {
     if (!visible || !authToken) {
       setSelectedFavoriteShop(null);
