@@ -60,6 +60,28 @@ class MockQueryBuilder:
         self.mock_execute.return_value = mock_resp
         return self
 
+    def order(self, col, desc=False):
+        if self.mock_execute.return_value.data is not None:
+            reverse = bool(desc)
+            try:
+                self.mock_execute.return_value.data = sorted(
+                    self.mock_execute.return_value.data,
+                    key=lambda r: r.get(col, ""),
+                    reverse=reverse,
+                )
+            except Exception:
+                pass
+        return self
+
+    def in_(self, col, vals):
+        str_vals = {str(v) for v in vals}
+        if self.mock_execute.return_value.data is not None:
+            self.mock_execute.return_value.data = [
+                r for r in self.mock_execute.return_value.data
+                if isinstance(r, dict) and str(r.get(col)) in str_vals
+            ]
+        return self
+
     def execute(self):
         return self.mock_execute()
 
@@ -437,6 +459,245 @@ class TestFavoritesEndpoints(unittest.TestCase):
         )
         self.assertNotIn("user_id", self.mock_supabase.mock_rpc.call_args[0][1])
 
+    # =========================================================================
+    # User Favorites List Tests (Issue #39)
+    # =========================================================================
+
+    def test_list_favorites_success(self):
+        """Authenticated user retrieves their favorited approved coffee shops ordered by most recent."""
+        shop1_id = "11111111-1111-1111-1111-111111111111"
+        shop2_id = "22222222-2222-2222-2222-222222222222"
+
+        # User has two favorites, shop2 favorited more recently than shop1
+        self.mock_supabase.tables["favorites"] = MockQueryBuilder([
+            {
+                "id": "fav-1",
+                "shop_id": shop1_id,
+                "user_id": self.user1_id,
+                "created_at": "2026-09-30T10:00:00Z",
+            },
+            {
+                "id": "fav-2",
+                "shop_id": shop2_id,
+                "user_id": self.user1_id,
+                "created_at": "2026-10-01T12:00:00Z",
+            },
+        ])
+        self.mock_supabase.tables["shop_curation"] = MockQueryBuilder([
+            {"shop_id": shop1_id, "status": "APPROVED"},
+            {"shop_id": shop2_id, "status": "APPROVED"},
+        ])
+        self.mock_supabase.tables["shops"] = MockQueryBuilder([
+            {
+                "id": shop1_id,
+                "name": "First Coffee",
+                "address": "123 First St",
+                "latitude": 14.5995,
+                "longitude": 120.9842,
+                "rating": 4.5,
+                "google_place_id": "place-1",
+                "created_at": "2026-08-01T00:00:00Z",
+                "updated_at": "2026-08-01T00:00:00Z",
+            },
+            {
+                "id": shop2_id,
+                "name": "Second Coffee",
+                "address": "456 Second St",
+                "latitude": 14.6000,
+                "longitude": 120.9850,
+                "rating": 4.8,
+                "google_place_id": "place-2",
+                "created_at": "2026-08-02T00:00:00Z",
+                "updated_at": "2026-08-02T00:00:00Z",
+            },
+        ])
+
+        response = self.client.get(
+            "/api/v1/favorites",
+            headers={"Authorization": "Bearer user1-token"},
+        )
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertEqual(len(data), 2)
+        # Most recently favorited first (shop2 then shop1)
+        self.assertEqual(data[0]["id"], shop2_id)
+        self.assertEqual(data[0]["name"], "Second Coffee")
+        self.assertEqual(data[0]["rating"], 4.8)
+        self.assertEqual(data[0]["favorited_at"], "2026-10-01T12:00:00Z")
+
+        self.assertEqual(data[1]["id"], shop1_id)
+        self.assertEqual(data[1]["name"], "First Coffee")
+        self.assertEqual(data[1]["rating"], 4.5)
+        self.assertEqual(data[1]["favorited_at"], "2026-09-30T10:00:00Z")
+
+    def test_list_favorites_empty(self):
+        """Authenticated user with no favorites receives an empty list."""
+        self.mock_supabase.tables["favorites"] = MockQueryBuilder([])
+        response = self.client.get(
+            "/api/v1/favorites",
+            headers={"Authorization": "Bearer user1-token"},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), [])
+
+    def test_list_favorites_unauthorized(self):
+        """Unauthenticated request to list favorites returns 401 Unauthorized."""
+        app.dependency_overrides.clear()
+        response = self.client.get("/api/v1/favorites")
+        self.assertEqual(response.status_code, 401)
+
+    def test_list_favorites_user_ownership_isolation(self):
+        """Favorites query strictly isolates caller favorites from other users."""
+        shop1_id = "11111111-1111-1111-1111-111111111111"
+        shop2_id = "22222222-2222-2222-2222-222222222222"
+
+        # User 1 has shop1, User 2 has shop2
+        self.mock_supabase.tables["favorites"] = MockQueryBuilder([
+            {
+                "id": "fav-user1",
+                "shop_id": shop1_id,
+                "user_id": self.user1_id,
+                "created_at": "2026-09-30T10:00:00Z",
+            },
+            {
+                "id": "fav-user2",
+                "shop_id": shop2_id,
+                "user_id": self.user2_id,
+                "created_at": "2026-09-30T11:00:00Z",
+            },
+        ])
+        self.mock_supabase.tables["shop_curation"] = MockQueryBuilder([
+            {"shop_id": shop1_id, "status": "APPROVED"},
+            {"shop_id": shop2_id, "status": "APPROVED"},
+        ])
+        self.mock_supabase.tables["shops"] = MockQueryBuilder([
+            {
+                "id": shop1_id,
+                "name": "User 1 Coffee",
+                "latitude": 14.5995,
+                "longitude": 120.9842,
+            },
+            {
+                "id": shop2_id,
+                "name": "User 2 Coffee",
+                "latitude": 14.6000,
+                "longitude": 120.9850,
+            },
+        ])
+
+        response = self.client.get(
+            "/api/v1/favorites",
+            headers={"Authorization": "Bearer user1-token"},
+        )
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertEqual(len(data), 1)
+        self.assertEqual(data[0]["id"], shop1_id)
+        self.assertEqual(data[0]["name"], "User 1 Coffee")
+
+        # Verify query explicitly scoped to caller's user_id
+        fav_builder = self.mock_supabase.tables["favorites"]
+        self.assertIn(("user_id", self.user1_id), fav_builder.all_eq)
+
+    def test_list_favorites_excludes_non_approved_shops(self):
+        """Only currently APPROVED shops are returned in the Favorites list."""
+        shop_app_id = "11111111-1111-1111-1111-111111111111"
+        shop_pen_id = "22222222-2222-2222-2222-222222222222"
+        shop_exc_id = "33333333-3333-3333-3333-333333333333"
+
+        self.mock_supabase.tables["favorites"] = MockQueryBuilder([
+            {"id": "f1", "shop_id": shop_app_id, "user_id": self.user1_id, "created_at": "2026-10-01T01:00:00Z"},
+            {"id": "f2", "shop_id": shop_pen_id, "user_id": self.user1_id, "created_at": "2026-10-01T02:00:00Z"},
+            {"id": "f3", "shop_id": shop_exc_id, "user_id": self.user1_id, "created_at": "2026-10-01T03:00:00Z"},
+        ])
+        self.mock_supabase.tables["shop_curation"] = MockQueryBuilder([
+            {"shop_id": shop_app_id, "status": "APPROVED"},
+            {"shop_id": shop_pen_id, "status": "PENDING_REVIEW"},
+            {"shop_id": shop_exc_id, "status": "EXCLUDED"},
+        ])
+        self.mock_supabase.tables["shops"] = MockQueryBuilder([
+            {"id": shop_app_id, "name": "Approved Shop", "latitude": 14.5995, "longitude": 120.9842},
+            {"id": shop_pen_id, "name": "Pending Shop", "latitude": 14.6000, "longitude": 120.9850},
+            {"id": shop_exc_id, "name": "Excluded Shop", "latitude": 14.6005, "longitude": 120.9860},
+        ])
+
+        response = self.client.get(
+            "/api/v1/favorites",
+            headers={"Authorization": "Bearer user1-token"},
+        )
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertEqual(len(data), 1)
+        self.assertEqual(data[0]["id"], shop_app_id)
+        self.assertEqual(data[0]["name"], "Approved Shop")
+
+    def test_list_favorites_missing_shop_handled_gracefully(self):
+        """If a favorited shop row has no corresponding record in shops, it is omitted cleanly."""
+        missing_shop_id = "44444444-4444-4444-4444-444444444444"
+        self.mock_supabase.tables["favorites"] = MockQueryBuilder([
+            {"id": "f1", "shop_id": missing_shop_id, "user_id": self.user1_id, "created_at": "2026-10-01T01:00:00Z"},
+        ])
+        self.mock_supabase.tables["shop_curation"] = MockQueryBuilder([
+            {"shop_id": missing_shop_id, "status": "APPROVED"},
+        ])
+        self.mock_supabase.tables["shops"] = MockQueryBuilder([])
+
+        response = self.client.get(
+            "/api/v1/favorites",
+            headers={"Authorization": "Bearer user1-token"},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), [])
+
+    def test_list_favorites_database_error_on_favorites(self):
+        """Database error querying favorites table returns sanitized 500."""
+        fav_builder = MockQueryBuilder()
+        fav_builder.mock_execute.side_effect = APIError({"message": "DB connection dead", "code": "08006"})
+        self.mock_supabase.tables["favorites"] = fav_builder
+
+        response = self.client.get(
+            "/api/v1/favorites",
+            headers={"Authorization": "Bearer user1-token"},
+        )
+        self.assertEqual(response.status_code, 500)
+        self.assertIn("database error occurred while retrieving favorites", response.json()["detail"])
+
+    def test_list_favorites_database_error_on_curation(self):
+        """Database error querying shop_curation returns sanitized 500."""
+        self.mock_supabase.tables["favorites"] = MockQueryBuilder([
+            {"id": "f1", "shop_id": self.shop_id, "user_id": self.user1_id, "created_at": "2026-10-01T01:00:00Z"},
+        ])
+        cur_builder = MockQueryBuilder()
+        cur_builder.mock_execute.side_effect = APIError({"message": "Curation read failed", "code": "50000"})
+        self.mock_supabase.tables["shop_curation"] = cur_builder
+
+        response = self.client.get(
+            "/api/v1/favorites",
+            headers={"Authorization": "Bearer user1-token"},
+        )
+        self.assertEqual(response.status_code, 500)
+        self.assertIn("database error occurred while verifying coffee shop curation status", response.json()["detail"])
+
+    def test_list_favorites_database_error_on_shops(self):
+        """Database error querying shops table returns sanitized 500."""
+        self.mock_supabase.tables["favorites"] = MockQueryBuilder([
+            {"id": "f1", "shop_id": self.shop_id, "user_id": self.user1_id, "created_at": "2026-10-01T01:00:00Z"},
+        ])
+        self.mock_supabase.tables["shop_curation"] = MockQueryBuilder([
+            {"shop_id": self.shop_id, "status": "APPROVED"},
+        ])
+        shops_builder = MockQueryBuilder()
+        shops_builder.mock_execute.side_effect = APIError({"message": "Shops read failed", "code": "50000"})
+        self.mock_supabase.tables["shops"] = shops_builder
+
+        response = self.client.get(
+            "/api/v1/favorites",
+            headers={"Authorization": "Bearer user1-token"},
+        )
+        self.assertEqual(response.status_code, 500)
+        self.assertIn("database error occurred while retrieving favorite shops", response.json()["detail"])
+
 
 if __name__ == "__main__":
     unittest.main()
+

@@ -220,3 +220,23 @@ export async function getMe(
 
   return response.json();
 }
+
+/**
+ * Resolves the display name for an authenticated user using full_name or display_name
+ * metadata, falling back to email prefix or 'LOKAL User'.
+ */
+export function getUserDisplayName(user?: AuthUser | null): string {
+  if (!user) return 'LOKAL User';
+  const meta = user.user_metadata || {};
+  if (typeof meta.full_name === 'string' && meta.full_name.trim()) {
+    return meta.full_name.trim();
+  }
+  if (typeof meta.display_name === 'string' && meta.display_name.trim()) {
+    return meta.display_name.trim();
+  }
+  if (user.email && user.email.trim()) {
+    return user.email.split('@')[0];
+  }
+  return 'LOKAL User';
+}
+

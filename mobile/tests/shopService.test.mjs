@@ -3,6 +3,7 @@ import assert from 'node:assert';
 import {
   formatDistance,
   formatRating,
+  calculateDistanceMeters,
   getApiBaseUrl,
   fetchNearbyShops,
 } from '../src/services/shopService.ts';
@@ -17,6 +18,14 @@ test('formatDistance formats meters properly', () => {
   assert.strictEqual(formatDistance(1000), '1.0 km');
   assert.strictEqual(formatDistance(1500), '1.5 km');
   assert.strictEqual(formatDistance(12345), '12.3 km');
+});
+
+test('calculateDistanceMeters computes haversine distance correctly', () => {
+  // Same coordinates -> 0m
+  assert.strictEqual(calculateDistanceMeters(14.5995, 120.9842, 14.5995, 120.9842), 0);
+  // Known distance in Manila (approx ~550m)
+  const d = calculateDistanceMeters(14.5995, 120.9842, 14.6045, 120.9842);
+  assert.ok(d > 500 && d < 600, `Expected ~556m, got ${d}`);
 });
 
 test('formatRating formats rating properly', () => {

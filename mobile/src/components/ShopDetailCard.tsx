@@ -32,9 +32,15 @@ interface ShopDetailCardProps {
   shop: Shop;
   onClose: () => void;
   authToken?: string | null;
+  onFavoriteChange?: (shopId: string, isFavorite: boolean) => void;
 }
 
-export default function ShopDetailCard({ shop, onClose, authToken }: ShopDetailCardProps) {
+export default function ShopDetailCard({
+  shop,
+  onClose,
+  authToken,
+  onFavoriteChange,
+}: ShopDetailCardProps) {
   const formattedDistance = formatDistance(shop.distance_meters);
   const formattedRating = formatRating(shop.rating);
 
@@ -388,6 +394,7 @@ export default function ShopDetailCard({ shop, onClose, authToken }: ShopDetailC
       } else {
         await addFavorite(activeShopId, activeToken);
       }
+      onFavoriteChange?.(activeShopId, !previousFavorite);
     } catch (err) {
       if (
         mutationId === currentFavoriteMutationId.current &&
@@ -396,6 +403,7 @@ export default function ShopDetailCard({ shop, onClose, authToken }: ShopDetailC
       ) {
         // Rollback state on failure
         setIsFavorite(previousFavorite);
+        onFavoriteChange?.(activeShopId, previousFavorite);
         const message =
           err instanceof Error
             ? err.message

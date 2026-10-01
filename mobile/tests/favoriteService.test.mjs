@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert';
 import {
   fetchFavoriteStatus,
+  fetchUserFavorites,
   addFavorite,
   removeFavorite,
 } from '../src/services/favoriteService.ts';
@@ -252,3 +253,135 @@ test('removeFavorite handles 404 Not Found when shop is not in favorites', async
     globalThis.fetch = originalFetch;
   }
 });
+
+// ============================================================================
+// fetchUserFavorites Tests (Issue #39)
+// ============================================================================
+
+test('fetchUserFavorites constructs request with auth token and returns data on success', async () => {
+  const originalFetch = globalThis.fetch;
+  let requestedUrl = '';
+  let requestedHeaders = {};
+
+  const mockResponse = [
+    {
+      id: 'shop-1',
+      name: 'Coffee Central',
+      address: '123 Main St',
+      latitude: 14.5995,
+      longitude: 120.9842,
+      rating: 4.8,
+      google_place_id: 'place-1',
+      favorited_at: '2026-10-01T10:00:00Z',
+    },
+  ];
+
+  globalThis.fetch = async (input, init) => {
+    requestedUrl = input.toString();
+    requestedHeaders = init?.headers || {};
+    return {
+      ok: true,
+      status: 200,
+      json: async () => mockResponse,
+    };
+  };
+
+  try {
+    const result = await fetchUserFavorites('test-token');
+    assert.strictEqual(requestedUrl, 'http://localhost:8000/api/v1/favorites');
+    assert.strictEqual(requestedHeaders.Authorization, 'Bearer test-token');
+    assert.strictEqual(result.length, 1);
+    assert.strictEqual(result[0].id, 'shop-1');
+    assert.strictEqual(result[0].name, 'Coffee Central');
+    assert.strictEqual(result[0].favorited_at, '2026-10-01T10:00:00Z');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('fetchUserFavorites throws error when authToken is missing or whitespace', async () => {
+  await assert.rejects(
+    async () => fetchUserFavorites(''),
+    {
+      name: 'Error',
+      message: 'Authentication token is required to fetch favorites.',
+    }
+  );
+
+  await assert.rejects(
+    async () => fetchUserFavorites('   '),
+    {
+      name: 'Error',
+      message: 'Authentication token is required to fetch favorites.',
+    }
+  );
+});
+
+test('fetchUserFavorites handles 401 Unauthorized', async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => ({
+    ok: false,
+    status: 401,
+    json: async () => ({ detail: 'Could not validate credentials' }),
+  });
+
+  try {
+    await assert.rejects(
+      async () => fetchUserFavorites('expired-token'),
+      (err) => {
+        assert.strictEqual(err.message, 'Could not validate credentials');
+        assert.strictEqual(err.status, 401);
+        return true;
+      }
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('fetchUserFavorites handles 500 server error', async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => ({
+    ok: false,
+    status: 500,
+    json: async () => ({ detail: 'A database error occurred while retrieving favorites.' }),
+  });
+
+  try {
+    await assert.rejects(
+      async () => fetchUserFavorites('valid-token'),
+      (err) => {
+        assert.strictEqual(err.message, 'A database error occurred while retrieving favorites.');
+        assert.strictEqual(err.status, 500);
+        return true;
+      }
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('fetchUserFavorites fallback error when response is non-JSON', async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => ({
+    ok: false,
+    status: 502,
+    json: async () => {
+      throw new Error('Not JSON');
+    },
+  });
+
+  try {
+    await assert.rejects(
+      async () => fetchUserFavorites('valid-token'),
+      (err) => {
+        assert.strictEqual(err.message, 'Failed to fetch favorites.');
+        assert.strictEqual(err.status, 502);
+        return true;
+      }
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+

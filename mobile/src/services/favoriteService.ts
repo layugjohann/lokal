@@ -1,4 +1,4 @@
-import type { FavoriteStatusResponse } from '../types/favorite';
+import type { FavoriteShop, FavoriteStatusResponse } from '../types/favorite';
 
 const DEFAULT_API_BASE_URL = 'http://localhost:8000';
 
@@ -131,3 +131,41 @@ export async function removeFavorite(
     throw error;
   }
 }
+
+/**
+ * Retrieves all approved favorite coffee shops for the authenticated user.
+ */
+export async function fetchUserFavorites(
+  authToken: string
+): Promise<FavoriteShop[]> {
+  if (!authToken || !authToken.trim()) {
+    throw new Error('Authentication token is required to fetch favorites.');
+  }
+  const headers = getAuthHeaders(authToken);
+  const baseUrl = getApiBaseUrl();
+  const url = `${baseUrl}/api/v1/favorites`;
+
+  const response = await fetch(url, {
+    method: 'GET',
+    headers,
+  });
+
+  if (!response.ok) {
+    let errorDetail = 'Failed to fetch favorites.';
+    try {
+      const data = await response.json();
+      if (data && typeof data.detail === 'string') {
+        errorDetail = data.detail;
+      }
+    } catch {
+      // Non-JSON error response fallback
+    }
+
+    const error = new Error(errorDetail);
+    (error as { status?: number }).status = response.status;
+    throw error;
+  }
+
+  return response.json();
+}
+
