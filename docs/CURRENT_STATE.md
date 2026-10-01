@@ -8,7 +8,7 @@ This document provides a snapshot of the **current state of the `main` branch** 
 
 **Phase 2 — Core Application Features**
 
-The project bootstrapping phase is complete. The mobile application foundation, FastAPI backend, Supabase integration, database schema, user authentication, maps/location integration, coffee shop CRUD API, nearby coffee shop discovery, independent business eligibility and curation, external review data layer, first-party LOKAL user reviews, mobile user authentication with secure session management, AI-generated review summaries, AI-generated "Must Try" recommendations, and favorite coffee shops are established.
+The project bootstrapping phase is complete. The mobile application foundation, FastAPI backend, Supabase integration, database schema, user authentication, maps/location integration, coffee shop CRUD API, nearby coffee shop discovery, independent business eligibility and curation, external review data layer, first-party LOKAL user reviews, mobile user authentication with secure session management, AI-generated review summaries, AI-generated "Must Try" recommendations, favorite coffee shops, and the user favorites list / profile discovery flow are established.
 
 The project is now building application-level features that expand LOKAL's core user experience and community discovery capabilities.
 
@@ -18,11 +18,11 @@ The project is now building application-level features that expand LOKAL's core 
 
 🟢 **On Track**
 
-The core application stack is operational. The latest completed milestone, **Harden Supabase Public-Schema Access and RLS Policies (GitHub Issue #37)**, hardened database security across all six public tables (`shops`, `menu_items`, `shop_curation`, `shop_curation_audit`, `reviews`, `favorites`), eliminated the Supabase Security Advisor `rls_disabled_in_public` finding, and established a strict least-privilege authorization model.
+The core application stack is operational. The latest completed milestone, **User Favorites List and Profile Discovery (GitHub Issue #39)**, delivered an authenticated user favorites collection endpoint on the FastAPI backend (`GET /api/v1/favorites`) and a dedicated user profile and saved coffee shops experience in the React Native mobile app (`ProfileView`).
 
-Direct PostgREST mutation access on `shops` has been revoked for all client roles (`anon`, `authenticated`, `public`). The intended security boundary is enforced: ordinary users can only read approved coffee shops, while shop mutations (`POST /api/v1/shops`, `PATCH /api/v1/shops/{id}`, `DELETE /api/v1/shops/{id}`) and curation evaluation/inspection (`GET /api/v1/shops/{id}/curation`, `POST /api/v1/shops/{id}/curation/evaluate`) must proceed through the trusted FastAPI gateway using curator authorization (`require_curator`) and a dedicated fail-closed service-role database client (`get_service_role_supabase`). Column-level grants restrict public direct Data API visibility on `shop_curation` strictly to `(shop_id, status)` for approved shops, preventing unauthorized exposure of internal curation metadata, notes, and confidence scores.
+Authenticated users can access their saved coffee shops from a top-right Profile button on the interactive map. The profile modal displays account details, saved coffee shops in most-recently favorited order, distance calculations from device coordinates, and seamless navigation to shop details. Unfavoriting or re-favoriting inside the detail card reconciles the favorites list upon returning, with optimistic removal and authoritative refetching protected against out-of-order mutations. Component lifecycle keys (`getProfilePrincipalKey`) and a pure request sequencer (`FavoritesController`) ensure complete state isolation across account switches while preserving instance stability during same-user token refreshes.
 
-Database security and RLS policies are verified through an executable 55-assertion pgTAP test suite (`supabase/tests/01_rls_and_permissions.sql`) alongside the full 297-test backend regression suite and 109-test mobile regression suite.
+The implementation is verified through **306 passing backend tests** (including 30 focused favorites tests) and **138 passing mobile tests**, with 0 TypeScript compilation errors and 55 passing database pgTAP authorization assertions.
 
 The engineering workflow remains formalized under the **AI-Assisted Engineering Workflow**.
 
@@ -32,54 +32,49 @@ The next feature cycle should begin only after the current state is synchronized
 
 # Latest Completed Feature
 
-## GitHub Issue #37 — Harden Supabase Public-Schema Access and RLS Policies
+## GitHub Issue #39 — User Favorites List and Profile Discovery
 
 **Status:** ✅ Completed
 
 ### Completed Work
 
-* **Database Security, Least-Privilege Grants & Row Level Security (RLS)**:
-  * Implemented migration `supabase/migrations/20261001000000_harden_public_schema_and_rls.sql`.
-  * Enabled and enforced Row Level Security across all six exposed public tables: `shops`, `menu_items`, `shop_curation`, `shop_curation_audit`, `reviews`, and `favorites`, resolving the Supabase Security Advisor `rls_disabled_in_public` finding.
-  * Least-privilege grant and revocation matrix:
-    * `shops`: Revoked default `ALL` privileges from `anon`, `authenticated`, and `public`. Granted `SELECT` to `anon` and `authenticated`. Revoked direct client `INSERT`, `UPDATE`, and `DELETE` grants from all client roles; granted full `ALL` access to `service_role`.
-    * `shop_curation`: Revoked direct table-level `SELECT` from `anon`, `authenticated`, and `public`. Granted column-level `SELECT (shop_id, status)` strictly to `anon` and `authenticated`. Internal curation metadata (`curator_notes`, `evidence_source`, `confidence`, `curator_id`, `location_count`) is restricted from direct public consumption; full curation records are accessible only to curators via FastAPI using `service_role`.
-    * `menu_items`: Revoked all access from `anon`, `authenticated`, and `public`. Restricted strictly to `service_role` (no direct PostgREST Data API exposure).
-    * `shop_curation_audit`: Revoked all access from `anon` and `public`. Granted `SELECT` to `authenticated` with an RLS policy restricting visibility strictly to callers with JWT `role IN ('curator', 'admin')`. Mutations restricted to `service_role`.
-    * `reviews` and `favorites`: Preserved strict row-level ownership isolation (`auth.uid() = user_id`) on `SELECT` and `DELETE`; direct client `INSERT` and `UPDATE` remain revoked, requiring writes to flow through security-definer RPCs or FastAPI.
-  * Scoped RLS Policies:
-    * `shops`: Ordinary read policy allows `anon` and `authenticated` callers to read approved shops (`status = 'APPROVED'`). Privileged read policy allows users with `role IN ('curator', 'admin')` to read all shops. Direct client mutation policies are dropped.
-    * `shop_curation`: Ordinary read policy restricts `anon` and `authenticated` access to rows where `status = 'APPROVED'`. Curator/admin read policy allows reading curation status for non-approved shops. Full access granted to `service_role`.
-    * `menu_items` and `shop_curation_audit`: Dedicated `service_role` policies with audit read access for authenticated curators/admins.
-* **Dedicated Service-Role Backend Client & Fail-Closed Dependency**:
-  * Implemented `get_service_role_supabase_client()` in `backend/app/core/supabase.py`:
-    * Requires `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY`.
-    * Never falls back to `SUPABASE_ANON_KEY`.
-  * Implemented `get_service_role_supabase()` dependency in `backend/app/api/deps.py`:
-    * Yields the authenticated service-role client.
-    * Fails closed with `HTTP 503 Service Unavailable` if `SUPABASE_SERVICE_ROLE_KEY` is not configured, preventing unauthenticated fallback or silent degradation.
-    * Service-role credentials remain strictly server-side and are never exposed to mobile or client code.
-* **FastAPI Shop & Curation Authorization**:
-  * Protected shop mutations in `backend/app/api/v1/endpoints/shops.py`:
-    * Added `require_curator` and `get_service_role_supabase()` dependencies to `create_shop` (`POST /api/v1/shops`), `update_shop` (`PATCH /api/v1/shops/{id}`), and `delete_shop` (`DELETE /api/v1/shops/{id}`).
-    * Ordinary authenticated users receive `403 Forbidden` on mutation attempts.
-  * Protected curation endpoints in `backend/app/api/v1/endpoints/curation.py`:
-    * Added `require_curator` and `get_service_role_supabase()` to `get_shop_curation` (`GET /api/v1/shops/{id}/curation`) and `evaluate_shop_curation` (`POST /api/v1/shops/{id}/curation/evaluate`).
-    * Ordinary authenticated users receive `403 Forbidden` when attempting to inspect full curation metadata or trigger curation evaluations.
-    * Simplified redundant `force=True` curator check once the entire evaluation endpoint is curator-protected.
-* **Database pgTAP Authorization Test Suite**:
-  * Implemented and expanded `supabase/tests/01_rls_and_permissions.sql` containing **55 planned assertions** (`plan(55)`):
-    * Metadata verification (Tests 1–22): Confirms RLS enabled on all 6 tables, table privileges, and column privileges for `anon` and `authenticated`.
-    * `anon` executable tests (Tests 23–32): Proves `anon` can read approved shops and cannot read pending shops; confirms `INSERT`/`UPDATE`/`DELETE` on `shops` throws `42501`; confirms column-restricted `SELECT` on `shop_curation`; confirms `SELECT` on `menu_items` and `shop_curation_audit` throws `42501`.
-    * Ordinary `authenticated` executable tests (Tests 33–48): Proves ordinary users can read approved shops and cannot read pending shops; confirms direct `INSERT`/`UPDATE`/`DELETE` on `shops` throws `42501`; confirms `shop_curation_audit` returns 0 rows via RLS; confirms cross-user ownership isolation on reviews and favorites (cannot read or delete other users' records; can delete own record).
-    * Curator `authenticated` executable tests (Tests 49–55): Proves curators can read approved and pending shops; can read pending curation status; can read curation audit logs; confirms direct PostgREST shop mutations remain denied (must use FastAPI gateway).
+* **Backend Authenticated Favorites List API**:
+  * Implemented `GET /api/v1/favorites` collection endpoint in `backend/app/api/v1/endpoints/favorites.py`, mounted via `user_favorites_router` at `/favorites` in `router.py`.
+  * Returns all approved coffee shops favorited by the current authenticated user, ordered by most-recently favorited (`created_at DESC`).
+  * Enforces strict user ownership isolation via PostgreSQL RLS and caller JWT propagation.
+  * Enforces fail-closed curation validation: non-approved shops (`PENDING_REVIEW`, `EXCLUDED`) are strictly excluded from results.
+  * Schema modeling: implemented strongly typed `FavoriteShopResponse` in `backend/app/schemas/favorite.py`, inheriting from `ShopResponse` and adding `favorited_at: datetime | None`.
+  * Service layer: implemented `FavoriteService.list_favorites(user, supabase)` in `backend/app/services/favorites.py`.
+* **Mobile User Profile & Saved Coffee Shops (ProfileView)**:
+  * Replaced standalone "Log Out" button with a top-right `Profile` button on the interactive map in `mobile/src/components/LokalMapView.tsx`.
+  * Implemented `ProfileView` modal component in `mobile/src/components/ProfileView.tsx`:
+    * Displays user avatar initial, resolved display name via `getUserDisplayName(user)` (`full_name` / `display_name` with email prefix fallback, defaulting to `'LOKAL User'`), email, and an accessible Log Out action.
+    * Saved coffee shops section supporting loading, error with actionable retry, empty state, and populated card list.
+    * Shop cards display shop name, address, rating, distance (computed via Haversine formula from device coordinates when available), and favorite heart indicator.
+    * Distance display: initializes `distanceMeters` to `Number.NaN` when device location is unavailable, cleanly omitting the distance badge rather than displaying a false `"0 m"`.
+* **Controlled Navigation Lifecycle & State Reconciliation**:
+  * Explicit navigation flow: Map $\to$ Profile $\to$ Favorites $\to$ Shop Detail $\to$ Favorites $\to$ Profile $\to$ Map.
+  * Opening Profile preserves underlying map and discovery state; closing Shop Detail returns to Favorites; closing Profile returns to Map.
+  * Added `onFavoriteChange` callback prop to `ShopDetailCard`.
+  * Optimistic reconciliation: unfavoriting a coffee shop inside `ShopDetailCard` immediately removes it from the parent favorites list, and re-favoriting triggers an authoritative refetch of the favorites collection.
+  * Out-of-order mutation protection: guarded `onFavoriteChange` success callback with `currentFavoriteMutationId` ownership checks to prevent stale mutations from corrupting parent state.
+* **Principal-Bound Session Lifecycle & State Isolation**:
+  * Implemented `getProfilePrincipalKey(user, authToken)` in `mobile/src/services/authService.ts`.
+  * Bound `<ProfileView>` in `LokalMapView` with `key={getProfilePrincipalKey(auth?.user, activeAuthToken)}`: switching accounts forces a clean remount, discarding previous `selectedFavoriteShop` state, while same-user token refreshes preserve the instance without state churn or UI blanking.
+  * Extracted pure request sequencer `FavoritesController` in `mobile/src/hooks/useFavorites.ts`:
+    * Tracks monotonic request sequence counters and `currentPrincipal`.
+    * Switching principals immediately clears cached favorites (`favorites: []`).
+    * Failure isolation: if a new account's request fails, cached favorites from the previous account never survive or leak.
+    * Monotonic request ID discards late-arriving responses from previous accounts.
+    * Token refresh under the same principal preserves cached favorites during background revalidation.
 * **Automated Verification**:
-  * Database pgTAP test suite: **55 / 55 assertions passed** (100%).
-  * Backend regression suite: **297 passing tests** (`PYTHONPATH=backend ./backend/.venv/bin/python -m unittest discover -s backend/tests -t backend`), adding 6 focused authorization and service-role failure tests in `test_shops.py` and `test_curation.py`.
-  * Mobile regression suite: **109 passing tests** (`npm test --prefix mobile`).
+  * Backend favorites suite: **30 / 30 tests passed** (`PYTHONPATH=backend ./backend/.venv/bin/python -m unittest backend/tests/test_favorites.py`).
+  * Backend full regression suite: **306 / 306 tests passed** (`PYTHONPATH=backend ./backend/.venv/bin/python -m unittest discover -s backend/tests -t backend`).
+  * Mobile test suite: **138 / 138 tests passed** (`npm test --prefix mobile`), adding 29 focused tests in `favorites.test.mjs` and `favoriteState.test.mjs` covering distance formatting, NaN omission, principal key contracts, simulated remount isolation, optimistic reconciliation, stale mutation guards, and error recovery.
   * Mobile TypeScript compiler: **0 errors** (`./mobile/node_modules/.bin/tsc --noEmit --project mobile/tsconfig.json`).
+  * Database pgTAP authorization suite: **55 / 55 assertions passed**.
 * **Pull Request**:
-  * Pull Request #38 reviewed by CodeRabbit, actionable findings resolved iteratively (revoked direct authenticated shop mutation grants and policies, expanded executable pgTAP coverage), approved, and merged into `main` by the Product Owner (merge commit `a65d9d32`).
+  * Pull Request #40 reviewed by CodeRabbit, actionable findings resolved iteratively (NaN distance display, favorites mutation reconciliation, stale mutation callback ownership guard, production FavoritesController extraction, principal key identity boundary, JSDocs), approved, and merged into `main` by the Product Owner (merge commit `4a9e74a2`).
 
 ---
 
@@ -105,7 +100,8 @@ The next feature cycle should begin only after the current state is synchronized
 | Issue #33 — AI-Generated "Must Try" Recommendations          | ✅ Complete |
 | Issue #35 — Favorite Coffee Shops                            | ✅ Complete |
 | Issue #37 — Harden Supabase Public Schema & RLS              | ✅ Complete |
-| User Favorites List / Profile Discovery                      | ⏳ Planned  |
+| Issue #39 — User Favorites List & Profile Discovery          | ✅ Complete |
+| Advanced Search and Filtering                                | ⏳ Planned  |
 
 ---
 
@@ -113,6 +109,18 @@ The next feature cycle should begin only after the current state is synchronized
 
 The React Native (Expo) mobile application currently provides:
 
+* **User Profile & Saved Coffee Shops (Favorites Discovery)**:
+  * Top-right `Profile` button on the interactive map opening a controlled `ProfileView` modal for authenticated users.
+  * User profile header displaying avatar initial, full name or display name fallback (`getUserDisplayName`), email, and an accessible Log Out action.
+  * Dedicated saved coffee shops list displaying favorited shops ordered by most-recently favorited first.
+  * Complete lifecycle states: loading indicator, error banner with localized retry action, empty state with guidance to save shops, and card list presentation.
+  * Shop cards displaying shop name, address, rating, distance, and favorite indicator.
+  * Haversine distance calculation from device coordinates when available; defaults to `Number.NaN` and cleanly omits the distance badge when location is unavailable, avoiding false `"0 m"` badges.
+  * Controlled navigation flow: Map $\to$ Profile $\to$ Favorites $\to$ Shop Detail $\to$ Favorites $\to$ Profile $\to$ Map, preserving underlying map and return targets.
+  * Immediate optimistic UI removal on unfavorite with authoritative refetching on all favorite mutations.
+  * Stale favorite mutation protection: `ShopDetailCard` success callbacks verify `currentFavoriteMutationId` ownership before updating parent state.
+  * Principal-bound instance lifecycle (`getProfilePrincipalKey`) ensuring account switches cleanly remount the profile view and clear selected shops, while same-account token refreshes preserve instance stability.
+  * Pure request sequencer `FavoritesController` providing monotonic request IDs, immediate cache clearing on principal switch, late response discarding, and isolation on replacement fetch failures.
 * **Authentication & Session Lifecycle Management**:
   * User registration and login screens (`RegisterView`, `LoginView`) with input validation, password matching, inline error presentation, and loading states.
   * Hardware-backed credential persistence via `expo-secure-store` with fail-fast security preventing silent in-memory downgrades in native or production runtimes.
@@ -121,7 +129,7 @@ The React Native (Expo) mobile application currently provides:
   * Dedicated restoration error recovery UI offering both **Retry** and **Sign Out** actions.
   * Fail-safe sign-out ensuring local credentials are unconditionally deleted regardless of backend network availability.
   * Monotonic operation generation guards (`operationGenerationRef`) protecting the authentication provider against asynchronous race conditions across concurrent logins, retries, and logouts.
-  * Automatic Bearer token propagation across nearby coffee shop searches, review operations, and AI summary requests.
+  * Automatic Bearer token propagation across nearby coffee shop searches, review operations, AI summary requests, and favorites operations.
 * **Favorite Coffee Shops**:
   * Interactive favorite heart button integrated directly into the `ShopDetailCard` header.
   * Discrete tri-state favorite modeling (`boolean | null`) separating confirmed favorited (`true`), confirmed non-favorited (`false`), and unconfirmed/loading/error (`null`).
@@ -209,6 +217,7 @@ The FastAPI backend currently provides:
   * Curation inspection (`GET /api/v1/shops/{id}/curation`) and evaluation (`POST /api/v1/shops/{id}/curation/evaluate`) protected by `require_curator` and executed via `get_service_role_supabase()`.
   * Column-level grant protection ensuring direct Data API callers can only query `(shop_id, status)` for approved shops without exposing internal notes or confidence scores.
 * **Favorite Coffee Shops Management & Endpoints**:
+  * `GET /api/v1/favorites`: Authenticated collection endpoint returning all approved coffee shops favorited by the current user, ordered by most-recently favorited (`created_at DESC`), returning `list[FavoriteShopResponse]`. Strict user ownership isolation via RLS and caller JWT filtering; non-approved shops (`PENDING_REVIEW`, `EXCLUDED`) are excluded.
   * `GET /api/v1/shops/{shop_id}/favorite`: Checks caller's favorite status for an approved coffee shop; returns `FavoriteStatusResponse(shop_id, is_favorite, favorited_at)`. Returns `404 Not Found` if the shop does not exist or is not `APPROVED`.
   * `POST /api/v1/shops/{shop_id}/favorite`: Adds the shop to caller's favorites via PostgreSQL RPC `create_user_favorite`. Returns `201 Created` on new favorite or `200 OK` if already favorited (idempotent). Fails closed with `404 Not Found` if shop is not `APPROVED`.
   * `DELETE /api/v1/shops/{shop_id}/favorite`: Idempotently removes shop from caller's favorites (`204 No Content`).
@@ -245,7 +254,7 @@ The FastAPI backend currently provides:
   * Strict `source = 'lokal'` filtering across application review lookups, updates, and deletes.
 * Google Places API (New) integration for transient external review retrieval with provider attribution and source links. No caching or persistence of Google review content.
 * Robust error handling distinguishing client input errors (`400`/`422`), missing records (`404`), unique constraint conflicts (`409`), external provider failures (`502`), service unavailability (`503`), and sanitized generic server failures (`500`).
-* Automated backend regression testing with **297 passing tests**, covering auth, shops, curation, nearby discovery, external reviews, first-party user reviews, AI review summaries, AI must-try recommendations, favorite coffee shops, curator authorization, and service-role fail-closed behavior.
+* Automated backend regression testing with **306 passing tests**, covering auth, shops, curation, nearby discovery, external reviews, first-party user reviews, AI review summaries, AI must-try recommendations, favorite coffee shops (including the favorites list endpoint), curator authorization, and service-role fail-closed behavior.
 
 ---
 
@@ -340,9 +349,9 @@ Independent-business eligibility and curation are maintained as a separate domai
 
 # Next Task
 
-The next feature should be defined through the next GitHub Issue after reviewing the completed favorite coffee shops architecture and current application state.
+The next feature should be defined through the next GitHub Issue after reviewing the completed user favorites list and profile discovery architecture and current application state.
 
-With user authentication, unified reviews, AI review summarization, AI must-try recommendations, and coffee shop favoriting active, the logical next capabilities include **User Favorites List / Profile Discovery** (viewing and navigating through the user's saved favorite coffee shops), **Advanced Search and Filtering** (filtering by rating, distance, or favorites), or another feature prioritized by the Product Owner.
+With user authentication, unified reviews, AI review summarization, AI must-try recommendations, coffee shop favoriting, and the user favorites list/profile view active, the logical next capabilities include **Advanced Search and Filtering** (filtering by minimum rating, distance radius, or saved favorites), **Personalized Recommendations**, or another feature prioritized by the Product Owner.
 
 Before implementation:
 
@@ -358,7 +367,7 @@ Before implementation:
 
 **None.**
 
-The unified review domain, AI review summarization, AI-generated "Must Try" recommendations, and coffee shop favoriting are operational. External reviews remain transient and compliant with provider policies, while first-party reviews and user favorites are securely persisted in Supabase with RLS and security-definer RPC protection. In-memory caching with generation versioning is active for both summaries and recommendations. Mobile user authentication, review mutations, non-blocking summary cards, non-blocking recommendations cards, and interactive favorite toggles are operational and fully tested.
+The unified review domain, AI review summarization, AI-generated "Must Try" recommendations, coffee shop favoriting, and user favorites list / profile discovery are operational. External reviews remain transient and compliant with provider policies, while first-party reviews and user favorites are securely persisted in Supabase with RLS and security-definer RPC protection. In-memory caching with generation versioning is active for both summaries and recommendations. Mobile user authentication, review mutations, non-blocking summary cards, non-blocking recommendations cards, interactive favorite toggles, and the saved coffee shops profile view are operational and fully tested.
 
 ---
 
@@ -366,6 +375,12 @@ The unified review domain, AI review summarization, AI-generated "Must Try" reco
 
 The recent development cycles established the following engineering practices:
 
+* **Principal-Bound Instance Keys for Identity Boundaries**: Component keys in authentication-sensitive flows should be bound to the authenticated principal (`user.id`) rather than raw credential tokens (`authToken`). This ensures switching accounts forces a clean remount and state reset, while credential refreshes for the same user do not cause unnecessary unmounting or UI state churn.
+* **Dual Defense for Session State Isolation**: Combining component key-based remounting at the view layer with principal-aware request sequencing at the controller layer guarantees that even if a replacement session's network request fails, previous-account state can never survive or be exposed.
+* **Monotonic Mutation Ownership Guards**: Asynchronous mutation success callbacks (`onFavoriteChange`) must verify that the active mutation ID still matches the current sequence counter before updating parent state, preventing out-of-order mutations from corrupting parent collections.
+* **Authoritative Reconciliation on Dual-State Mutations**: Optimistic UI removal provides instant feedback for destructive actions (unfavoriting), but re-favoriting should trigger authoritative collection refetches rather than synthesizing partial objects from local state.
+* **Safe Distance Badge Omission with `Number.NaN`**: When distance calculation inputs (device location) are unavailable, defaulting to `Number.NaN` allows downstream formatting functions (`formatDistance`) to cleanly omit distance badges rather than displaying misleading `"0 m"` values.
+* **Pure Logic Extraction for Headless Testability**: In environments lacking full component or hook renderers (such as Node.js test runners), extracting state sequencing into pure controller classes (`FavoritesController`) allows testing complex async races, session switches, and error paths against real production code without extra testing dependencies.
 * **Database Write Privilege Revocation over PostgREST**: Row Level Security (RLS) alone does not replace table-level grants. When mutations must enforce business logic (such as curator authorization, evidence recalculation, and audit logging), revoking table-level `INSERT`, `UPDATE`, and `DELETE` from client roles (`anon`, `authenticated`) eliminates PostgREST bypasses, ensuring mutations proceed strictly through the trusted FastAPI gateway.
 * **Fail-Closed Dedicated Service-Role Dependency**: Privileged server operations requiring database superuser or bypass privileges must not rely on clients that can fall back to the public `anon` key. Using a dedicated dependency (`get_service_role_supabase()`) that strictly validates `SUPABASE_SERVICE_ROLE_KEY` and raises HTTP 503 if unconfigured enforces fail-closed infrastructure guarantees.
 * **Column-Level Privilege Granularity for Public Schemas**: Sensitive metadata (e.g., internal curator notes, confidence scores, evidence sources) on otherwise readable public tables should be restricted via column-level `GRANT SELECT (shop_id, status)` to prevent exposure through direct PostgREST queries.
@@ -440,4 +455,4 @@ After implementation:
 
 ---
 
-**Last Updated:** Phase 2 — Core Application Features (after completion of GitHub Issue #37 and merge of PR #38)
+**Last Updated:** Phase 2 — Core Application Features (after completion of GitHub Issue #39 and merge of PR #40)
