@@ -14,10 +14,12 @@ export interface UseNearbyShopsResult {
   setSearchQuery: (query: string) => void;
   minRating: number | null;
   setMinRating: (rating: number | null) => void;
+  minLokalRating: number | null;
+  setMinLokalRating: (rating: number | null) => void;
   radius: number;
   setRadius: (radius: number) => void;
-  sortBy: 'distance' | 'rating';
-  setSortBy: (sortBy: 'distance' | 'rating') => void;
+  sortBy: 'distance' | 'rating' | 'lokal_rating';
+  setSortBy: (sortBy: 'distance' | 'rating' | 'lokal_rating') => void;
   resetFilters: () => void;
   hasActiveFilters: boolean;
 }
@@ -34,8 +36,9 @@ export function useNearbyShops(
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [debouncedQuery, setDebouncedQuery] = useState<string>('');
   const [minRating, setMinRating] = useState<number | null>(null);
+  const [minLokalRating, setMinLokalRating] = useState<number | null>(null);
   const [radius, setRadius] = useState<number>(5000);
-  const [sortBy, setSortBy] = useState<'distance' | 'rating'>('distance');
+  const [sortBy, setSortBy] = useState<'distance' | 'rating' | 'lokal_rating'>('distance');
 
   const requestIdRef = useRef<number>(0);
 
@@ -48,13 +51,18 @@ export function useNearbyShops(
   }, [searchQuery]);
 
   const hasActiveFilters = Boolean(
-    searchQuery.trim() || minRating !== null || sortBy !== 'distance' || radius !== 5000
+    searchQuery.trim() ||
+      minRating !== null ||
+      minLokalRating !== null ||
+      sortBy !== 'distance' ||
+      radius !== 5000
   );
 
   const resetFilters = useCallback(() => {
     setSearchQuery('');
     setDebouncedQuery('');
     setMinRating(null);
+    setMinLokalRating(null);
     setRadius(5000);
     setSortBy('distance');
   }, []);
@@ -81,6 +89,7 @@ export function useNearbyShops(
           radius,
           query: debouncedQuery,
           minRating: minRating ?? undefined,
+          minLokalRating: minLokalRating ?? undefined,
           sortBy,
         },
         authToken
@@ -112,7 +121,16 @@ export function useNearbyShops(
         setIsLoading(false);
       }
     }
-  }, [location?.latitude, location?.longitude, radius, debouncedQuery, minRating, sortBy, authToken]);
+  }, [
+    location?.latitude,
+    location?.longitude,
+    radius,
+    debouncedQuery,
+    minRating,
+    minLokalRating,
+    sortBy,
+    authToken,
+  ]);
 
   useEffect(() => {
     if (location) {
@@ -137,6 +155,8 @@ export function useNearbyShops(
     setSearchQuery,
     minRating,
     setMinRating,
+    minLokalRating,
+    setMinLokalRating,
     radius,
     setRadius,
     sortBy,

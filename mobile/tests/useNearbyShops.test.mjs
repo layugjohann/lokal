@@ -103,10 +103,11 @@ test('monotonic request counter discards out-of-order stale responses', async ()
 });
 
 test('hasActiveFilters detects any non-default search, filter, or sort option', () => {
-  const checkActive = ({ query, minRating, radius, sortBy }) => {
+  const checkActive = ({ query, minRating, minLokalRating, radius, sortBy }) => {
     return Boolean(
       (query && query.trim()) ||
       minRating !== null ||
+      minLokalRating !== null ||
       sortBy !== 'distance' ||
       radius !== 5000
     );
@@ -114,40 +115,49 @@ test('hasActiveFilters detects any non-default search, filter, or sort option', 
 
   // Defaults: not active
   assert.strictEqual(
-    checkActive({ query: '', minRating: null, radius: 5000, sortBy: 'distance' }),
+    checkActive({ query: '', minRating: null, minLokalRating: null, radius: 5000, sortBy: 'distance' }),
     false
   );
   assert.strictEqual(
-    checkActive({ query: '   ', minRating: null, radius: 5000, sortBy: 'distance' }),
+    checkActive({ query: '   ', minRating: null, minLokalRating: null, radius: 5000, sortBy: 'distance' }),
     false
   );
 
   // Active cases
   assert.strictEqual(
-    checkActive({ query: 'espresso', minRating: null, radius: 5000, sortBy: 'distance' }),
+    checkActive({ query: 'espresso', minRating: null, minLokalRating: null, radius: 5000, sortBy: 'distance' }),
     true
   );
   assert.strictEqual(
-    checkActive({ query: '', minRating: 4.0, radius: 5000, sortBy: 'distance' }),
+    checkActive({ query: '', minRating: 4.0, minLokalRating: null, radius: 5000, sortBy: 'distance' }),
     true
   );
   assert.strictEqual(
-    checkActive({ query: '', minRating: null, radius: 1000, sortBy: 'distance' }),
+    checkActive({ query: '', minRating: null, minLokalRating: 4.5, radius: 5000, sortBy: 'distance' }),
     true
   );
   assert.strictEqual(
-    checkActive({ query: '', minRating: null, radius: 5000, sortBy: 'rating' }),
+    checkActive({ query: '', minRating: null, minLokalRating: null, radius: 1000, sortBy: 'distance' }),
+    true
+  );
+  assert.strictEqual(
+    checkActive({ query: '', minRating: null, minLokalRating: null, radius: 5000, sortBy: 'rating' }),
+    true
+  );
+  assert.strictEqual(
+    checkActive({ query: '', minRating: null, minLokalRating: null, radius: 5000, sortBy: 'lokal_rating' }),
     true
   );
 });
 
-test('resetFilters restores all states to default values', () => {
+test('resetFilters restores all states to default values including minLokalRating', () => {
   let state = {
     searchQuery: 'Manila Roast',
     debouncedQuery: 'Manila Roast',
     minRating: 4.5,
+    minLokalRating: 4.0,
     radius: 3000,
-    sortBy: 'rating',
+    sortBy: 'lokal_rating',
   };
 
   const resetFilters = () => {
@@ -155,6 +165,7 @@ test('resetFilters restores all states to default values', () => {
       searchQuery: '',
       debouncedQuery: '',
       minRating: null,
+      minLokalRating: null,
       radius: 5000,
       sortBy: 'distance',
     };
@@ -165,9 +176,11 @@ test('resetFilters restores all states to default values', () => {
   assert.strictEqual(state.searchQuery, '');
   assert.strictEqual(state.debouncedQuery, '');
   assert.strictEqual(state.minRating, null);
+  assert.strictEqual(state.minLokalRating, null);
   assert.strictEqual(state.radius, 5000);
   assert.strictEqual(state.sortBy, 'distance');
 });
+
 
 test('search keystroke race condition rejects older queries resolving after newer ones', async () => {
   let requestCounter = 0;
@@ -233,5 +246,57 @@ test('location loss invalidates in-flight request and prevents stale data from r
   assert.strictEqual(state.selectedShop, null);
   assert.strictEqual(state.isLoading, false);
 });
+
+test('rapid filter/sort switching discards stale in-flight response when newer sort completes', async () => {
+  let requestIdCounter = 0;
+  let appliedSort = null;
+  let appliedShops = [];
+
+  const simulateFetch = async (sort, delayMs, returnedShops) => {
+    const reqId = ++requestIdCounter;
+    await new Promise((resolve) => setTimeout(resolve, delayMs));
+    if (reqId === requestIdCounter) {
+      appliedSort = sort;
+      appliedShops = returnedShops;
+    }
+  };
+
+  // User selects 'rating' (slow network: 50ms), then quickly selects 'lokal_rating' (fast network: 15ms)
+  const p1 = simulateFetch('rating', 50, [{ id: 'shop-google', name: 'Google High Shop' }]);
+  const p2 = simulateFetch('lokal_rating', 15, [{ id: 'shop-lokal', name: 'LOKAL High Shop' }]);
+
+  await Promise.all([p1, p2]);
+
+  assert.strictEqual(appliedSort, 'lokal_rating');
+  assert.strictEqual(appliedShops[0].name, 'LOKAL High Shop');
+});
+
+test('auth token invalidation during in-flight discovery request discards stale response', async () => {
+  let requestIdCounter = 0;
+  let state = {
+    shops: [],
+    isLoading: true,
+  };
+
+  const reqId = ++requestIdCounter;
+  const inFlightPromise = (async () => {
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    if (reqId === requestIdCounter) {
+      state.shops = [{ id: 'old-shop', name: 'Old Account Shop' }];
+      state.isLoading = false;
+    }
+  })();
+
+  // Auth token changes / user logs out
+  ++requestIdCounter;
+  state.shops = [];
+  state.isLoading = false;
+
+  await inFlightPromise;
+
+  assert.deepStrictEqual(state.shops, []);
+  assert.strictEqual(state.isLoading, false);
+});
+
 
 

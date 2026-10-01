@@ -103,6 +103,7 @@ class TestNearbyShopEndpoints(unittest.TestCase):
                 "search_query": None,
                 "min_rating": None,
                 "sort_by": "distance",
+                "min_lokal_rating": None,
             },
         )
 
@@ -132,6 +133,7 @@ class TestNearbyShopEndpoints(unittest.TestCase):
                 "search_query": None,
                 "min_rating": None,
                 "sort_by": "distance",
+                "min_lokal_rating": None,
             },
         )
 
@@ -435,6 +437,7 @@ class TestNearbyShopEndpoints(unittest.TestCase):
                 "search_query": "espresso",
                 "min_rating": None,
                 "sort_by": "distance",
+                "min_lokal_rating": None,
             },
         )
 
@@ -461,6 +464,7 @@ class TestNearbyShopEndpoints(unittest.TestCase):
                 "search_query": "Kape Manila",
                 "min_rating": None,
                 "sort_by": "distance",
+                "min_lokal_rating": None,
             },
         )
 
@@ -487,6 +491,7 @@ class TestNearbyShopEndpoints(unittest.TestCase):
                 "search_query": "100%_Coffee",
                 "min_rating": None,
                 "sort_by": "distance",
+                "min_lokal_rating": None,
             },
         )
 
@@ -513,6 +518,7 @@ class TestNearbyShopEndpoints(unittest.TestCase):
                 "search_query": None,
                 "min_rating": None,
                 "sort_by": "distance",
+                "min_lokal_rating": None,
             },
         )
 
@@ -539,6 +545,7 @@ class TestNearbyShopEndpoints(unittest.TestCase):
                 "search_query": None,
                 "min_rating": 4.5,
                 "sort_by": "distance",
+                "min_lokal_rating": None,
             },
         )
 
@@ -554,6 +561,49 @@ class TestNearbyShopEndpoints(unittest.TestCase):
         # Rating > 5.0
         resp = self.client.get(
             "/api/v1/shops/nearby?latitude=14.5995&longitude=120.9842&min_rating=5.01",
+            headers=self.auth_headers,
+        )
+        self.assertEqual(resp.status_code, 422)
+
+    def test_nearby_search_with_min_lokal_rating(self):
+        """Verify min_lokal_rating parameter is forwarded to get_nearby_shops RPC."""
+        mock_execute = MagicMock()
+        mock_execute.return_value.data = [self.sample_nearby_shops[0]]
+        self.mock_supabase.rpc.return_value.execute = mock_execute
+
+        response = self.client.get(
+            "/api/v1/shops/nearby?latitude=14.5995&longitude=120.9842&min_lokal_rating=4.0",
+            headers=self.auth_headers,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.mock_supabase.rpc.assert_called_once_with(
+            "get_nearby_shops",
+            {
+                "user_lat": 14.5995,
+                "user_lng": 120.9842,
+                "radius_meters": 5000.0,
+                "result_limit": 50,
+                "result_offset": 0,
+                "search_query": None,
+                "min_rating": None,
+                "sort_by": "distance",
+                "min_lokal_rating": 4.0,
+            },
+        )
+
+    def test_nearby_search_min_lokal_rating_validation(self):
+        """Verify min_lokal_rating boundary validation: [0.0, 5.0]."""
+        # Negative rating
+        resp = self.client.get(
+            "/api/v1/shops/nearby?latitude=14.5995&longitude=120.9842&min_lokal_rating=-0.1",
+            headers=self.auth_headers,
+        )
+        self.assertEqual(resp.status_code, 422)
+
+        # Rating > 5.0
+        resp = self.client.get(
+            "/api/v1/shops/nearby?latitude=14.5995&longitude=120.9842&min_lokal_rating=5.01",
             headers=self.auth_headers,
         )
         self.assertEqual(resp.status_code, 422)
@@ -581,6 +631,34 @@ class TestNearbyShopEndpoints(unittest.TestCase):
                 "search_query": None,
                 "min_rating": None,
                 "sort_by": "rating",
+                "min_lokal_rating": None,
+            },
+        )
+
+    def test_nearby_search_with_sort_by_lokal_rating(self):
+        """Verify sort_by='lokal_rating' is accepted and forwarded to RPC."""
+        mock_execute = MagicMock()
+        mock_execute.return_value.data = self.sample_nearby_shops
+        self.mock_supabase.rpc.return_value.execute = mock_execute
+
+        response = self.client.get(
+            "/api/v1/shops/nearby?latitude=14.5995&longitude=120.9842&sort_by=lokal_rating",
+            headers=self.auth_headers,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.mock_supabase.rpc.assert_called_once_with(
+            "get_nearby_shops",
+            {
+                "user_lat": 14.5995,
+                "user_lng": 120.9842,
+                "radius_meters": 5000.0,
+                "result_limit": 50,
+                "result_offset": 0,
+                "search_query": None,
+                "min_rating": None,
+                "sort_by": "lokal_rating",
+                "min_lokal_rating": None,
             },
         )
 
@@ -607,12 +685,13 @@ class TestNearbyShopEndpoints(unittest.TestCase):
                 "search_query": None,
                 "min_rating": None,
                 "sort_by": "distance",
+                "min_lokal_rating": None,
             },
         )
 
     def test_nearby_search_sort_by_strict_lowercase_contract(self):
         """Verify sort_by requires exact lowercase; uppercase or unsupported values return 422."""
-        invalid_sorts = ["RATING", "DISTANCE", "Rating", "Distance", "popularity", "name"]
+        invalid_sorts = ["RATING", "DISTANCE", "LOKAL_RATING", "Rating", "Distance", "lokal_rating_desc", "popularity", "name"]
         for invalid_sort in invalid_sorts:
             resp = self.client.get(
                 f"/api/v1/shops/nearby?latitude=14.5995&longitude=120.9842&sort_by={invalid_sort}",
@@ -627,7 +706,7 @@ class TestNearbyShopEndpoints(unittest.TestCase):
         self.mock_supabase.rpc.return_value.execute = mock_execute
 
         response = self.client.get(
-            "/api/v1/shops/nearby?latitude=14.5995&longitude=120.9842&query=Kape&min_rating=4.5&sort_by=rating&radius=3000&limit=20&offset=0",
+            "/api/v1/shops/nearby?latitude=14.5995&longitude=120.9842&query=Kape&min_rating=4.5&min_lokal_rating=4.0&sort_by=lokal_rating&radius=3000&limit=20&offset=0",
             headers=self.auth_headers,
         )
 
@@ -642,9 +721,55 @@ class TestNearbyShopEndpoints(unittest.TestCase):
                 "result_offset": 0,
                 "search_query": "Kape",
                 "min_rating": 4.5,
-                "sort_by": "rating",
+                "sort_by": "lokal_rating",
+                "min_lokal_rating": 4.0,
             },
         )
+
+    def test_nearby_search_response_with_lokal_rating_metrics(self):
+        """Verify NearbyShopResponse correctly serializes populated lokal_rating and count."""
+        shop_with_lokal = dict(
+            self.sample_nearby_shops[0],
+            lokal_rating=4.75,
+            lokal_reviews_count=4,
+        )
+        mock_execute = MagicMock()
+        mock_execute.return_value.data = [shop_with_lokal]
+        self.mock_supabase.rpc.return_value.execute = mock_execute
+
+        response = self.client.get(
+            "/api/v1/shops/nearby?latitude=14.5995&longitude=120.9842",
+            headers=self.auth_headers,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertEqual(len(data), 1)
+        self.assertEqual(data[0]["lokal_rating"], 4.75)
+        self.assertEqual(data[0]["lokal_reviews_count"], 4)
+        self.assertEqual(data[0]["rating"], 4.80)  # External rating remains separate
+
+    def test_nearby_search_response_with_null_lokal_rating(self):
+        """Verify NearbyShopResponse handles shops with zero LOKAL reviews (null rating, 0 count)."""
+        shop_without_lokal = dict(
+            self.sample_nearby_shops[0],
+            lokal_rating=None,
+            lokal_reviews_count=0,
+        )
+        mock_execute = MagicMock()
+        mock_execute.return_value.data = [shop_without_lokal]
+        self.mock_supabase.rpc.return_value.execute = mock_execute
+
+        response = self.client.get(
+            "/api/v1/shops/nearby?latitude=14.5995&longitude=120.9842",
+            headers=self.auth_headers,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertEqual(len(data), 1)
+        self.assertIsNone(data[0]["lokal_rating"])
+        self.assertEqual(data[0]["lokal_reviews_count"], 0)
 
     def test_curation_invariant_excludes_pending_and_excluded_shops_on_search_and_filter(self):
         """Verify shops marked PENDING_REVIEW or EXCLUDED remain excluded even if matching query, rating, and radius.

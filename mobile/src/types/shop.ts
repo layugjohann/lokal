@@ -9,6 +9,8 @@ export interface Shop {
   created_at?: string | null;
   updated_at?: string | null;
   distance_meters: number;
+  lokal_rating?: number | null;
+  lokal_reviews_count?: number;
 }
 
 export interface NearbySearchParams {
@@ -19,6 +21,7 @@ export interface NearbySearchParams {
   offset?: number;
   query?: string;
   minRating?: number;
-  sortBy?: 'distance' | 'rating';
+  minLokalRating?: number;
+  sortBy?: 'distance' | 'rating' | 'lokal_rating';
 }
 

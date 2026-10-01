@@ -232,3 +232,51 @@ test('fetchNearbyShops strips and ignores whitespace-only query', async () => {
   }
 });
 
+test('fetchNearbyShops correctly serializes min_lokal_rating and sort_by=lokal_rating', async () => {
+  const originalFetch = globalThis.fetch;
+  let requestedUrl = '';
+
+  globalThis.fetch = async (input) => {
+    requestedUrl = input.toString();
+    return {
+      ok: true,
+      json: async () => [
+        {
+          id: 'shop-1',
+          name: 'Kape Escolta',
+          address: 'Escolta St',
+          latitude: 14.5995,
+          longitude: 120.9842,
+          rating: 4.8,
+          distance_meters: 150,
+          lokal_rating: 4.5,
+          lokal_reviews_count: 2,
+        },
+      ],
+    };
+  };
+
+  try {
+    const data = await fetchNearbyShops({
+      latitude: 14.5995,
+      longitude: 120.9842,
+      query: 'Escolta',
+      minRating: 4.0,
+      minLokalRating: 4.5,
+      sortBy: 'lokal_rating',
+    });
+
+    assert.ok(requestedUrl.includes('query=Escolta'));
+    assert.ok(requestedUrl.includes('min_rating=4'));
+    assert.ok(requestedUrl.includes('min_lokal_rating=4.5'));
+    assert.ok(requestedUrl.includes('sort_by=lokal_rating'));
+
+    assert.strictEqual(data.length, 1);
+    assert.strictEqual(data[0].lokal_rating, 4.5);
+    assert.strictEqual(data[0].lokal_reviews_count, 2);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+

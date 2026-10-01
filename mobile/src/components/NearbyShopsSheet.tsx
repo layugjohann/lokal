@@ -26,10 +26,12 @@ interface NearbyShopsSheetProps {
   onSearchChange?: (text: string) => void;
   minRating?: number | null;
   onMinRatingChange?: (rating: number | null) => void;
+  minLokalRating?: number | null;
+  onMinLokalRatingChange?: (rating: number | null) => void;
   radius?: number;
   onRadiusChange?: (radius: number) => void;
-  sortBy?: 'distance' | 'rating';
-  onSortByChange?: (sort: 'distance' | 'rating') => void;
+  sortBy?: 'distance' | 'rating' | 'lokal_rating';
+  onSortByChange?: (sort: 'distance' | 'rating' | 'lokal_rating') => void;
   onResetFilters?: () => void;
   hasActiveFilters?: boolean;
 }
@@ -47,6 +49,8 @@ export default function NearbyShopsSheet({
   onSearchChange,
   minRating = null,
   onMinRatingChange,
+  minLokalRating = null,
+  onMinLokalRatingChange,
   radius = 5000,
   onRadiusChange,
   sortBy = 'distance',
@@ -94,14 +98,14 @@ export default function NearbyShopsSheet({
       <View style={styles.searchContainer}>
         <TextInput
           style={styles.searchInput}
-          placeholder="Search coffee shops by name..."
+          placeholder="Search by name or address..."
           placeholderTextColor="#8C7D73"
           value={searchQuery}
           onChangeText={onSearchChange}
           returnKeyType="search"
           autoCorrect={false}
           accessibilityRole="search"
-          accessibilityLabel="Search coffee shops by name"
+          accessibilityLabel="Search coffee shops by name or address"
         />
         {Boolean(searchQuery) && (
           <TouchableOpacity
@@ -143,7 +147,7 @@ export default function NearbyShopsSheet({
           );
         })}
 
-        {/* Rating filter presets */}
+        {/* External rating filter presets */}
         {[4.0, 4.5].map((rate) => {
           const isActive = minRating === rate;
           return (
@@ -153,10 +157,29 @@ export default function NearbyShopsSheet({
               onPress={() => onMinRatingChange?.(isActive ? null : rate)}
               activeOpacity={0.7}
               accessibilityRole="button"
-              accessibilityLabel={`Filter minimum rating ${rate}`}
+              accessibilityLabel={`Filter minimum Google rating ${rate}`}
             >
               <Text style={[styles.filterChipText, isActive && styles.filterChipTextActive]}>
-                {`★ ${rate}+`}
+                {`Google ★ ${rate}+`}
+              </Text>
+            </TouchableOpacity>
+          );
+        })}
+
+        {/* LOKAL Community rating filter presets */}
+        {[4.0, 4.5].map((rate) => {
+          const isActive = minLokalRating === rate;
+          return (
+            <TouchableOpacity
+              key={`lokal-rate-${rate}`}
+              style={[styles.filterChip, isActive && styles.filterChipActive]}
+              onPress={() => onMinLokalRatingChange?.(isActive ? null : rate)}
+              activeOpacity={0.7}
+              accessibilityRole="button"
+              accessibilityLabel={`Filter minimum LOKAL community rating ${rate}`}
+            >
+              <Text style={[styles.filterChipText, isActive && styles.filterChipTextActive]}>
+                {`LOKAL ★ ${rate}+`}
               </Text>
             </TouchableOpacity>
           );
@@ -180,10 +203,22 @@ export default function NearbyShopsSheet({
           onPress={() => onSortByChange?.('rating')}
           activeOpacity={0.7}
           accessibilityRole="button"
-          accessibilityLabel="Sort by rating"
+          accessibilityLabel="Sort by Google rating"
         >
           <Text style={[styles.filterChipText, sortBy === 'rating' && styles.filterChipTextActive]}>
             Top Rated
+          </Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={[styles.filterChip, sortBy === 'lokal_rating' && styles.filterChipActive]}
+          onPress={() => onSortByChange?.('lokal_rating')}
+          activeOpacity={0.7}
+          accessibilityRole="button"
+          accessibilityLabel="Sort by LOKAL community rating"
+        >
+          <Text style={[styles.filterChipText, sortBy === 'lokal_rating' && styles.filterChipTextActive]}>
+            Top LOKAL
           </Text>
         </TouchableOpacity>
       </ScrollView>
@@ -264,6 +299,15 @@ export default function NearbyShopsSheet({
                 </Text>
                 <View style={styles.metaRow}>
                   <Text style={styles.ratingText}>{rating}</Text>
+                  {item.lokal_rating !== undefined && item.lokal_rating !== null ? (
+                    <>
+                      <Text style={styles.dot}>•</Text>
+                      <Text style={styles.lokalRatingText}>
+                        ☕ {Number(item.lokal_rating).toFixed(1)} ★
+                        {item.lokal_reviews_count ? ` (${item.lokal_reviews_count})` : ''}
+                      </Text>
+                    </>
+                  ) : null}
                   {dist ? <Text style={styles.dot}>•</Text> : null}
                   {dist ? <Text style={styles.distanceText}>{dist}</Text> : null}
                 </View>
@@ -468,6 +512,11 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '600',
     color: '#A06D00',
+  },
+  lokalRatingText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#8A3B28',
   },
   dot: {
     color: '#C4B8AE',
