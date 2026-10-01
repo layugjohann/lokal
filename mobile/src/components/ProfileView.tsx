@@ -62,7 +62,7 @@ export default function ProfileView({
   const email = user?.email || '';
 
   const handleOpenShopDetail = (fav: FavoriteShop) => {
-    let distanceMeters = 0;
+    let distanceMeters = Number.NaN;
     if (userLocation) {
       distanceMeters = calculateDistanceMeters(
         userLocation.latitude,
@@ -95,6 +95,7 @@ export default function ProfileView({
     if (!isFavorite) {
       removeFavoriteOptimistic(shopId);
     }
+    void refetch();
   };
 
   return (

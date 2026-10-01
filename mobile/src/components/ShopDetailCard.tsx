@@ -394,7 +394,13 @@ export default function ShopDetailCard({
       } else {
         await addFavorite(activeShopId, activeToken);
       }
-      onFavoriteChange?.(activeShopId, !previousFavorite);
+      if (
+        mutationId === currentFavoriteMutationId.current &&
+        activeShopId === shop.id &&
+        activeToken === authToken
+      ) {
+        onFavoriteChange?.(activeShopId, !previousFavorite);
+      }
     } catch (err) {
       if (
         mutationId === currentFavoriteMutationId.current &&

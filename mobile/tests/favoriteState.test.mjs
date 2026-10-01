@@ -67,7 +67,7 @@ class ShopDetailCardFavoriteStateHarness {
     }
   }
 
-  async toggleFavorite(mutateFn) {
+  async toggleFavorite(mutateFn, onFavoriteChange) {
     if (!this.authToken) {
       this.favoriteError = 'Please sign in to favorite this coffee shop.';
       return;
@@ -88,6 +88,13 @@ class ShopDetailCardFavoriteStateHarness {
 
     try {
       await mutateFn(activeShopId, !previousFavorite, activeToken);
+      if (
+        mutationId === this.currentFavoriteMutationId &&
+        activeShopId === this.shop.id &&
+        activeToken === this.authToken
+      ) {
+        onFavoriteChange?.(activeShopId, !previousFavorite);
+      }
     } catch (err) {
       if (
         mutationId === this.currentFavoriteMutationId &&
@@ -96,6 +103,7 @@ class ShopDetailCardFavoriteStateHarness {
       ) {
         // Rollback state on failure
         this.isFavorite = previousFavorite;
+        onFavoriteChange?.(activeShopId, previousFavorite);
         const message =
           err instanceof Error
             ? err.message
@@ -392,3 +400,69 @@ test('toggleFavorite returns early and does not mutate while favorite status is 
   assert.strictEqual(harness.isFavorite, null);
   assert.strictEqual(harness.isMutatingFavorite, false);
 });
+
+test('Stale toggleFavorite protection: stale successful mutation does not invoke onFavoriteChange callback', async () => {
+  const harness = new ShopDetailCardFavoriteStateHarness({ id: 'shop-A', name: 'Shop A' }, 'token-1');
+  await harness.loadFavorite(async () => ({
+    shop_id: 'shop-A',
+    is_favorite: false,
+    favorited_at: null,
+  }));
+
+  let resolveMutationA;
+  const mutationAPromise = new Promise((resolve) => {
+    resolveMutationA = resolve;
+  });
+
+  let callbackCalled = false;
+  let callbackShopId = null;
+  let callbackIsFavorite = null;
+
+  const togglePromiseA = harness.toggleFavorite(
+    () => mutationAPromise,
+    (shopId, isFavorite) => {
+      callbackCalled = true;
+      callbackShopId = shopId;
+      callbackIsFavorite = isFavorite;
+    }
+  );
+
+  // User rapidly navigates away to Shop B before mutation resolves
+  harness.switchContext({ id: 'shop-B', name: 'Shop B' });
+
+  // Mutation A now succeeds late
+  resolveMutationA();
+  await togglePromiseA;
+
+  // Stale mutation callback MUST NOT have been invoked
+  assert.strictEqual(callbackCalled, false);
+  assert.strictEqual(callbackShopId, null);
+  assert.strictEqual(callbackIsFavorite, null);
+});
+
+test('Successful toggleFavorite invokes onFavoriteChange callback when mutation ownership is preserved', async () => {
+  const harness = new ShopDetailCardFavoriteStateHarness({ id: 'shop-1', name: 'Shop 1' }, 'token-1');
+  await harness.loadFavorite(async () => ({
+    shop_id: 'shop-1',
+    is_favorite: false,
+    favorited_at: null,
+  }));
+
+  let callbackCalled = false;
+  let callbackShopId = null;
+  let callbackIsFavorite = null;
+
+  await harness.toggleFavorite(
+    async () => {},
+    (shopId, isFavorite) => {
+      callbackCalled = true;
+      callbackShopId = shopId;
+      callbackIsFavorite = isFavorite;
+    }
+  );
+
+  assert.strictEqual(callbackCalled, true);
+  assert.strictEqual(callbackShopId, 'shop-1');
+  assert.strictEqual(callbackIsFavorite, true);
+});
+

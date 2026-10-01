@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert';
 import { getUserDisplayName } from '../src/services/authService.ts';
 import { calculateDistanceMeters, formatDistance } from '../src/services/shopService.ts';
+import { FavoritesController } from '../src/hooks/useFavorites.ts';
 
 // ============================================================================
 // 1. User Profile Display Name Tests
@@ -48,10 +49,10 @@ test('getUserDisplayName returns "LOKAL User" when user is null or has no email'
 });
 
 // ============================================================================
-// 2. Distance Calculation for Saved Coffee Shops
+// 2. Distance Calculation & Formatting for Saved Coffee Shops
 // ============================================================================
 
-test('Distance formatting correctly handles coordinates and null location', () => {
+test('Distance formatting correctly handles coordinates and valid numbers', () => {
   const userLoc = { latitude: 14.5995, longitude: 120.9842 };
   const shopLoc = { latitude: 14.6045, longitude: 120.9842 };
 
@@ -63,98 +64,176 @@ test('Distance formatting correctly handles coordinates and null location', () =
   );
   assert.ok(meters > 500 && meters < 600);
   assert.strictEqual(formatDistance(meters), `${Math.round(meters)} m`);
+  assert.strictEqual(formatDistance(1250), '1.3 km');
+});
 
-  // Null or missing location formatting
+test('Distance formatting returns empty string for null, undefined, and NaN distances', () => {
   assert.strictEqual(formatDistance(null), '');
   assert.strictEqual(formatDistance(undefined), '');
+  assert.strictEqual(formatDistance(Number.NaN), '');
+});
+
+test('Missing user location produces NaN distance and omits badge instead of displaying false 0 m', () => {
+  const userLocation = null;
+  let distanceMeters = Number.NaN;
+  if (userLocation) {
+    distanceMeters = calculateDistanceMeters(14.5, 120.9, 14.6, 121.0);
+  }
+
+  assert.ok(Number.isNaN(distanceMeters));
+  const formatted = formatDistance(distanceMeters);
+  assert.strictEqual(formatted, '');
+  assert.notStrictEqual(formatted, '0 m');
 });
 
 // ============================================================================
-// 3. Stale Async Protection & Request ID Invariant Tests
+// 3. Stale Async Protection & Request ID Invariant Tests (Production FavoritesController)
 // ============================================================================
 
-test('Stale favorites fetch protection: token switch while request is in flight discards earlier response', async () => {
-  let requestId = 0;
-  let activeToken = 'token-A';
-  let favoritesState = [];
-
+test('Production FavoritesController: token switch while request is in flight discards earlier response', async () => {
   let resolveTokenA;
   const tokenAPromise = new Promise((resolve) => {
     resolveTokenA = resolve;
   });
 
-  const loadFavorites = async (token) => {
-    const currentId = ++requestId;
+  const mockFetch = async (token) => {
     if (token === 'token-A') {
-      const data = await tokenAPromise;
-      if (currentId === requestId) {
-        favoritesState = data;
-      }
-    } else if (token === 'token-B') {
-      const data = [{ id: 'shop-B', name: 'Shop B' }];
-      if (currentId === requestId) {
-        favoritesState = data;
-      }
+      return tokenAPromise;
     }
+    if (token === 'token-B') {
+      return [{ id: 'shop-B', name: 'Shop B' }];
+    }
+    return [];
   };
 
-  // Launch fetch for token A
-  const pendingA = loadFavorites(activeToken);
+  const controller = new FavoritesController(mockFetch);
 
-  // Switch to token B before token A resolves
-  activeToken = 'token-B';
-  await loadFavorites(activeToken);
+  // 1. Launch fetch for token A
+  const pendingA = controller.load('token-A');
+  assert.strictEqual(controller.getState().isLoading, true);
 
-  assert.strictEqual(favoritesState.length, 1);
-  assert.strictEqual(favoritesState[0].id, 'shop-B');
+  // 2. Switch to token B before token A resolves
+  await controller.load('token-B');
+  assert.strictEqual(controller.getState().isLoading, false);
+  assert.strictEqual(controller.getState().favorites.length, 1);
+  assert.strictEqual(controller.getState().favorites[0].id, 'shop-B');
 
-  // Now resolve token A late
+  // 3. Resolve token A late
   resolveTokenA([{ id: 'shop-A', name: 'Shop A' }]);
   await pendingA;
 
-  // Verify stale token A response did not overwrite token B state
-  assert.strictEqual(favoritesState.length, 1);
-  assert.strictEqual(favoritesState[0].id, 'shop-B');
+  // 4. Stale token A response did not overwrite token B state
+  assert.strictEqual(controller.getState().favorites.length, 1);
+  assert.strictEqual(controller.getState().favorites[0].id, 'shop-B');
 });
 
-test('Logout / auth transition immediately resets favorites state and ignores in-flight responses', async () => {
-  let requestId = 0;
-  let activeToken = 'token-A';
-  let favoritesState = [{ id: 'old', name: 'Old Shop' }];
-
+test('Production FavoritesController: logout / auth transition resets state and ignores in-flight responses', async () => {
   let resolveLateFetch;
   const lateFetchPromise = new Promise((resolve) => {
     resolveLateFetch = resolve;
   });
 
-  const loadFavorites = async (token) => {
-    if (!token) {
-      ++requestId;
-      favoritesState = [];
-      return;
-    }
-    const currentId = ++requestId;
-    const data = await lateFetchPromise;
-    if (currentId === requestId) {
-      favoritesState = data;
-    }
-  };
+  const mockFetch = async () => lateFetchPromise;
 
-  // Trigger in-flight load
-  const pendingLoad = loadFavorites(activeToken);
+  const controller = new FavoritesController(mockFetch, [
+    { id: 'old-shop', name: 'Old Shop' },
+  ]);
+  assert.strictEqual(controller.getState().favorites.length, 1);
 
-  // User logs out
-  activeToken = null;
-  await loadFavorites(null);
+  // 1. Trigger in-flight load for authenticated session
+  const pendingLoad = controller.load('token-A');
+  assert.strictEqual(controller.getState().isLoading, true);
 
-  assert.deepStrictEqual(favoritesState, []);
+  // 2. User logs out (null token)
+  await controller.load(null);
+  assert.deepStrictEqual(controller.getState().favorites, []);
+  assert.strictEqual(controller.getState().isLoading, false);
+  assert.strictEqual(controller.getState().errorMessage, null);
 
-  // Late fetch finishes after logout
-  resolveLateFetch([{ id: 'shop-1', name: 'Should Be Ignored' }]);
+  // 3. Late fetch finishes after logout
+  resolveLateFetch([{ id: 'shop-1', name: 'Should Be Discarded' }]);
   await pendingLoad;
 
-  // Verify state remains empty and was not resurrected
-  assert.deepStrictEqual(favoritesState, []);
+  // 4. State remains empty and was not resurrected
+  assert.deepStrictEqual(controller.getState().favorites, []);
+  assert.strictEqual(controller.getState().isLoading, false);
+});
+
+test('Production FavoritesController: favorite -> unfavorite -> favorite lifecycle reconciles authoritative collection', async () => {
+  const initialFavorites = [
+    { id: 'shop-1', name: 'Craft Coffee' },
+    { id: 'shop-2', name: 'Local Brew' },
+  ];
+
+  let currentServerFavorites = [...initialFavorites];
+  const mockFetch = async () => [...currentServerFavorites];
+
+  const controller = new FavoritesController(mockFetch, initialFavorites);
+
+  // Verify initial state
+  assert.strictEqual(controller.getState().favorites.length, 2);
+
+  // 1. User unfavorites shop-1 -> optimistic removal removes it immediately
+  controller.removeOptimistic('shop-1');
+  assert.strictEqual(controller.getState().favorites.length, 1);
+  assert.strictEqual(controller.getState().favorites[0].id, 'shop-2');
+
+  // Server state reflects unfavorite
+  currentServerFavorites = [{ id: 'shop-2', name: 'Local Brew' }];
+
+  // ProfileView reconciles via refetch
+  await controller.load('token-1');
+  assert.strictEqual(controller.getState().favorites.length, 1);
+  assert.strictEqual(controller.getState().favorites[0].id, 'shop-2');
+
+  // 2. User re-favorites shop-1 in ShopDetailCard
+  // Server state now has shop-1 restored
+  currentServerFavorites = [
+    { id: 'shop-1', name: 'Craft Coffee' },
+    { id: 'shop-2', name: 'Local Brew' },
+  ];
+
+  // ProfileView reconciles via refetch on favorite change (isFavorite === true)
+  await controller.load('token-1');
+  assert.strictEqual(controller.getState().favorites.length, 2);
+  assert.strictEqual(controller.getState().favorites[0].id, 'shop-1');
+  assert.strictEqual(controller.getState().favorites[1].id, 'shop-2');
+});
+
+test('Production FavoritesController: late refetch response from older request does not overwrite newer state', async () => {
+  let resolveFirstRefetch;
+  const firstPromise = new Promise((resolve) => {
+    resolveFirstRefetch = resolve;
+  });
+
+  let fetchCount = 0;
+  const mockFetch = async () => {
+    fetchCount += 1;
+    if (fetchCount === 1) {
+      return firstPromise;
+    }
+    return [{ id: 'shop-latest', name: 'Latest Refetched Shop' }];
+  };
+
+  const controller = new FavoritesController(mockFetch);
+
+  // 1. Start first refetch
+  const pending1 = controller.load('token-1');
+
+  // 2. Rapid second refetch initiated (e.g. rapid favorite toggling)
+  const pending2 = controller.load('token-1');
+  await pending2;
+
+  assert.strictEqual(controller.getState().favorites.length, 1);
+  assert.strictEqual(controller.getState().favorites[0].id, 'shop-latest');
+
+  // 3. First refetch resolves with older data
+  resolveFirstRefetch([{ id: 'shop-stale', name: 'Stale Shop' }]);
+  await pending1;
+
+  // 4. Controller ignores older response and retains latest authoritative data
+  assert.strictEqual(controller.getState().favorites.length, 1);
+  assert.strictEqual(controller.getState().favorites[0].id, 'shop-latest');
 });
 
 // ============================================================================

@@ -1,6 +1,107 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { FavoriteShop } from '../types/favorite';
-import { fetchUserFavorites } from '../services/favoriteService';
+import type { FavoriteShop } from '../types/favorite';
+import { fetchUserFavorites } from '../services/favoriteService.ts';
+
+export interface FavoritesState {
+  favorites: FavoriteShop[];
+  isLoading: boolean;
+  errorMessage: string | null;
+}
+
+export type FavoritesListener = (state: FavoritesState) => void;
+
+/**
+ * Encapsulates asynchronous favorites lifecycle, optimistic removal, and
+ * monotonic request sequencing to prevent stale or race-conditioned state.
+ */
+export class FavoritesController {
+  private requestId = 0;
+  private state: FavoritesState;
+  private listeners = new Set<FavoritesListener>();
+  private fetchFn: (token: string) => Promise<FavoriteShop[]>;
+
+  constructor(
+    fetchFn: (token: string) => Promise<FavoriteShop[]> = fetchUserFavorites,
+    initialFavorites: FavoriteShop[] = []
+  ) {
+    this.fetchFn = fetchFn;
+    this.state = {
+      favorites: initialFavorites,
+      isLoading: false,
+      errorMessage: null,
+    };
+  }
+
+  getState(): FavoritesState {
+    return this.state;
+  }
+
+  subscribe(listener: FavoritesListener): () => void {
+    this.listeners.add(listener);
+    return () => {
+      this.listeners.delete(listener);
+    };
+  }
+
+  private setState(nextState: FavoritesState): void {
+    this.state = nextState;
+    this.listeners.forEach((listener) => listener(nextState));
+  }
+
+  cancel(): void {
+    this.requestId += 1;
+  }
+
+  async load(authToken?: string | null): Promise<void> {
+    const trimmed = authToken?.trim();
+    if (!trimmed) {
+      this.requestId += 1;
+      this.setState({
+        favorites: [],
+        isLoading: false,
+        errorMessage: null,
+      });
+      return;
+    }
+
+    const currentId = ++this.requestId;
+    this.setState({
+      ...this.state,
+      isLoading: true,
+      errorMessage: null,
+    });
+
+    try {
+      const data = await this.fetchFn(trimmed);
+      if (currentId !== this.requestId) {
+        return;
+      }
+      this.setState({
+        favorites: data,
+        isLoading: false,
+        errorMessage: null,
+      });
+    } catch (err: unknown) {
+      if (currentId !== this.requestId) {
+        return;
+      }
+      const message =
+        err instanceof Error ? err.message : 'Unable to load favorite coffee shops.';
+      this.setState({
+        ...this.state,
+        isLoading: false,
+        errorMessage: message,
+      });
+    }
+  }
+
+  removeOptimistic(shopId: string): void {
+    this.setState({
+      ...this.state,
+      favorites: this.state.favorites.filter((item) => item.id !== shopId),
+    });
+  }
+}
 
 export interface UseFavoritesResult {
   favorites: FavoriteShop[];
@@ -11,61 +112,46 @@ export interface UseFavoritesResult {
 }
 
 export function useFavorites(authToken?: string | null): UseFavoritesResult {
-  const [favorites, setFavorites] = useState<FavoriteShop[]>([]);
-  const [isLoading, setIsLoading] = useState<boolean>(false);
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const controllerRef = useRef<FavoritesController | null>(null);
+  if (!controllerRef.current) {
+    controllerRef.current = new FavoritesController();
+  }
+  const controller = controllerRef.current;
 
-  const requestIdRef = useRef<number>(0);
-
-  const loadFavorites = useCallback(async () => {
-    if (!authToken || !authToken.trim()) {
-      ++requestIdRef.current;
-      setFavorites([]);
-      setIsLoading(false);
-      setErrorMessage(null);
-      return;
-    }
-
-    const currentRequestId = ++requestIdRef.current;
-    setIsLoading(true);
-    setErrorMessage(null);
-
-    try {
-      const data = await fetchUserFavorites(authToken);
-      if (currentRequestId !== requestIdRef.current) {
-        return;
-      }
-      setFavorites(data);
-    } catch (err: unknown) {
-      if (currentRequestId !== requestIdRef.current) {
-        return;
-      }
-      const message =
-        err instanceof Error ? err.message : 'Unable to load favorite coffee shops.';
-      setErrorMessage(message);
-    } finally {
-      if (currentRequestId === requestIdRef.current) {
-        setIsLoading(false);
-      }
-    }
-  }, [authToken]);
+  const [state, setState] = useState<FavoritesState>(() => controller.getState());
 
   useEffect(() => {
-    loadFavorites();
+    const unsubscribe = controller.subscribe((nextState) => {
+      setState(nextState);
+    });
     return () => {
-      ++requestIdRef.current;
+      unsubscribe();
     };
-  }, [loadFavorites]);
+  }, [controller]);
 
-  const removeFavoriteOptimistic = useCallback((shopId: string) => {
-    setFavorites((prev) => prev.filter((item) => item.id !== shopId));
-  }, []);
+  useEffect(() => {
+    controller.load(authToken);
+    return () => {
+      controller.cancel();
+    };
+  }, [controller, authToken]);
+
+  const refetch = useCallback(async () => {
+    await controller.load(authToken);
+  }, [controller, authToken]);
+
+  const removeFavoriteOptimistic = useCallback(
+    (shopId: string) => {
+      controller.removeOptimistic(shopId);
+    },
+    [controller]
+  );
 
   return {
-    favorites,
-    isLoading,
-    errorMessage,
-    refetch: loadFavorites,
+    favorites: state.favorites,
+    isLoading: state.isLoading,
+    errorMessage: state.errorMessage,
+    refetch,
     removeFavoriteOptimistic,
   };
 }
