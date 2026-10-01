@@ -13,7 +13,7 @@ from .curation import (
     ShopCurationResponse,
     ShopEligibilityStatus,
 )
-from .favorite import FavoriteStatusResponse
+from .favorite import FavoriteShopResponse, FavoriteStatusResponse
 from .review import (
     ProviderAttribution,
     RecommendationItem,
@@ -70,4 +70,5 @@ __all__ = [
     "CurationOverrideRequest",
     "CurationEvaluationResponse",
     "FavoriteStatusResponse",
+    "FavoriteShopResponse",
 ]

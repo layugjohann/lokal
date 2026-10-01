@@ -7,7 +7,7 @@ from postgrest.exceptions import APIError
 from supabase import Client
 
 from ..schemas.auth import UserResponse
-from ..schemas.favorite import FavoriteStatusResponse
+from ..schemas.favorite import FavoriteShopResponse, FavoriteStatusResponse
 
 logger = logging.getLogger(__name__)
 
@@ -268,3 +268,123 @@ class FavoriteService:
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="An unexpected error occurred while processing the request.",
             )
+
+    def list_favorites(
+        self,
+        user: UserResponse,
+        supabase: Client,
+    ) -> list[FavoriteShopResponse]:
+        """Retrieve all approved coffee shops favorited by the authenticated user,
+
+        ordered by most-recently favorited first.
+        Non-approved shops (PENDING_REVIEW, EXCLUDED) are excluded.
+        """
+        # 1. Query user's favorites ordered by created_at DESC
+        try:
+            fav_res = (
+                supabase.table("favorites")
+                .select("id, shop_id, created_at")
+                .eq("user_id", str(user.id))
+                .order("created_at", desc=True)
+                .execute()
+            )
+            favorites_data = fav_res.data or []
+        except HTTPException:
+            raise
+        except APIError as exc:
+            logger.error(f"Database error querying favorites for user {user.id}: {exc.message}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="A database error occurred while retrieving favorites.",
+            ) from exc
+        except Exception as exc:
+            logger.error(f"Unexpected error querying favorites for user {user.id}: {exc}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="An unexpected error occurred while processing the request.",
+            ) from exc
+
+        if not favorites_data:
+            return []
+
+        shop_ids = [str(item["shop_id"]) for item in favorites_data if item.get("shop_id")]
+        if not shop_ids:
+            return []
+
+        # 2. Enforce fail-closed shop curation status: filter by APPROVED
+        try:
+            curation_res = (
+                supabase.table("shop_curation")
+                .select("shop_id, status")
+                .in_("shop_id", shop_ids)
+                .eq("status", "APPROVED")
+                .execute()
+            )
+            curation_data = curation_res.data or []
+            approved_shop_ids = {str(item["shop_id"]) for item in curation_data if item.get("shop_id")}
+        except HTTPException:
+            raise
+        except APIError as exc:
+            logger.error(f"Database error verifying curation for favorite shops: {exc.message}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="A database error occurred while verifying coffee shop curation status.",
+            ) from exc
+        except Exception as exc:
+            logger.error(f"Unexpected error verifying curation for favorite shops: {exc}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="An unexpected error occurred while processing the request.",
+            ) from exc
+
+        if not approved_shop_ids:
+            return []
+
+        # 3. Load corresponding shop records
+        try:
+            shops_res = (
+                supabase.table("shops")
+                .select("id, name, address, latitude, longitude, rating, google_place_id, created_at, updated_at")
+                .in_("id", list(approved_shop_ids))
+                .execute()
+            )
+            shops_data = shops_res.data or []
+            shop_map = {str(s["id"]): s for s in shops_data if s.get("id")}
+        except HTTPException:
+            raise
+        except APIError as exc:
+            logger.error(f"Database error retrieving shops for favorites: {exc.message}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="A database error occurred while retrieving favorite shops.",
+            ) from exc
+        except Exception as exc:
+            logger.error(f"Unexpected error retrieving shops for favorites: {exc}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="An unexpected error occurred while processing the request.",
+            ) from exc
+
+        # 4. Return all currently approved favorite shops in most-recently-favorited order
+        results: list[FavoriteShopResponse] = []
+        for fav in favorites_data:
+            sid = str(fav.get("shop_id"))
+            if sid in approved_shop_ids and sid in shop_map:
+                s = shop_map[sid]
+                results.append(
+                    FavoriteShopResponse(
+                        id=s["id"],
+                        name=s["name"],
+                        address=s.get("address"),
+                        latitude=s["latitude"],
+                        longitude=s["longitude"],
+                        rating=s.get("rating"),
+                        google_place_id=s.get("google_place_id"),
+                        favorited_at=_parse_timestamp(fav.get("created_at")),
+                        created_at=s.get("created_at"),
+                        updated_at=s.get("updated_at"),
+                    )
+                )
+
+        return results
+

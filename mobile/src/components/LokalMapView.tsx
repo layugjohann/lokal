@@ -1,4 +1,4 @@
-import React, { useContext, useEffect, useRef } from 'react';
+import React, { useContext, useEffect, useRef, useState } from 'react';
 import {
   StyleSheet,
   View,
@@ -11,6 +11,8 @@ import { AuthContext } from '../context/AuthContext';
 import { useLocation } from '../hooks/useLocation';
 import { useNearbyShops } from '../hooks/useNearbyShops';
 import NearbyShopsSheet from './NearbyShopsSheet';
+import ProfileView from './ProfileView';
+import { getProfilePrincipalKey } from '../services/authService';
 import { formatDistance } from '../services/shopService';
 import { Shop } from '../types/shop';
 
@@ -28,6 +30,7 @@ export interface LokalMapViewProps {
 export default function LokalMapView({ authToken }: LokalMapViewProps = {}) {
   const auth = useContext(AuthContext);
   const activeAuthToken = authToken !== undefined ? authToken : (auth?.token ?? null);
+  const [isProfileOpen, setIsProfileOpen] = useState(false);
 
   const {
     location,
@@ -154,15 +157,25 @@ export default function LokalMapView({ authToken }: LokalMapViewProps = {}) {
 
       {auth && auth.status === 'authenticated' && (
         <TouchableOpacity
-          style={styles.logoutButton}
-          onPress={auth.logout}
+          style={styles.profileButton}
+          onPress={() => setIsProfileOpen(true)}
           accessibilityRole="button"
-          accessibilityLabel="Log out of LOKAL"
+          accessibilityLabel="Open user profile and saved coffee shops"
           activeOpacity={0.8}
         >
-          <Text style={styles.logoutButtonText}>Log Out</Text>
+          <Text style={styles.profileButtonText}>👤 Profile</Text>
         </TouchableOpacity>
       )}
+
+      <ProfileView
+        key={getProfilePrincipalKey(auth?.user, activeAuthToken)}
+        visible={isProfileOpen && auth?.status === 'authenticated'}
+        user={auth?.user ?? null}
+        authToken={activeAuthToken}
+        userLocation={location}
+        onClose={() => setIsProfileOpen(false)}
+        onLogout={auth?.logout ?? (async () => {})}
+      />
 
       {isLoading && (
         <View style={styles.loadingBanner}>
@@ -305,7 +318,7 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '500',
   },
-  logoutButton: {
+  profileButton: {
     position: 'absolute',
     top: 50,
     right: 16,
@@ -319,7 +332,7 @@ const styles = StyleSheet.create({
     shadowRadius: 4,
     elevation: 3,
   },
-  logoutButtonText: {
+  profileButtonText: {
     color: '#4A2E18',
     fontSize: 13,
     fontWeight: '600',

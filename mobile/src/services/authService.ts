@@ -220,3 +220,40 @@ export async function getMe(
 
   return response.json();
 }
+
+/**
+ * Resolves the display name for an authenticated user using full_name or display_name
+ * metadata, falling back to email prefix or 'LOKAL User'.
+ */
+export function getUserDisplayName(user?: AuthUser | null): string {
+  if (!user) return 'LOKAL User';
+  const meta = user.user_metadata || {};
+  if (typeof meta.full_name === 'string' && meta.full_name.trim()) {
+    return meta.full_name.trim();
+  }
+  if (typeof meta.display_name === 'string' && meta.display_name.trim()) {
+    return meta.display_name.trim();
+  }
+  if (user.email && user.email.trim()) {
+    return user.email.split('@')[0];
+  }
+  return 'LOKAL User';
+}
+
+/**
+ * Resolves the stable principal key for ProfileView instance identity,
+ * ensuring account changes remount the view while token refreshes for the same user do not.
+ */
+export function getProfilePrincipalKey(
+  user?: AuthUser | null,
+  authToken?: string | null
+): string {
+  if (user?.id) {
+    return `user:${user.id}`;
+  }
+  if (authToken && authToken.trim()) {
+    return `token:${authToken.trim()}`;
+  }
+  return 'signed-out';
+}
+

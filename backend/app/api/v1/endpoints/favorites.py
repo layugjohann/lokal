@@ -6,6 +6,7 @@ from supabase import Client
 
 from ...deps import get_authenticated_supabase, get_current_user
 from ....schemas import (
+    FavoriteShopResponse,
     FavoriteStatusResponse,
     MessageResponse,
     UserResponse,
@@ -15,11 +16,34 @@ from ....services.favorites import FavoriteService
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+user_favorites_router = APIRouter()
 
 
 def get_favorite_service() -> FavoriteService:
     """Dependency provider for FavoriteService."""
     return FavoriteService()
+
+
+@user_favorites_router.get(
+    "",
+    response_model=list[FavoriteShopResponse],
+    status_code=status.HTTP_200_OK,
+    summary="List authenticated user's favorite coffee shops",
+)
+def list_user_favorites(
+    current_user: Annotated[UserResponse, Depends(get_current_user)],
+    supabase: Annotated[Client, Depends(get_authenticated_supabase)],
+    service: Annotated[FavoriteService, Depends(get_favorite_service)],
+) -> list[FavoriteShopResponse]:
+    """Retrieve all approved coffee shops favorited by the current authenticated user.
+
+    Requires authentication. Excludes non-approved shops.
+    """
+    return service.list_favorites(
+        user=current_user,
+        supabase=supabase,
+    )
+
 
 
 @router.get(
