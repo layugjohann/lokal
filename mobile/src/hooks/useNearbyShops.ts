@@ -1,7 +1,149 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { Shop } from '../types/shop';
-import { LocationCoordinates } from '../types/location';
-import { fetchNearbyShops } from '../services/shopService';
+import type { Shop, NearbySearchParams } from '../types/shop.ts';
+import type { LocationCoordinates } from '../types/location.ts';
+import { fetchNearbyShops } from '../services/shopService.ts';
+
+export interface NearbyShopsState {
+  shops: Shop[];
+  isLoading: boolean;
+  errorMessage: string | null;
+  selectedShop: Shop | null;
+}
+
+export type NearbyShopsListener = (state: NearbyShopsState) => void;
+
+/**
+ * Encapsulates asynchronous nearby coffee shop discovery lifecycle,
+ * monotonic request sequencing, selection synchronization, and
+ * stale-response discarding.
+ */
+export class NearbyShopsController {
+  private requestId = 0;
+  private state: NearbyShopsState;
+  private listeners = new Set<NearbyShopsListener>();
+  private fetchFn: (
+    params: NearbySearchParams,
+    authToken?: string | null
+  ) => Promise<Shop[]>;
+
+  constructor(
+    fetchFn: (
+      params: NearbySearchParams,
+      authToken?: string | null
+    ) => Promise<Shop[]> = fetchNearbyShops,
+    initialShops: Shop[] = []
+  ) {
+    this.fetchFn = fetchFn;
+    this.state = {
+      shops: initialShops,
+      isLoading: false,
+      errorMessage: null,
+      selectedShop: null,
+    };
+  }
+
+  /**
+   * Returns the current immutable snapshot of nearby shops state.
+   */
+  getState(): NearbyShopsState {
+    return this.state;
+  }
+
+  /**
+   * Subscribes a listener to state updates and returns an unsubscribe cleanup function.
+   */
+  subscribe(listener: NearbyShopsListener): () => void {
+    this.listeners.add(listener);
+    return () => {
+      this.listeners.delete(listener);
+    };
+  }
+
+  private setState(nextState: NearbyShopsState): void {
+    this.state = nextState;
+    this.listeners.forEach((listener) => listener(nextState));
+  }
+
+  /**
+   * Updates the currently selected coffee shop.
+   */
+  setSelectedShop(shop: Shop | null): void {
+    this.setState({
+      ...this.state,
+      selectedShop: shop,
+    });
+  }
+
+  /**
+   * Invalidates any active in-flight requests by bumping the monotonic request ID.
+   */
+  cancel(): void {
+    this.requestId += 1;
+  }
+
+  /**
+   * Loads nearby shops for the given parameters and auth token.
+   * If parameters are null (e.g. location missing), invalidates in-flight requests
+   * and resets state.
+   */
+  async load(
+    params: NearbySearchParams | null,
+    authToken?: string | null
+  ): Promise<void> {
+    if (!params) {
+      this.requestId += 1;
+      this.setState({
+        shops: [],
+        isLoading: false,
+        errorMessage: null,
+        selectedShop: null,
+      });
+      return;
+    }
+
+    const currentId = ++this.requestId;
+    this.setState({
+      ...this.state,
+      isLoading: true,
+      errorMessage: null,
+    });
+
+    try {
+      const data = await this.fetchFn(params, authToken);
+
+      if (currentId !== this.requestId) {
+        return;
+      }
+
+      const prevSelected = this.state.selectedShop;
+      const nextSelected = prevSelected
+        ? data.find((s) => s.id === prevSelected.id) ?? null
+        : null;
+
+      this.setState({
+        shops: data,
+        isLoading: false,
+        errorMessage: null,
+        selectedShop: nextSelected,
+      });
+    } catch (err) {
+      if (currentId !== this.requestId) {
+        return;
+      }
+
+      const message =
+        err instanceof Error
+          ? err.message
+          : 'Unable to load nearby coffee shops.';
+
+      this.setState({
+        ...this.state,
+        isLoading: false,
+        errorMessage: message,
+      });
+    }
+  }
+}
 
 export interface UseNearbyShopsResult {
   shops: Shop[];
@@ -28,10 +170,13 @@ export function useNearbyShops(
   location: LocationCoordinates | null,
   authToken?: string | null
 ): UseNearbyShopsResult {
-  const [shops, setShops] = useState<Shop[]>([]);
-  const [isLoading, setIsLoading] = useState<boolean>(false);
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [selectedShop, setSelectedShop] = useState<Shop | null>(null);
+  const controllerRef = useRef<NearbyShopsController | null>(null);
+  if (!controllerRef.current) {
+    controllerRef.current = new NearbyShopsController();
+  }
+  const controller = controllerRef.current;
+
+  const [state, setState] = useState<NearbyShopsState>(() => controller.getState());
 
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [debouncedQuery, setDebouncedQuery] = useState<string>('');
@@ -40,7 +185,20 @@ export function useNearbyShops(
   const [radius, setRadius] = useState<number>(5000);
   const [sortBy, setSortBy] = useState<'distance' | 'rating' | 'lokal_rating'>('distance');
 
-  const requestIdRef = useRef<number>(0);
+  useEffect(() => {
+    const unsubscribe = controller.subscribe((nextState) => {
+      setState(nextState);
+    });
+    return () => {
+      unsubscribe();
+    };
+  }, [controller]);
+
+  useEffect(() => {
+    return () => {
+      controller.cancel();
+    };
+  }, [controller]);
 
   // Debounce search query input by 350ms
   useEffect(() => {
@@ -68,60 +226,22 @@ export function useNearbyShops(
   }, []);
 
   const fetchShops = useCallback(async () => {
-    if (!location) {
-      ++requestIdRef.current;
-      setShops([]);
-      setSelectedShop(null);
-      setIsLoading(false);
-      setErrorMessage(null);
-      return;
-    }
-
-    const currentRequestId = ++requestIdRef.current;
-    setIsLoading(true);
-    setErrorMessage(null);
-
-    try {
-      const data = await fetchNearbyShops(
-        {
-          latitude: location.latitude,
-          longitude: location.longitude,
-          radius,
-          query: debouncedQuery,
-          minRating: minRating ?? undefined,
-          minLokalRating: minLokalRating ?? undefined,
-          sortBy,
-        },
-        authToken
-      );
-
-      if (currentRequestId !== requestIdRef.current) {
-        return;
-      }
-
-      setShops(data);
-      setSelectedShop((prev) => {
-        if (!prev) {
-          return null;
-        }
-        const found = data.find((s) => s.id === prev.id);
-        return found || null;
-      });
-    } catch (err) {
-      if (currentRequestId !== requestIdRef.current) {
-        return;
-      }
-      const message =
-        err instanceof Error
-          ? err.message
-          : 'Unable to load nearby coffee shops.';
-      setErrorMessage(message);
-    } finally {
-      if (currentRequestId === requestIdRef.current) {
-        setIsLoading(false);
-      }
-    }
+    await controller.load(
+      location
+        ? {
+            latitude: location.latitude,
+            longitude: location.longitude,
+            radius,
+            query: debouncedQuery,
+            minRating: minRating ?? undefined,
+            minLokalRating: minLokalRating ?? undefined,
+            sortBy,
+          }
+        : null,
+      authToken
+    );
   }, [
+    controller,
     location?.latitude,
     location?.longitude,
     radius,
@@ -133,23 +253,22 @@ export function useNearbyShops(
   ]);
 
   useEffect(() => {
-    if (location) {
-      fetchShops();
-    } else {
-      ++requestIdRef.current;
-      setShops([]);
-      setSelectedShop(null);
-      setIsLoading(false);
-      setErrorMessage(null);
-    }
-  }, [location?.latitude, location?.longitude, fetchShops]);
+    fetchShops();
+  }, [fetchShops]);
+
+  const selectShop = useCallback(
+    (shop: Shop | null) => {
+      controller.setSelectedShop(shop);
+    },
+    [controller]
+  );
 
   return {
-    shops,
-    isLoading,
-    errorMessage,
-    selectedShop,
-    selectShop: setSelectedShop,
+    shops: state.shops,
+    isLoading: state.isLoading,
+    errorMessage: state.errorMessage,
+    selectedShop: state.selectedShop,
+    selectShop,
     refetch: fetchShops,
     searchQuery,
     setSearchQuery,
