@@ -53,6 +53,8 @@ export default function LokalMapView({ authToken }: LokalMapViewProps = {}) {
     setSearchQuery,
     minRating,
     setMinRating,
+    minLokalRating,
+    setMinLokalRating,
     radius,
     setRadius,
     sortBy,
@@ -146,6 +148,8 @@ export default function LokalMapView({ authToken }: LokalMapViewProps = {}) {
           onSearchChange={setSearchQuery}
           minRating={minRating}
           onMinRatingChange={setMinRating}
+          minLokalRating={minLokalRating}
+          onMinLokalRatingChange={setMinLokalRating}
           radius={radius}
           onRadiusChange={setRadius}
           sortBy={sortBy}
