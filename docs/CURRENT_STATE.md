@@ -18,11 +18,11 @@ The project is now building application-level features that expand LOKAL's core 
 
 🟢 **On Track**
 
-The core application stack is operational. The latest completed milestone, **User Favorites List and Profile Discovery (GitHub Issue #39)**, delivered an authenticated user favorites collection endpoint on the FastAPI backend (`GET /api/v1/favorites`) and a dedicated user profile and saved coffee shops experience in the React Native mobile app (`ProfileView`).
+The core application stack is operational. The latest completed milestone, **Advanced Shop Search and Filtering (GitHub Issue #41)**, delivered expanded nearby coffee shop discovery with name and address search, dual independent rating filters (external provider and first-party LOKAL community ratings), and multi-criteria sorting across the database RPC, FastAPI backend, and mobile UI.
 
-Authenticated users can access their saved coffee shops from a top-right Profile button on the interactive map. The profile modal displays account details, saved coffee shops in most-recently favorited order, distance calculations from device coordinates, and seamless navigation to shop details. Unfavoriting or re-favoriting inside the detail card reconciles the favorites list upon returning, with optimistic removal and authoritative refetching protected against out-of-order mutations. Component lifecycle keys (`getProfilePrincipalKey`) and a pure request sequencer (`FavoritesController`) ensure complete state isolation across account switches while preserving instance stability during same-user token refreshes.
+Users can search nearby coffee shops by name or street address, apply separate minimum rating filters for Google ratings and LOKAL Community ratings without synthetic score blending, and sort results by distance, Google rating, or LOKAL Community rating with deterministic tie-breaking. Coffee shop cards clearly display both ratings with distinct badges (`★ {rating}` and `☕ {rating} ★ ({count})`), unreviewed shops return explicit null community ratings, and active LOKAL rating filters strictly exclude unreviewed shops. Client discovery requests are coordinated through a pure `NearbyShopsController` that guarantees monotonic request sequencing and discards stale async responses across rapid sort/filter changes, account switches, and location loss.
 
-The implementation is verified through **306 passing backend tests** (including 30 focused favorites tests) and **138 passing mobile tests**, with 0 TypeScript compilation errors and 55 passing database pgTAP authorization assertions.
+The implementation is verified through **311 passing backend tests**, **141 passing mobile tests**, **70 passing database pgTAP assertions**, and **0 TypeScript compilation errors**.
 
 The engineering workflow remains formalized under the **AI-Assisted Engineering Workflow**.
 
@@ -32,49 +32,53 @@ The next feature cycle should begin only after the current state is synchronized
 
 # Latest Completed Feature
 
-## GitHub Issue #39 — User Favorites List and Profile Discovery
+## GitHub Issue #41 — Advanced Shop Search and Filtering
 
 **Status:** ✅ Completed
 
 ### Completed Work
 
-* **Backend Authenticated Favorites List API**:
-  * Implemented `GET /api/v1/favorites` collection endpoint in `backend/app/api/v1/endpoints/favorites.py`, mounted via `user_favorites_router` at `/favorites` in `router.py`.
-  * Returns all approved coffee shops favorited by the current authenticated user, ordered by most-recently favorited (`created_at DESC`).
-  * Enforces strict user ownership isolation via PostgreSQL RLS and caller JWT propagation.
-  * Enforces fail-closed curation validation: non-approved shops (`PENDING_REVIEW`, `EXCLUDED`) are strictly excluded from results.
-  * Schema modeling: implemented strongly typed `FavoriteShopResponse` in `backend/app/schemas/favorite.py`, inheriting from `ShopResponse` and adding `favorited_at: datetime | None`.
-  * Service layer: implemented `FavoriteService.list_favorites(user, supabase)` in `backend/app/services/favorites.py`.
-* **Mobile User Profile & Saved Coffee Shops (ProfileView)**:
-  * Replaced standalone "Log Out" button with a top-right `Profile` button on the interactive map in `mobile/src/components/LokalMapView.tsx`.
-  * Implemented `ProfileView` modal component in `mobile/src/components/ProfileView.tsx`:
-    * Displays user avatar initial, resolved display name via `getUserDisplayName(user)` (`full_name` / `display_name` with email prefix fallback, defaulting to `'LOKAL User'`), email, and an accessible Log Out action.
-    * Saved coffee shops section supporting loading, error with actionable retry, empty state, and populated card list.
-    * Shop cards display shop name, address, rating, distance (computed via Haversine formula from device coordinates when available), and favorite heart indicator.
-    * Distance display: initializes `distanceMeters` to `Number.NaN` when device location is unavailable, cleanly omitting the distance badge rather than displaying a false `"0 m"`.
-* **Controlled Navigation Lifecycle & State Reconciliation**:
-  * Explicit navigation flow: Map $\to$ Profile $\to$ Favorites $\to$ Shop Detail $\to$ Favorites $\to$ Profile $\to$ Map.
-  * Opening Profile preserves underlying map and discovery state; closing Shop Detail returns to Favorites; closing Profile returns to Map.
-  * Added `onFavoriteChange` callback prop to `ShopDetailCard`.
-  * Optimistic reconciliation: unfavoriting a coffee shop inside `ShopDetailCard` immediately removes it from the parent favorites list, and re-favoriting triggers an authoritative refetch of the favorites collection.
-  * Out-of-order mutation protection: guarded `onFavoriteChange` success callback with `currentFavoriteMutationId` ownership checks to prevent stale mutations from corrupting parent state.
-* **Principal-Bound Session Lifecycle & State Isolation**:
-  * Implemented `getProfilePrincipalKey(user, authToken)` in `mobile/src/services/authService.ts`.
-  * Bound `<ProfileView>` in `LokalMapView` with `key={getProfilePrincipalKey(auth?.user, activeAuthToken)}`: switching accounts forces a clean remount, discarding previous `selectedFavoriteShop` state, while same-user token refreshes preserve the instance without state churn or UI blanking.
-  * Extracted pure request sequencer `FavoritesController` in `mobile/src/hooks/useFavorites.ts`:
-    * Tracks monotonic request sequence counters and `currentPrincipal`.
-    * Switching principals immediately clears cached favorites (`favorites: []`).
-    * Failure isolation: if a new account's request fails, cached favorites from the previous account never survive or leak.
-    * Monotonic request ID discards late-arriving responses from previous accounts.
-    * Token refresh under the same principal preserves cached favorites during background revalidation.
+* **Database & Spatial RPC Layer**:
+  * Dropped the previous 8-parameter overload of `get_nearby_shops` to prevent ambiguous function dispatch.
+  * Implemented updated 9-parameter `get_nearby_shops` SQL RPC migration in `supabase/migrations/20261002000000_advanced_search_and_filters.sql`.
+  * Expanded search matching to evaluate both `name` AND `address` via case-insensitive pattern matching (`ILIKE`) with proper wildcard escaping (`%`, `_`, `\`).
+  * Implemented a `LEFT JOIN LATERAL` on `reviews` filtered by `source = 'lokal'` to compute `lokal_rating` (numeric average rounded to 2 decimal places) and `lokal_reviews_count` for each candidate shop.
+  * Preserved dual rating independence: provider ratings (`min_rating`) and LOKAL community ratings (`min_lokal_rating`) remain separate filter dimensions without composite score blending.
+  * Enforced response contract: unreviewed shops return `lokal_rating = null` and `lokal_reviews_count = 0`. An active `min_lokal_rating` filter excludes unreviewed shops (`NULL` rating).
+  * Implemented deterministic sorting across `sort_by IN ('distance', 'rating', 'lokal_rating')` with `NULLS LAST` on rating columns, falling back to `calc.distance_meters ASC` and `calc.id ASC`.
+  * Enforced least-privilege access control: maintained `SECURITY INVOKER`, revoked all execution permissions from `PUBLIC` and `anon`, and granted execution strictly to `authenticated`.
+  * Preserved fail-closed curation: only shops with `shop_curation.status = 'APPROVED'` are returned.
+  * Created pgTAP test suite in `supabase/tests/02_advanced_search_and_filters.sql` with **15 assertions** verifying execution privileges, name search, address search, curation filtering, LOKAL rating aggregation, null handling, dual filters, and deterministic sorting.
+* **Backend Authenticated Discovery API (FastAPI)**:
+  * Extended `NearbyShopResponse` in `backend/app/schemas/shop.py` to include `lokal_rating: Optional[float] = Field(None, ge=0.0, le=5.0)` and `lokal_reviews_count: int = Field(0, ge=0)`.
+  * Updated `GET /api/v1/shops/nearby` in `backend/app/api/v1/endpoints/shops.py`:
+    * Added `min_lokal_rating: Optional[float] = Query(default=None, ge=0.0, le=5.0)`.
+    * Expanded `sort_by` validation regex to `^(distance|rating|lokal_rating)$`.
+    * Forwarded `min_lokal_rating` to `get_nearby_shops` RPC.
+  * Updated `backend/tests/test_nearby_shops.py` to verify parameter validation, RPC argument forwarding, combined filters, and schema response modeling (bringing backend test suite to **311 passing tests**).
+* **Mobile Advanced Search, Filter Chips, & Controller Lifecycle**:
+  * Updated `Shop` and `NearbySearchParams` in `mobile/src/types/shop.ts` to include `lokal_rating`, `lokal_reviews_count`, `minLokalRating`, and `'lokal_rating'` sorting.
+  * Serialized `min_lokal_rating` and `sort_by=lokal_rating` in `mobile/src/services/shopService.ts`.
+  * Extracted pure `NearbyShopsController` in `mobile/src/hooks/useNearbyShops.ts`:
+    * Encapsulates asynchronous discovery lifecycle, listener subscription, selection synchronization, and monotonic `requestId` sequencing.
+    * Automatically discards out-of-order stale responses during rapid filter/sort switching.
+    * Invalidates in-flight requests and resets state upon location loss or auth token transitions.
+  * Updated `useNearbyShops` hook to coordinate with `NearbyShopsController`, exposing `minLokalRating`, `setMinLokalRating`, and filter reset/active detection.
+  * Updated `NearbyShopsSheet.tsx`:
+    * Updated search input placeholder to `"Search by name or address..."`.
+    * Added distinct filter chips for Google rating (`Google ★ 4.0+`, etc.) and LOKAL rating (`LOKAL ★ 4.0+`, etc.).
+    * Added `Top LOKAL` sort chip alongside `Nearest` and `Top Rated`.
+    * Rendered distinct `☕ {rating} ★ ({count})` community badges on cards alongside provider rating badges.
+    * Preserved empty state and clear-all-filters action.
+  * Wired `minLokalRating` from hook into `LokalMapView.tsx`.
+  * Added comprehensive unit tests in `mobile/tests/shopService.test.mjs` and `mobile/tests/useNearbyShops.test.mjs` exercising `NearbyShopsController` directly across rapid sort toggles, auth token invalidation, and location loss (bringing mobile test suite to **141 passing tests**).
 * **Automated Verification**:
-  * Backend favorites suite: **30 / 30 tests passed** (`PYTHONPATH=backend ./backend/.venv/bin/python -m unittest backend/tests/test_favorites.py`).
-  * Backend full regression suite: **306 / 306 tests passed** (`PYTHONPATH=backend ./backend/.venv/bin/python -m unittest discover -s backend/tests -t backend`).
-  * Mobile test suite: **138 / 138 tests passed** (`npm test --prefix mobile`), adding 29 focused tests in `favorites.test.mjs` and `favoriteState.test.mjs` covering distance formatting, NaN omission, principal key contracts, simulated remount isolation, optimistic reconciliation, stale mutation guards, and error recovery.
+  * Database pgTAP test suite: **70 / 70 assertions passed** across 2 suites (`supabase test db`).
+  * Backend regression suite: **311 / 311 tests passed** (`PYTHONPATH=backend ./backend/.venv/bin/python -m unittest discover -s backend/tests -t backend`).
+  * Mobile test suite: **141 / 141 tests passed** (`npm test --prefix mobile`).
   * Mobile TypeScript compiler: **0 errors** (`./mobile/node_modules/.bin/tsc --noEmit --project mobile/tsconfig.json`).
-  * Database pgTAP authorization suite: **55 / 55 assertions passed**.
 * **Pull Request**:
-  * Pull Request #40 reviewed by CodeRabbit, actionable findings resolved iteratively (NaN distance display, favorites mutation reconciliation, stale mutation callback ownership guard, production FavoritesController extraction, principal key identity boundary, JSDocs), approved, and merged into `main` by the Product Owner (merge commit `4a9e74a2`).
+  * Pull Request #42 reviewed by CodeRabbit, actionable lifecycle testing finding resolved via `NearbyShopsController` extraction, approved, and merged into `main` by the Product Owner (merge commit `992d5995`).
 
 ---
 
@@ -101,7 +105,8 @@ The next feature cycle should begin only after the current state is synchronized
 | Issue #35 — Favorite Coffee Shops                            | ✅ Complete |
 | Issue #37 — Harden Supabase Public Schema & RLS              | ✅ Complete |
 | Issue #39 — User Favorites List & Profile Discovery          | ✅ Complete |
-| Advanced Search and Filtering                                | ⏳ Planned  |
+| Issue #41 — Advanced Shop Search and Filtering               | ✅ Complete |
+| Personalized Recommendations                                 | ⏳ Planned  |
 
 ---
 
@@ -166,6 +171,14 @@ The React Native (Expo) mobile application currently provides:
 * Sensible fallback region (Metro Manila) when location access is pending or unavailable.
 * Graceful, non-crashing permission denial handling with informative status banners.
 * Terminal permission denial handling (`canAskAgain: false`) with direct system settings navigation via `Linking.openSettings()`.
+* **Advanced Nearby Coffee Shop Search & Filtering**:
+  * Search coffee shops by name or street address via a debounced search input with `"Search by name or address..."` placeholder.
+  * Independent dual rating filter chips for Google Places provider ratings (`Google ★ 4.0+`, etc.) and first-party LOKAL community ratings (`LOKAL ★ 4.0+`, etc.) without composite score blending.
+  * Sort options supporting `'distance'` (Nearest), `'rating'` (Top Rated), and `'lokal_rating'` (Top LOKAL) with deterministic tie-breaking.
+  * Distinct rating badge display on coffee shop cards: Google provider rating badge (`★ {rating}`) and first-party community badge (`☕ {rating} ★ ({count})`).
+  * Explicit null semantics: shops without LOKAL reviews display no community badge; setting a minimum LOKAL rating filter strictly excludes unreviewed shops.
+  * Dedicated "Clear all filters" empty state recovery action restoring default discovery parameters.
+  * Pure request coordinator `NearbyShopsController` managing monotonic request sequence counters, listener subscriptions, selection synchronization, and stale-response discarding across rapid filter/sort toggling, auth session changes, and location loss.
 * Authenticated nearby coffee shop discovery based on the user's coordinates.
 * Map markers for discovered coffee shops.
 * Nearby coffee shop list/bottom-sheet presentation.
@@ -204,6 +217,7 @@ The FastAPI backend currently provides:
   * `20260919000000_user_reviews.sql`: First-party user reviews schema, constraints, RLS policies, table privilege hardening, and secure write RPCs.
   * `20260930000000_favorite_coffee_shops.sql`: Favorites schema, unique constraints, RLS policies, table privilege hardening, and secure `create_user_favorite` RPC.
   * `20261001000000_harden_public_schema_and_rls.sql`: Row Level Security enablement across all six public tables, least-privilege table and column grants, revocation of direct client shop mutations, and column-level curation protection.
+  * `20261002000000_advanced_search_and_filters.sql`: Advanced search across shop name and street address, independent LOKAL community rating calculation (`LEFT JOIN LATERAL` on reviews), `min_lokal_rating` filtering, deterministic multi-column sorting (`distance`, `rating`, `lokal_rating`), and least-privilege security model (`SECURITY INVOKER`, execution revoked from `anon`/`PUBLIC`, granted strictly to `authenticated`).
 * User registration (`POST /api/v1/auth/register`) with email and password.
 * User authentication (`POST /api/v1/auth/login`) returning JWT session tokens.
 * Non-admin token-scoped user logout (`POST /api/v1/auth/logout`).
@@ -212,7 +226,7 @@ The FastAPI backend currently provides:
 * Authenticated coffee shop management via REST API (`POST`, `GET`, `PATCH`, `DELETE` at `/api/v1/shops`):
   * Public/authenticated read access for approved coffee shops.
   * Privileged shop mutations (`POST`, `PATCH`, `DELETE`) protected by `require_curator` and executed through `get_service_role_supabase()`. Direct client PostgREST mutations are denied.
-* Authenticated nearby coffee shop discovery via `GET /api/v1/shops/nearby`.
+* Authenticated nearby coffee shop discovery via `GET /api/v1/shops/nearby`, supporting `query` (case-insensitive name and address matching), `min_rating` (provider rating threshold), `min_lokal_rating` (first-party community rating threshold, `ge=0.0, le=5.0`), and `sort_by` (`distance`, `rating`, `lokal_rating`) with deterministic tie-breaking and response modeling via `NearbyShopResponse` (including `lokal_rating` and `lokal_reviews_count`).
 * Independent business eligibility and curation layer (`APPROVED`, `EXCLUDED`, `PENDING_REVIEW`):
   * Curation inspection (`GET /api/v1/shops/{id}/curation`) and evaluation (`POST /api/v1/shops/{id}/curation/evaluate`) protected by `require_curator` and executed via `get_service_role_supabase()`.
   * Column-level grant protection ensuring direct Data API callers can only query `(shop_id, status)` for approved shops without exposing internal notes or confidence scores.
@@ -254,7 +268,7 @@ The FastAPI backend currently provides:
   * Strict `source = 'lokal'` filtering across application review lookups, updates, and deletes.
 * Google Places API (New) integration for transient external review retrieval with provider attribution and source links. No caching or persistence of Google review content.
 * Robust error handling distinguishing client input errors (`400`/`422`), missing records (`404`), unique constraint conflicts (`409`), external provider failures (`502`), service unavailability (`503`), and sanitized generic server failures (`500`).
-* Automated backend regression testing with **306 passing tests**, covering auth, shops, curation, nearby discovery, external reviews, first-party user reviews, AI review summaries, AI must-try recommendations, favorite coffee shops (including the favorites list endpoint), curator authorization, and service-role fail-closed behavior.
+* Automated backend regression testing with **311 passing tests**, covering auth, shops, curation, nearby discovery with advanced search and filtering, external reviews, first-party user reviews, AI review summaries, AI must-try recommendations, favorite coffee shops (including the favorites list endpoint), curator authorization, and service-role fail-closed behavior.
 
 ---
 
@@ -306,13 +320,16 @@ The database is managed through PostgreSQL in Supabase with full Row Level Secur
   * `created_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now())`
   * `uq_favorites_user_shop UNIQUE (user_id, shop_id)`: Enforces single favorite record per user per coffee shop.
   * Indexes: `idx_favorites_user_shop ON favorites (user_id, shop_id)`.
-* **Controlled Security Definer RPCs**:
-  * `create_user_review(p_shop_id, p_rating, p_content)`: Validates rating (1–5), verifies shop existence and `APPROVED` curation status, enforces uniqueness, resolves author display name snapshot from user profile metadata, and inserts review with server timestamps.
-  * `update_user_review(p_shop_id, p_rating, p_content, p_update_content)`: Enforces field presence, validates rating, verifies shop is `APPROVED`, enforces caller ownership and `source = 'lokal'`, preserves server-managed fields, and updates `rating`, `content`, and `updated_at`.
-  * `create_user_favorite(p_shop_id)`: Validates caller authentication (`auth.uid() IS NOT NULL`), verifies target shop existence and `APPROVED` curation status in `shop_curation`, inserts favorite record with server-derived `auth.uid()`, and handles duplicate conflicts idempotently.
-  * Stored procedure execution privileges are revoked from `PUBLIC` and granted strictly to `authenticated`.
-* **Automated Database Test Suite (`supabase/tests/01_rls_and_permissions.sql`)**:
-  * Executable pgTAP test suite containing **55 planned assertions** verifying RLS flags, table permissions, column privileges, and allow/deny query behaviors for `anon`, ordinary `authenticated`, and curator roles.
+* **Controlled Database RPCs**:
+  * `create_user_review(p_shop_id, p_rating, p_content)`: Security definer RPC validating rating (1–5), verifying shop existence and `APPROVED` curation status, enforcing uniqueness, resolving author display name snapshot from user profile metadata, and inserting review with server timestamps.
+  * `update_user_review(p_shop_id, p_rating, p_content, p_update_content)`: Security definer RPC enforcing field presence, validating rating, verifying shop is `APPROVED`, enforcing caller ownership and `source = 'lokal'`, preserving server-managed fields, and updating `rating`, `content`, and `updated_at`.
+  * `create_user_favorite(p_shop_id)`: Security definer RPC validating caller authentication (`auth.uid() IS NOT NULL`), verifying target shop existence and `APPROVED` curation status in `shop_curation`, inserting favorite record with server-derived `auth.uid()`, and handling duplicate conflicts idempotently.
+  * `get_nearby_shops(user_lat, user_lon, radius_meters, max_results, search_query, min_rating, min_lokal_rating, sort_by, user_id)`: Security invoker spatial discovery RPC evaluating PostGIS distance against spatial index, enforcing `APPROVED` curation status, matching search query against shop name and street address via `ILIKE`, computing LOKAL community rating aggregates via `LEFT JOIN LATERAL` on `reviews (source = 'lokal')`, applying independent provider and LOKAL rating filters, and deterministically sorting candidates across `'distance'`, `'rating'`, and `'lokal_rating'`.
+  * Stored procedure execution privileges are revoked from `PUBLIC` and `anon`, and granted strictly to `authenticated`.
+* **Automated Database Test Suite (`supabase/tests/`)**:
+  * Executable pgTAP test suites containing **70 total assertions** across two test suites:
+    * `01_rls_and_permissions.sql`: **55 assertions** verifying RLS flags, table permissions, column privileges, and allow/deny query behaviors for `anon`, ordinary `authenticated`, and curator roles.
+    * `02_advanced_search_and_filters.sql`: **15 assertions** verifying `get_nearby_shops` execution permissions (denied to `anon`/`PUBLIC`, granted to `authenticated`), name/address search matching, `APPROVED`-only curation filtering, LOKAL rating aggregation, null handling for unreviewed shops, `min_lokal_rating` threshold filtering, combined filters, and deterministic sorting.
 
 ---
 
@@ -349,9 +366,9 @@ Independent-business eligibility and curation are maintained as a separate domai
 
 # Next Task
 
-The next feature should be defined through the next GitHub Issue after reviewing the completed user favorites list and profile discovery architecture and current application state.
+The next feature should be defined through the next GitHub Issue after reviewing the completed advanced shop search and filtering architecture and current application state.
 
-With user authentication, unified reviews, AI review summarization, AI must-try recommendations, coffee shop favoriting, and the user favorites list/profile view active, the logical next capabilities include **Advanced Search and Filtering** (filtering by minimum rating, distance radius, or saved favorites), **Personalized Recommendations**, or another feature prioritized by the Product Owner.
+With user authentication, unified reviews, AI review summarization, AI must-try recommendations, coffee shop favoriting, the user favorites list / profile view, and advanced search and filtering active, the logical next capabilities include **Personalized Recommendations** or another feature prioritized by the Product Owner.
 
 Before implementation:
 
@@ -367,7 +384,7 @@ Before implementation:
 
 **None.**
 
-The unified review domain, AI review summarization, AI-generated "Must Try" recommendations, coffee shop favoriting, and user favorites list / profile discovery are operational. External reviews remain transient and compliant with provider policies, while first-party reviews and user favorites are securely persisted in Supabase with RLS and security-definer RPC protection. In-memory caching with generation versioning is active for both summaries and recommendations. Mobile user authentication, review mutations, non-blocking summary cards, non-blocking recommendations cards, interactive favorite toggles, and the saved coffee shops profile view are operational and fully tested.
+The unified review domain, AI review summarization, AI-generated "Must Try" recommendations, coffee shop favoriting, user favorites list / profile discovery, and advanced search and filtering are operational. External reviews remain transient and compliant with provider policies, while first-party reviews and user favorites are securely persisted in Supabase with RLS and security-definer RPC protection. In-memory caching with generation versioning is active for both summaries and recommendations. Mobile user authentication, review mutations, non-blocking summary cards, non-blocking recommendations cards, interactive favorite toggles, the saved coffee shops profile view, and advanced search/filter chips coordinated through `NearbyShopsController` are operational and fully tested.
 
 ---
 
@@ -375,6 +392,11 @@ The unified review domain, AI review summarization, AI-generated "Must Try" reco
 
 The recent development cycles established the following engineering practices:
 
+* **Dual Rating Independence Without Composite Blending**: Separating external provider ratings (`min_rating`) from first-party community ratings (`min_lokal_rating`) preserves data provenance and user trust, preventing arbitrary weighting schemes while allowing users to filter along either or both axes independently.
+* **`LEFT JOIN LATERAL` for Candidate Aggregation in Geospatial RPCs**: Aggregating relational review metrics (average rating, review count) for spatially-filtered candidates using `LEFT JOIN LATERAL` computes aggregates only for shops within the candidate bounding set, avoiding full-table scans.
+* **Explicit Null Semantics in Optional Rating Dimensions**: In community review systems where unreviewed shops have no ratings, returning `null` for `lokal_rating` rather than defaulting to `0` clearly differentiates unrated shops from poorly rated shops. Active minimum rating filters must strictly exclude `null` ratings.
+* **Pure Controller Extraction for Headless Lifecycle Verification**: When UI frameworks or Node test runners lack headless React hook renderers, extracting pure controller classes (`NearbyShopsController`) that encapsulate monotonic request sequencing, listener dispatch, and stale-response discarding allows direct, dependency-free testing of asynchronous race conditions against actual production code.
+* **Least-Privilege RPC Access Model**: Unless an RPC is intentionally exposed to unauthenticated public callers, stored procedures should have permissions revoked from `anon` and `PUBLIC` and granted strictly to `authenticated`, aligning database execution privileges with API gateway authentication requirements.
 * **Principal-Bound Instance Keys for Identity Boundaries**: Component keys in authentication-sensitive flows should be bound to the authenticated principal (`user.id`) rather than raw credential tokens (`authToken`). This ensures switching accounts forces a clean remount and state reset, while credential refreshes for the same user do not cause unnecessary unmounting or UI state churn.
 * **Dual Defense for Session State Isolation**: Combining component key-based remounting at the view layer with principal-aware request sequencing at the controller layer guarantees that even if a replacement session's network request fails, previous-account state can never survive or be exposed.
 * **Monotonic Mutation Ownership Guards**: Asynchronous mutation success callbacks (`onFavoriteChange`) must verify that the active mutation ID still matches the current sequence counter before updating parent state, preventing out-of-order mutations from corrupting parent collections.
@@ -455,4 +477,4 @@ After implementation:
 
 ---
 
-**Last Updated:** Phase 2 — Core Application Features (after completion of GitHub Issue #39 and merge of PR #40)
+**Last Updated:** Phase 2 — Core Application Features (after completion of GitHub Issue #41 and merge of PR #42)
