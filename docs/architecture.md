@@ -99,8 +99,8 @@ Examples include:
 
 * Review summarization
 * "Must Try" menu recommendations
+* Personalized coffee shop recommendations (grounded explanation synthesis)
 * Sentiment analysis
-* Future personalized recommendations
 
 AI providers are considered replaceable implementation details.
 

@@ -33,6 +33,7 @@ interface ShopDetailCardProps {
   onClose: () => void;
   authToken?: string | null;
   onFavoriteChange?: (shopId: string, isFavorite: boolean) => void;
+  onReviewChange?: (shopId: string) => void;
 }
 
 export default function ShopDetailCard({
@@ -40,6 +41,7 @@ export default function ShopDetailCard({
   onClose,
   authToken,
   onFavoriteChange,
+  onReviewChange,
 }: ShopDetailCardProps) {
   const formattedDistance = formatDistance(shop.distance_meters);
   const formattedRating = formatRating(shop.rating);
@@ -307,6 +309,7 @@ export default function ShopDetailCard({
       ) {
         setIsFormOpen(false);
         await Promise.all([loadReviews(), loadSummary(), loadRecommendations()]);
+        onReviewChange?.(activeShopId);
       }
     } catch (err) {
       if (
@@ -347,6 +350,7 @@ export default function ShopDetailCard({
         setIsFormOpen(false);
         setMyReview(null);
         await Promise.all([loadReviews(), loadSummary(), loadRecommendations()]);
+        onReviewChange?.(activeShopId);
       }
     } catch (err) {
       if (

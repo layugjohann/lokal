@@ -8,6 +8,7 @@ from supabase import Client
 
 from ..schemas.auth import UserResponse
 from ..schemas.favorite import FavoriteShopResponse, FavoriteStatusResponse
+from .personalized_cache import get_personalized_cache
 
 logger = logging.getLogger(__name__)
 
@@ -191,6 +192,7 @@ class FavoriteService:
                     detail="Failed to persist favorite record.",
                 )
             row = result.data if isinstance(result.data, dict) else result.data[0]
+            get_personalized_cache().invalidate_user(str(user.id))
             return FavoriteStatusResponse(
                 shop_id=UUID(str_shop_id),
                 is_favorite=True,
@@ -254,6 +256,7 @@ class FavoriteService:
                 )
 
             supabase.table("favorites").delete().eq("shop_id", str_shop_id).eq("user_id", user.id).execute()
+            get_personalized_cache().invalidate_user(str(user.id))
         except HTTPException:
             raise
         except APIError as exc:
