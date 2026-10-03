@@ -2,12 +2,22 @@ from threading import Lock
 import time
 from typing import Any, Optional
 
+EXPLANATION_CACHE_TTL = 3600.0
+TASTE_PROFILE_CACHE_TTL = 1800.0
+
 
 class PersonalizedRecommendationCache:
-    """Thread-safe, process-local user taste profile and explanation cache with generation tracking."""
+    """Thread-safe, process-local user taste profile and explanation cache with generation fencing."""
 
-    def __init__(self, ttl_seconds: float = 3600.0, max_capacity: int = 500) -> None:
-        self.ttl_seconds = ttl_seconds
+    def __init__(
+        self,
+        explanation_ttl_seconds: float = EXPLANATION_CACHE_TTL,
+        profile_ttl_seconds: float = TASTE_PROFILE_CACHE_TTL,
+        max_capacity: int = 500,
+    ) -> None:
+        """Initialize recommendation cache with distinct TTLs and bounded capacity."""
+        self.explanation_ttl_seconds = explanation_ttl_seconds
+        self.profile_ttl_seconds = profile_ttl_seconds
         self.max_capacity = max_capacity
         self._lock = Lock()
         self._user_versions: dict[str, int] = {}
@@ -16,6 +26,11 @@ class PersonalizedRecommendationCache:
         # user_id -> (taste_profile_dict, timestamp)
         self._profile_cache: dict[str, tuple[dict[str, Any], float]] = {}
 
+    def get_user_generation(self, user_id: str) -> int:
+        """Return the current mutation generation for a user."""
+        with self._lock:
+            return self._user_versions.get(user_id, 0)
+
     def get_explanation(self, user_id: str, shop_id: str) -> Optional[str]:
         """Retrieve unexpired location-independent explanation for (user_id, shop_id)."""
         with self._lock:
@@ -23,18 +38,35 @@ class PersonalizedRecommendationCache:
             if not entry:
                 return None
             explanation, cached_at = entry
-            if time.time() - cached_at > self.ttl_seconds:
+            if time.time() - cached_at > self.explanation_ttl_seconds:
                 self._explanation_cache.pop((user_id, shop_id), None)
                 return None
             return explanation
 
-    def set_explanation(self, user_id: str, shop_id: str, explanation: str) -> None:
-        """Store location-independent explanation in cache."""
+    def set_explanation(
+        self,
+        user_id: str,
+        shop_id: str,
+        explanation: str,
+        generation: Optional[int] = None,
+    ) -> bool:
+        """Store location-independent explanation in cache with generation fencing.
+
+        Returns True if write succeeded, False if rejected due to stale generation.
+        """
         with self._lock:
-            if len(self._explanation_cache) >= self.max_capacity and (user_id, shop_id) not in self._explanation_cache:
-                oldest_key = min(self._explanation_cache, key=lambda k: self._explanation_cache[k][1])
+            if generation is not None and self._user_versions.get(user_id, 0) != generation:
+                return False
+            if (
+                len(self._explanation_cache) >= self.max_capacity
+                and (user_id, shop_id) not in self._explanation_cache
+            ):
+                oldest_key = min(
+                    self._explanation_cache, key=lambda k: self._explanation_cache[k][1]
+                )
                 self._explanation_cache.pop(oldest_key, None)
             self._explanation_cache[(user_id, shop_id)] = (explanation, time.time())
+            return True
 
     def get_profile(self, user_id: str) -> Optional[dict[str, Any]]:
         """Retrieve unexpired taste profile for user_id."""
@@ -43,21 +75,37 @@ class PersonalizedRecommendationCache:
             if not entry:
                 return None
             profile, cached_at = entry
-            if time.time() - cached_at > self.ttl_seconds:
+            if time.time() - cached_at > self.profile_ttl_seconds:
                 self._profile_cache.pop(user_id, None)
                 return None
             return profile
 
-    def set_profile(self, user_id: str, profile: dict[str, Any]) -> None:
-        """Store taste profile for user_id."""
+    def set_profile(
+        self,
+        user_id: str,
+        profile: dict[str, Any],
+        generation: Optional[int] = None,
+    ) -> bool:
+        """Store taste profile for user_id with generation fencing.
+
+        Returns True if write succeeded, False if rejected due to stale generation.
+        """
         with self._lock:
-            if len(self._profile_cache) >= self.max_capacity and user_id not in self._profile_cache:
-                oldest_key = min(self._profile_cache, key=lambda k: self._profile_cache[k][1])
+            if generation is not None and self._user_versions.get(user_id, 0) != generation:
+                return False
+            if (
+                len(self._profile_cache) >= self.max_capacity
+                and user_id not in self._profile_cache
+            ):
+                oldest_key = min(
+                    self._profile_cache, key=lambda k: self._profile_cache[k][1]
+                )
                 self._profile_cache.pop(oldest_key, None)
             self._profile_cache[user_id] = (profile, time.time())
+            return True
 
     def invalidate_user(self, user_id: str) -> None:
-        """Invalidate all cached profiles and explanations for a user within this process."""
+        """Invalidate all cached profiles and explanations for a user and advance mutation generation."""
         with self._lock:
             self._user_versions[user_id] = self._user_versions.get(user_id, 0) + 1
             self._profile_cache.pop(user_id, None)

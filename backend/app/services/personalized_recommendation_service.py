@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 import re
@@ -29,6 +30,7 @@ GEMINI_API_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models"
 CANDIDATE_OVERFETCH_LIMIT = 30
 CANDIDATE_EVALUATION_LIMIT = 10
 MAX_RECOMMENDATIONS_RETURNED = 5
+EXPLANATION_BATCH_TIMEOUT = 7.0
 
 PROXIMITY_FORBIDDEN_TERMS = {
     "nearby",
@@ -137,6 +139,7 @@ class GeminiExplanationGenerator:
         model: Optional[str] = None,
         timeout: float = 6.0,
     ) -> None:
+        """Initialize generator with API key, model target, and per-call timeout."""
         self.api_key = api_key or settings.GEMINI_API_KEY
         self.model = model or settings.GEMINI_MODEL or "gemini-2.5-flash"
         self.timeout = timeout
@@ -246,9 +249,12 @@ class PersonalizedRecommendationService:
         self,
         explanation_generator: Optional[ExplanationGenerator] = None,
         cache: Optional[PersonalizedRecommendationCache] = None,
+        batch_timeout: float = EXPLANATION_BATCH_TIMEOUT,
     ) -> None:
+        """Initialize service with explanation generator, cache, and concurrent batch timeout."""
         self.generator = explanation_generator or GeminiExplanationGenerator()
         self.cache = cache or get_personalized_cache()
+        self.batch_timeout = batch_timeout
 
     def build_user_taste_profile(
         self,
@@ -256,6 +262,7 @@ class PersonalizedRecommendationService:
         user_reviews: list[dict[str, Any]],
         user_favorites: list[dict[str, Any]],
         supabase: Client,
+        generation: Optional[int] = None,
     ) -> tuple[dict[str, float], set[str], Optional[float]]:
         """Construct user taste profile (P_user, N_user, user_avg_rating) from user signals.
 
@@ -320,13 +327,13 @@ class PersonalizedRecommendationService:
         else:
             normalized_p = {}
 
-        # Cache profile
+        # Cache profile with generation fencing
         profile_dict = {
             "p_user": normalized_p,
             "n_user": list(n_user_avoidance),
             "user_avg_rating": user_avg_rating,
         }
-        self.cache.set_profile(user_id, profile_dict)
+        self.cache.set_profile(user_id, profile_dict, generation=generation)
 
         return normalized_p, n_user_avoidance, user_avg_rating
 
@@ -356,6 +363,9 @@ class PersonalizedRecommendationService:
         """Retrieve personalized recommendations for the authenticated user."""
         clamped_limit = max(1, min(limit, MAX_RECOMMENDATIONS_RETURNED))
         str_user_id = str(user.id)
+
+        # 0. Capture user mutation generation upfront for generation fencing
+        user_generation = self.cache.get_user_generation(str_user_id)
 
         # 1. Fetch caller's first-party reviews
         try:
@@ -390,9 +400,9 @@ class PersonalizedRecommendationService:
                 detail="A database error occurred while retrieving user favorites.",
             ) from exc
 
-        # 3. Extract user taste profile
+        # 3. Extract user taste profile (with generation fencing)
         p_user, n_user, user_avg_rating = self.build_user_taste_profile(
-            str_user_id, user_reviews, user_favorites, supabase
+            str_user_id, user_reviews, user_favorites, supabase, generation=user_generation
         )
 
         # 4. Evaluate Insufficient-Data Gate
@@ -434,52 +444,48 @@ class PersonalizedRecommendationService:
                 ) from exc
         else:
             try:
+                # No-location path: enforce APPROVED curation filter BEFORE candidate limit (30)
+                # Order by rating DESC with nulls last, then deterministic tie-breaker by shop id
                 shops_res = (
                     supabase.table("shops")
-                    .select("id, name, address, latitude, longitude, rating, google_place_id, created_at, updated_at")
-                    .order("rating", desc=True)
+                    .select(
+                        "id, name, address, latitude, longitude, rating, google_place_id, created_at, updated_at, shop_curation!inner(status)"
+                    )
+                    .eq("shop_curation.status", "APPROVED")
+                    .order("rating", desc=True, nullsfirst=False)
+                    .order("id")
                     .limit(CANDIDATE_OVERFETCH_LIMIT)
                     .execute()
                 )
                 shops_data = shops_res.data or []
-                shop_ids = [str(s["id"]) for s in shops_data if s.get("id")]
+                approved_ids = [str(s["id"]) for s in shops_data if s.get("id")]
 
-                if shop_ids:
-                    # Enforce APPROVED curation status
-                    curation_res = (
-                        supabase.table("shop_curation")
-                        .select("shop_id, status")
-                        .in_("shop_id", shop_ids)
-                        .eq("status", "APPROVED")
-                        .execute()
-                    )
-                    approved_ids = {str(c["shop_id"]) for c in curation_res.data or []}
-
-                    # Fetch LOKAL ratings for approved candidates
+                rating_acc: dict[str, list[float]] = {}
+                # Prevent executing review query if zero approved candidate IDs exist
+                if approved_ids:
                     revs_res = (
                         supabase.table("reviews")
                         .select("shop_id, rating")
-                        .in_("shop_id", list(approved_ids))
+                        .in_("shop_id", approved_ids)
                         .eq("source", "lokal")
                         .execute()
                     )
-                    rating_acc: dict[str, list[float]] = {}
                     for r in revs_res.data or []:
                         sid = str(r["shop_id"])
                         rating_acc.setdefault(sid, []).append(float(r["rating"]))
 
-                    for s in shops_data:
-                        sid = str(s["id"])
-                        if sid in approved_ids:
-                            ratings = rating_acc.get(sid, [])
-                            l_count = len(ratings)
-                            l_avg = round(sum(ratings) / l_count, 2) if l_count > 0 else None
-                            raw_candidates.append({
-                                **s,
-                                "distance_meters": None,
-                                "lokal_rating": l_avg,
-                                "lokal_reviews_count": l_count,
-                            })
+                for s in shops_data:
+                    sid = str(s["id"])
+                    ratings = rating_acc.get(sid, [])
+                    l_count = len(ratings)
+                    l_avg = round(sum(ratings) / l_count, 2) if l_count > 0 else None
+                    clean_shop = {k: v for k, v in s.items() if k != "shop_curation"}
+                    raw_candidates.append({
+                        **clean_shop,
+                        "distance_meters": None,
+                        "lokal_rating": l_avg,
+                        "lokal_reviews_count": l_count,
+                    })
             except Exception as exc:
                 logger.error(f"Database error executing approved shops query: {exc}")
                 raise HTTPException(
@@ -592,33 +598,76 @@ class PersonalizedRecommendationService:
 
         selected_candidates = scored_candidates[:clamped_limit]
 
-        # 8. Location-Independent Grounded Explanation Generation
-        recommendations: list[RecommendedShopItem] = []
-        for _, cand, matched_label in selected_candidates:
+        # 8. Location-Independent Grounded Explanation Generation (Concurrent with Bounded Batch Timeout)
+        async def _resolve_candidate_explanation(
+            cand_tuple: tuple[float, dict[str, Any], Optional[str]],
+        ) -> str:
+            _, cand, matched_label = cand_tuple
             sid = str(cand["id"])
 
             # Check explanation cache
             cached_exp = self.cache.get_explanation(str_user_id, sid)
             if cached_exp:
-                explanation = cached_exp
-            else:
-                evidence = CandidateEvidencePack(
-                    shop_id=sid,
-                    shop_name=cand["name"],
-                    matched_feature_label=matched_label,
-                    lokal_community_rating=cand.get("lokal_rating"),
-                )
+                return cached_exp
 
-                # Attempt Gemini explanation
+            evidence = CandidateEvidencePack(
+                shop_id=sid,
+                shop_name=cand["name"],
+                matched_feature_label=matched_label,
+                lokal_community_rating=cand.get("lokal_rating"),
+            )
+
+            # Attempt Gemini explanation
+            try:
                 ai_exp = await self.generator.generate_explanation(evidence)
                 if ai_exp:
-                    explanation = ai_exp
-                else:
-                    explanation = self._generate_fallback_explanation(
-                        matched_label, cand.get("lokal_rating"), cand.get("rating")
+                    self.cache.set_explanation(
+                        str_user_id, sid, ai_exp, generation=user_generation
                     )
+                    return ai_exp
+            except Exception as exc:
+                logger.warning(
+                    f"Gemini explanation generator raised an unexpected error for shop {sid}: {exc}"
+                )
 
-                self.cache.set_explanation(str_user_id, sid, explanation)
+            # Deterministic fallback
+            fallback = self._generate_fallback_explanation(
+                matched_label, cand.get("lokal_rating"), cand.get("rating")
+            )
+            self.cache.set_explanation(
+                str_user_id, sid, fallback, generation=user_generation
+            )
+            return fallback
+
+        tasks = [
+            asyncio.create_task(_resolve_candidate_explanation(cand_tuple))
+            for cand_tuple in selected_candidates
+        ]
+
+        if tasks:
+            done, pending = await asyncio.wait(tasks, timeout=self.batch_timeout)
+            for p_task in pending:
+                p_task.cancel()
+        else:
+            done, pending = set(), set()
+
+        recommendations: list[RecommendedShopItem] = []
+        for i, (_score, cand, matched_label) in enumerate(selected_candidates):
+            task = tasks[i]
+            if task in done and not task.cancelled() and task.exception() is None:
+                explanation = task.result()
+            else:
+                if task in done and task.exception() is not None:
+                    logger.warning(
+                        f"Explanation task for shop {cand.get('id')} failed with exception: {task.exception()}"
+                    )
+                fallback = self._generate_fallback_explanation(
+                    matched_label, cand.get("lokal_rating"), cand.get("rating")
+                )
+                self.cache.set_explanation(
+                    str_user_id, str(cand["id"]), fallback, generation=user_generation
+                )
+                explanation = fallback
 
             shop_response = NearbyShopResponse(
                 id=cand["id"],
