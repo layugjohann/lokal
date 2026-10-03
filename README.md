@@ -24,20 +24,20 @@ LOKAL aims to support local businesses by making discovery easier while helping 
 
 ## Core Features
 
-### Current Vision
+### Implemented Features
 
 * 📍 Discover nearby local coffee shops
 * 🗺️ Interactive map-based browsing
 * 🤖 AI-generated review summaries
 * ☕ "Must Try" coffee or menu recommendations
+* ⭐ First-party user reviews and ratings
+* ❤️ Favorite coffee shops
+* 🔍 Advanced search and filtering
+* 👤 User authentication and session management
+* ✨ Personalized coffee shop recommendations
 
 ### Planned Features
 
-* ⭐ User reviews and ratings
-* ❤️ Favorite coffee shops
-* 🔍 Advanced search and filtering
-* 👤 User authentication
-* 📈 Personalized recommendations
 * 🏪 Coffee shop owner dashboard (future exploration)
 
 ---

@@ -8,7 +8,7 @@ export interface Shop {
   google_place_id?: string | null;
   created_at?: string | null;
   updated_at?: string | null;
-  distance_meters: number;
+  distance_meters?: number | null;
   lokal_rating?: number | null;
   lokal_reviews_count?: number;
 }

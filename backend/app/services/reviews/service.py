@@ -19,6 +19,7 @@ from .base import BaseReviewProvider, ExternalProviderError
 from .google_places import GooglePlacesReviewProvider
 from .recommendations import get_recommendation_cache
 from .summary import get_summary_cache
+from ..personalized_cache import get_personalized_cache
 
 logger = logging.getLogger(__name__)
 
@@ -278,6 +279,7 @@ class ReviewService:
             row = result.data if isinstance(result.data, dict) else result.data[0]
             get_summary_cache().invalidate(str_shop_id)
             get_recommendation_cache().invalidate(str_shop_id)
+            get_personalized_cache().invalidate_user(str(user.id))
             return _row_to_unified_review(row)
         except APIError as exc:
             logger.warning(f"Database error inserting review for shop {shop_id}: {exc.message}")
@@ -447,6 +449,7 @@ class ReviewService:
             row = result.data if isinstance(result.data, dict) else result.data[0]
             get_summary_cache().invalidate(str_shop_id)
             get_recommendation_cache().invalidate(str_shop_id)
+            get_personalized_cache().invalidate_user(str(user.id))
             return _row_to_unified_review(row)
         except APIError as exc:
             logger.warning(f"Database error updating review for shop {shop_id}: {exc.message}")
@@ -503,6 +506,7 @@ class ReviewService:
             supabase.table("reviews").delete().eq("shop_id", str_shop_id).eq("user_id", user.id).eq("source", "lokal").execute()
             get_summary_cache().invalidate(str_shop_id)
             get_recommendation_cache().invalidate(str_shop_id)
+            get_personalized_cache().invalidate_user(str(user.id))
         except HTTPException:
             raise
         except APIError as exc:

@@ -94,7 +94,7 @@ class ShopResponse(BaseModel):
 
 class NearbyShopResponse(ShopResponse):
     """Response representation of a coffee shop with nearby distance and community rating metrics."""
-    distance_meters: float = Field(..., ge=0.0, description="Distance from search origin in meters")
+    distance_meters: Optional[float] = Field(None, ge=0.0, description="Distance from search origin in meters")
     lokal_rating: Optional[float] = Field(None, ge=0.0, le=5.0, description="Average rating from LOKAL community reviews")
     lokal_reviews_count: int = Field(0, ge=0, description="Total count of LOKAL community reviews")
 

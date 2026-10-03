@@ -1,4 +1,4 @@
-import React, { useContext, useEffect, useRef, useState } from 'react';
+import React, { useContext, useEffect, useRef, useState, useCallback } from 'react';
 import {
   StyleSheet,
   View,
@@ -10,6 +10,7 @@ import MapView, { Marker, Region } from 'react-native-maps';
 import { AuthContext } from '../context/AuthContext';
 import { useLocation } from '../hooks/useLocation';
 import { useNearbyShops } from '../hooks/useNearbyShops';
+import { usePersonalizedRecommendations } from '../hooks/usePersonalizedRecommendations';
 import NearbyShopsSheet from './NearbyShopsSheet';
 import ProfileView from './ProfileView';
 import { getProfilePrincipalKey } from '../services/authService';
@@ -62,6 +63,27 @@ export default function LokalMapView({ authToken }: LokalMapViewProps = {}) {
     resetFilters,
     hasActiveFilters,
   } = useNearbyShops(location, activeAuthToken);
+
+  const activeUserId = auth?.user?.id ?? null;
+
+  const {
+    recommendations,
+    status: recommendationsStatus,
+    isLoading: isLoadingRecommendations,
+    errorMessage: recommendationsError,
+    userMessage: recommendationsUserMessage,
+    refetch: refetchRecommendations,
+  } = usePersonalizedRecommendations(location, activeAuthToken, activeUserId);
+
+  const handleFavoriteChange = useCallback(() => {
+    refetchShops();
+    refetchRecommendations();
+  }, [refetchShops, refetchRecommendations]);
+
+  const handleReviewChange = useCallback(() => {
+    refetchShops();
+    refetchRecommendations();
+  }, [refetchShops, refetchRecommendations]);
 
   const mapRef = useRef<MapView>(null);
 
@@ -156,6 +178,14 @@ export default function LokalMapView({ authToken }: LokalMapViewProps = {}) {
           onSortByChange={setSortBy}
           onResetFilters={resetFilters}
           hasActiveFilters={hasActiveFilters}
+          recommendations={recommendations}
+          recommendationsStatus={recommendationsStatus}
+          isLoadingRecommendations={isLoadingRecommendations}
+          recommendationsError={recommendationsError}
+          recommendationsUserMessage={recommendationsUserMessage}
+          onRetryRecommendations={refetchRecommendations}
+          onFavoriteChange={handleFavoriteChange}
+          onReviewChange={handleReviewChange}
         />
       )}
 
