@@ -28,6 +28,8 @@ logger = logging.getLogger(__name__)
 GEMINI_API_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models"
 
 CANDIDATE_OVERFETCH_LIMIT = 30
+CANDIDATE_PAGE_SIZE = 30
+MAX_CANDIDATE_PAGES = 3
 CANDIDATE_EVALUATION_LIMIT = 10
 MAX_RECOMMENDATIONS_RETURNED = 5
 EXPLANATION_BATCH_TIMEOUT = 7.0
@@ -50,14 +52,32 @@ PROXIMITY_FORBIDDEN_TERMS = {
 }
 
 COFFEE_FEATURE_ONTOLOGY: dict[str, dict[str, Any]] = {
-    # Brew & Beverage Styles
+    # 1. Brew & Beverage Styles
     "pour_over": {
         "label": "pour-over coffee",
-        "keywords": ["pour over", "pour-over", "pourover", "manual brew", "filter coffee", "drip"],
+        "keywords": [
+            "pour over",
+            "pour-over",
+            "pourover",
+            "manual brew",
+            "filter coffee",
+            "drip",
+            "v60",
+            "chemex",
+            "aeropress",
+        ],
     },
     "espresso": {
         "label": "espresso & milk drinks",
-        "keywords": ["espresso", "cortado", "macchiato", "flat white", "americano"],
+        "keywords": [
+            "espresso",
+            "cortado",
+            "macchiato",
+            "flat white",
+            "americano",
+            "cappuccino",
+            "latte",
+        ],
     },
     "cold_brew": {
         "label": "cold brew",
@@ -65,44 +85,196 @@ COFFEE_FEATURE_ONTOLOGY: dict[str, dict[str, Any]] = {
     },
     "specialty_lattes": {
         "label": "specialty lattes",
-        "keywords": ["spanish latte", "caramel latte", "vanilla latte", "oat latte", "sea salt latte"],
+        "keywords": [
+            "spanish latte",
+            "caramel latte",
+            "vanilla latte",
+            "oat latte",
+            "sea salt latte",
+            "flavored latte",
+        ],
     },
     "matcha": {
         "label": "matcha & tea",
         "keywords": ["matcha", "matcha latte", "hojicha", "green tea"],
     },
-    # Beans & Craft
+    "decaf": {
+        "label": "decaf coffee",
+        "keywords": ["decaf", "decaffeinated", "swiss water"],
+    },
+    "tea_selection": {
+        "label": "artisan tea selection",
+        "keywords": ["tea", "loose leaf", "chai", "earl grey", "herbal tea"],
+    },
+    "dairy_free_milk": {
+        "label": "dairy-free milk alternatives",
+        "keywords": [
+            "oat milk",
+            "almond milk",
+            "soy milk",
+            "dairy-free",
+            "plant-based milk",
+            "plant milk",
+        ],
+    },
+    # 2. Beans & Craft
     "specialty_beans": {
         "label": "specialty roast beans",
-        "keywords": ["specialty", "single origin", "roastery", "in-house roast", "beans", "ethiopian", "colombian"],
+        "keywords": [
+            "specialty",
+            "roastery",
+            "in-house roast",
+            "beans",
+            "ethiopian",
+            "colombian",
+            "roaster",
+        ],
     },
-    # Ambiance & Work
+    "single_origin": {
+        "label": "single-origin coffees",
+        "keywords": [
+            "single origin",
+            "single-origin",
+            "micro-lot",
+            "microlot",
+            "origin",
+        ],
+    },
+    "light_roast": {
+        "label": "light & fruity roasts",
+        "keywords": [
+            "light roast",
+            "fruity",
+            "floral",
+            "acidic",
+            "citrus notes",
+            "bright acidity",
+        ],
+    },
+    "dark_roast": {
+        "label": "rich & dark roasts",
+        "keywords": [
+            "dark roast",
+            "bold roast",
+            "chocolatey",
+            "nutty",
+            "full-bodied",
+            "deep roast",
+        ],
+    },
+    # 3. Ambiance & Work
     "quiet_study": {
         "label": "quiet work-friendly space",
-        "keywords": ["quiet", "work", "laptop", "study", "wifi", "sockets", "outlets", "peaceful"],
+        "keywords": [
+            "quiet",
+            "work",
+            "laptop",
+            "study",
+            "wifi",
+            "sockets",
+            "outlets",
+            "peaceful",
+        ],
     },
     "cozy_aesthetic": {
         "label": "cozy aesthetic ambiance",
-        "keywords": ["cozy", "aesthetic", "minimalist", "warm", "vibes", "ambiance", "atmosphere"],
+        "keywords": [
+            "cozy",
+            "aesthetic",
+            "minimalist",
+            "warm",
+            "vibes",
+            "ambiance",
+            "atmosphere",
+        ],
     },
     "spacious": {
         "label": "spacious outdoor seating",
-        "keywords": ["spacious", "outdoor", "al fresco", "airy", "plenty of seating", "patio"],
+        "keywords": [
+            "spacious",
+            "airy",
+            "plenty of seating",
+            "large tables",
+            "roomy",
+        ],
     },
-    # Bakery & Food
+    "pet_friendly": {
+        "label": "pet friendly",
+        "keywords": [
+            "pet friendly",
+            "pets allowed",
+            "dog friendly",
+            "dogs welcome",
+            "pet-friendly",
+            "furry friends",
+        ],
+    },
+    "outdoor_seating": {
+        "label": "outdoor seating & patio",
+        "keywords": [
+            "outdoor",
+            "al fresco",
+            "patio",
+            "terrace",
+            "balcony",
+            "garden seating",
+            "outdoor seating",
+        ],
+    },
+    # 4. Bakery & Food
     "pastries": {
         "label": "fresh pastries",
-        "keywords": ["croissant", "pastry", "pastries", "baked goods", "croissants", "sourdough", "bread"],
+        "keywords": [
+            "croissant",
+            "pastry",
+            "pastries",
+            "baked goods",
+            "croissants",
+            "sourdough",
+            "bread",
+            "bakery",
+        ],
     },
     "breakfast_food": {
         "label": "breakfast & brunch",
-        "keywords": ["breakfast", "brunch", "sandwiches", "bagel", "toast", "waffles"],
+        "keywords": [
+            "breakfast",
+            "brunch",
+            "sandwiches",
+            "bagel",
+            "toast",
+            "waffles",
+            "pancakes",
+        ],
+    },
+    "desserts": {
+        "label": "desserts & sweets",
+        "keywords": [
+            "dessert",
+            "desserts",
+            "cake",
+            "cheesecake",
+            "brownies",
+            "cookies",
+            "tart",
+            "sweet treat",
+        ],
     },
 }
 
 
 def extract_features_from_text(text: Optional[str]) -> set[str]:
-    """Scan text for keywords in the coffee feature ontology."""
+    """Scan text for keywords in the 20-feature coffee ontology.
+
+    Uses word-boundary regex patterns to detect canonical coffee traits across
+    brew styles, bean origins, ambiance, and food offerings.
+
+    Args:
+        text: Freeform review or descriptive text to scan.
+
+    Returns:
+        Set of matched canonical feature keys from COFFEE_FEATURE_ONTOLOGY.
+    """
     if not text or not text.strip():
         return set()
 
@@ -127,6 +299,7 @@ class ExplanationGenerator(Protocol):
         self,
         evidence: CandidateEvidencePack,
     ) -> Optional[str]:
+        """Synthesize a location-independent explanation string from candidate evidence."""
         ...
 
 
@@ -263,11 +436,23 @@ class PersonalizedRecommendationService:
         user_favorites: list[dict[str, Any]],
         supabase: Client,
         generation: Optional[int] = None,
-    ) -> tuple[dict[str, float], set[str], Optional[float]]:
-        """Construct user taste profile (P_user, N_user, user_avg_rating) from user signals.
+    ) -> tuple[dict[str, float], set[str], Optional[float], Optional[float]]:
+        """Construct user taste profile (P_user, N_user, user_avg_rating, fav_avg_rating) from user signals.
+
+        Extracts canonical coffee ontology features from positive first-party reviews (weight 2.0)
+        and favorited shops' positive reviews (weight 1.0). Avoidance features are flagged from
+        disliked reviews (<= 2.0 stars). Also computes first-party user average rating and
+        favorited shops' average provider rating to establish the baseline for unreviewed candidates.
+
+        Args:
+            user_id: Authenticated user ID.
+            user_reviews: User's first-party LOKAL reviews.
+            user_favorites: User's saved favorites.
+            supabase: Authenticated or service-role Supabase client.
+            generation: User mutation generation for cache fencing.
 
         Returns:
-            Tuple of (p_user_weights, n_user_avoidance, user_avg_rating).
+            Tuple of (p_user_weights, n_user_avoidance, user_avg_rating, fav_avg_rating).
         """
         # Cached profile check
         cached_profile = self.cache.get_profile(user_id)
@@ -276,6 +461,7 @@ class PersonalizedRecommendationService:
                 cached_profile.get("p_user", {}),
                 set(cached_profile.get("n_user", [])),
                 cached_profile.get("user_avg_rating"),
+                cached_profile.get("fav_avg_rating"),
             )
 
         # 1. User average rating: arithmetic mean across user's first-party LOKAL reviews
@@ -300,8 +486,17 @@ class PersonalizedRecommendationService:
             elif rating <= 2.0:
                 n_user_avoidance.update(feats)
 
-        # 3. Extract features from user's favorited shops' positive reviews
+        # 3. Extract features from user's favorited shops' positive reviews and collect favorited shop ratings
         fav_shop_ids = [str(fav["shop_id"]) for fav in user_favorites if fav.get("shop_id")]
+        fav_ratings: list[float] = []
+
+        # Check if ratings are already present on favorite objects (e.g. from tests or joins)
+        for fav in user_favorites:
+            if fav.get("rating") is not None:
+                fav_ratings.append(float(fav["rating"]))
+            elif isinstance(fav.get("shops"), dict) and fav["shops"].get("rating") is not None:
+                fav_ratings.append(float(fav["shops"]["rating"]))
+
         if fav_shop_ids:
             try:
                 fav_revs_res = (
@@ -320,6 +515,27 @@ class PersonalizedRecommendationService:
             except Exception as exc:
                 logger.warning(f"Failed to fetch favorited shops reviews for user {user_id}: {exc}")
 
+            # If provider ratings were not attached to favorite records, fetch them from shops table
+            if not fav_ratings:
+                try:
+                    fav_shops_res = (
+                        supabase.table("shops")
+                        .select("id, rating")
+                        .in_("id", fav_shop_ids)
+                        .execute()
+                    )
+                    for s in fav_shops_res.data or []:
+                        if s.get("rating") is not None:
+                            fav_ratings.append(float(s["rating"]))
+                except Exception as exc:
+                    logger.warning(
+                        f"Failed to fetch favorited shops ratings for user {user_id}: {exc}"
+                    )
+
+        fav_avg_rating: Optional[float] = (
+            round(sum(fav_ratings) / len(fav_ratings), 2) if fav_ratings else None
+        )
+
         # 4. Normalize p_user_weights to [0.0, 1.0]
         if p_user_weights:
             max_w = max(p_user_weights.values())
@@ -332,10 +548,11 @@ class PersonalizedRecommendationService:
             "p_user": normalized_p,
             "n_user": list(n_user_avoidance),
             "user_avg_rating": user_avg_rating,
+            "fav_avg_rating": fav_avg_rating,
         }
         self.cache.set_profile(user_id, profile_dict, generation=generation)
 
-        return normalized_p, n_user_avoidance, user_avg_rating
+        return normalized_p, n_user_avoidance, user_avg_rating, fav_avg_rating
 
     def _generate_fallback_explanation(
         self,
@@ -343,7 +560,19 @@ class PersonalizedRecommendationService:
         lokal_rating: Optional[float],
         provider_rating: Optional[float],
     ) -> str:
-        """Deterministic location-independent fallback template."""
+        """Deterministic location-independent fallback template.
+
+        Explains recommendations using matched ontology coffee traits, LOKAL community
+        ratings, or external provider ratings without any distance or proximity terms.
+
+        Args:
+            matched_label: Grounded label of the best matched ontology trait, or None.
+            lokal_rating: Average first-party LOKAL review rating, or None.
+            provider_rating: External provider rating, or None.
+
+        Returns:
+            Grounded 1-sentence explanation string.
+        """
         if matched_label:
             return f"Recommended for its praised {matched_label}, matching your saved coffee preferences."
         if lokal_rating is not None:
@@ -360,7 +589,30 @@ class PersonalizedRecommendationService:
         radius: float = 5000.0,
         limit: int = 5,
     ) -> PersonalizedRecommendationsResponse:
-        """Retrieve personalized recommendations for the authenticated user."""
+        """Retrieve personalized recommendations for the authenticated user.
+
+        Workflow:
+        1. Capture user mutation generation upfront for generation fencing.
+        2. Query user's first-party reviews and favorites.
+        3. Pre-compute excluded shop IDs (already reviewed or favorited).
+        4. Construct user taste profile and check insufficient-data gate.
+        5. Fetch up to 30 eligible, approved candidate shops using bounded paging (max 3 pages),
+           excluding reviewed and favorited shops before the candidate limit is reached.
+        6. Extract candidate features and compute deterministic scores (S_taste, S_quality, S_proximity).
+        7. Concurrently synthesize location-independent grounded explanations for top candidates
+           with a bounded batch timeout and deterministic fallback.
+
+        Args:
+            user: Authenticated user principal.
+            supabase: Authenticated or service-role Supabase client.
+            latitude: Optional user latitude coordinate.
+            longitude: Optional user longitude coordinate.
+            radius: Spatial search radius in meters (default 5000m).
+            limit: Maximum recommendations to return (1-5).
+
+        Returns:
+            PersonalizedRecommendationsResponse with status, message, and recommendation items.
+        """
         clamped_limit = max(1, min(limit, MAX_RECOMMENDATIONS_RETURNED))
         str_user_id = str(user.id)
 
@@ -371,7 +623,7 @@ class PersonalizedRecommendationService:
         try:
             reviews_res = (
                 supabase.table("reviews")
-                .select("id, shop_id, rating, content")
+                .select("id, shop_id, rating, content, created_at")
                 .eq("user_id", str_user_id)
                 .eq("source", "lokal")
                 .execute()
@@ -400,9 +652,21 @@ class PersonalizedRecommendationService:
                 detail="A database error occurred while retrieving user favorites.",
             ) from exc
 
+        # Exclude shops user has already favorited OR reviewed BEFORE candidate limit
+        user_excluded_shop_ids = {
+            str(fav["shop_id"]) for fav in user_favorites if fav.get("shop_id")
+        }
+        user_excluded_shop_ids.update(
+            {str(rev["shop_id"]) for rev in user_reviews if rev.get("shop_id")}
+        )
+
         # 3. Extract user taste profile (with generation fencing)
-        p_user, n_user, user_avg_rating = self.build_user_taste_profile(
+        p_user, n_user, user_avg_rating, fav_avg_rating = self.build_user_taste_profile(
             str_user_id, user_reviews, user_favorites, supabase, generation=user_generation
+        )
+        logger.debug(
+            f"Taste profile built for user {str_user_id}: {len(p_user)} features, "
+            f"user_avg_rating={user_avg_rating}, fav_avg_rating={fav_avg_rating}"
         )
 
         # 4. Evaluate Insufficient-Data Gate
@@ -415,27 +679,43 @@ class PersonalizedRecommendationService:
                 total_candidates_evaluated=0,
             )
 
-        # 5. Over-fetch candidates (CANDIDATE_OVERFETCH_LIMIT = 30)
+        # 5. Over-fetch candidates with pre-limit exclusion & bounded paging
         has_location = latitude is not None and longitude is not None
-        raw_candidates: list[dict[str, Any]] = []
+        eligible_candidates: list[dict[str, Any]] = []
 
         if has_location:
             try:
-                rpc_res = supabase.rpc(
-                    "get_nearby_shops",
-                    {
-                        "user_lat": latitude,
-                        "user_lng": longitude,
-                        "radius_meters": radius,
-                        "result_limit": CANDIDATE_OVERFETCH_LIMIT,
-                        "result_offset": 0,
-                        "search_query": None,
-                        "min_rating": None,
-                        "sort_by": "distance",
-                        "min_lokal_rating": None,
-                    },
-                ).execute()
-                raw_candidates = rpc_res.data or []
+                for page in range(MAX_CANDIDATE_PAGES):
+                    offset = page * CANDIDATE_PAGE_SIZE
+                    rpc_res = supabase.rpc(
+                        "get_nearby_shops",
+                        {
+                            "user_lat": latitude,
+                            "user_lng": longitude,
+                            "radius_meters": radius,
+                            "result_limit": CANDIDATE_PAGE_SIZE,
+                            "result_offset": offset,
+                            "search_query": None,
+                            "min_rating": None,
+                            "sort_by": "distance",
+                            "min_lokal_rating": None,
+                        },
+                    ).execute()
+                    page_data = rpc_res.data or []
+                    if not page_data:
+                        break
+
+                    for s in page_data:
+                        sid = str(s.get("id"))
+                        if sid not in user_excluded_shop_ids:
+                            eligible_candidates.append(s)
+                            if len(eligible_candidates) >= CANDIDATE_OVERFETCH_LIMIT:
+                                break
+
+                    if len(eligible_candidates) >= CANDIDATE_OVERFETCH_LIMIT:
+                        break
+                    if len(page_data) < CANDIDATE_PAGE_SIZE:
+                        break
             except Exception as exc:
                 logger.error(f"Database error executing nearby search RPC: {exc}")
                 raise HTTPException(
@@ -444,24 +724,40 @@ class PersonalizedRecommendationService:
                 ) from exc
         else:
             try:
-                # No-location path: enforce APPROVED curation filter BEFORE candidate limit (30)
-                # Order by rating DESC with nulls last, then deterministic tie-breaker by shop id
-                shops_res = (
-                    supabase.table("shops")
-                    .select(
-                        "id, name, address, latitude, longitude, rating, google_place_id, created_at, updated_at, shop_curation!inner(status)"
+                raw_eligible_shops: list[dict[str, Any]] = []
+                for page in range(MAX_CANDIDATE_PAGES):
+                    offset = page * CANDIDATE_PAGE_SIZE
+                    query = (
+                        supabase.table("shops")
+                        .select(
+                            "id, name, address, latitude, longitude, rating, google_place_id, created_at, updated_at, shop_curation!inner(status)"
+                        )
+                        .eq("shop_curation.status", "APPROVED")
+                        .order("rating", desc=True, nullsfirst=False)
+                        .order("id")
+                        .limit(CANDIDATE_PAGE_SIZE)
                     )
-                    .eq("shop_curation.status", "APPROVED")
-                    .order("rating", desc=True, nullsfirst=False)
-                    .order("id")
-                    .limit(CANDIDATE_OVERFETCH_LIMIT)
-                    .execute()
-                )
-                shops_data = shops_res.data or []
-                approved_ids = [str(s["id"]) for s in shops_data if s.get("id")]
+                    if offset > 0:
+                        query = query.offset(offset)
+                    shops_res = query.execute()
+                    page_data = shops_res.data or []
+                    if not page_data:
+                        break
 
+                    for s in page_data:
+                        sid = str(s.get("id"))
+                        if sid not in user_excluded_shop_ids:
+                            raw_eligible_shops.append(s)
+                            if len(raw_eligible_shops) >= CANDIDATE_OVERFETCH_LIMIT:
+                                break
+
+                    if len(raw_eligible_shops) >= CANDIDATE_OVERFETCH_LIMIT:
+                        break
+                    if len(page_data) < CANDIDATE_PAGE_SIZE:
+                        break
+
+                approved_ids = [str(s["id"]) for s in raw_eligible_shops if s.get("id")]
                 rating_acc: dict[str, list[float]] = {}
-                # Prevent executing review query if zero approved candidate IDs exist
                 if approved_ids:
                     revs_res = (
                         supabase.table("reviews")
@@ -474,13 +770,13 @@ class PersonalizedRecommendationService:
                         sid = str(r["shop_id"])
                         rating_acc.setdefault(sid, []).append(float(r["rating"]))
 
-                for s in shops_data:
+                for s in raw_eligible_shops:
                     sid = str(s["id"])
                     ratings = rating_acc.get(sid, [])
                     l_count = len(ratings)
                     l_avg = round(sum(ratings) / l_count, 2) if l_count > 0 else None
                     clean_shop = {k: v for k, v in s.items() if k != "shop_curation"}
-                    raw_candidates.append({
+                    eligible_candidates.append({
                         **clean_shop,
                         "distance_meters": None,
                         "lokal_rating": l_avg,
@@ -493,16 +789,7 @@ class PersonalizedRecommendationService:
                     detail="A database error occurred while fetching candidate coffee shops.",
                 ) from exc
 
-        # 6. Exclusion Filtering
-        # Exclude shops user has already favorited OR reviewed
-        user_excluded_shop_ids = {str(fav["shop_id"]) for fav in user_favorites if fav.get("shop_id")}
-        user_excluded_shop_ids.update({str(rev["shop_id"]) for rev in user_reviews if rev.get("shop_id")})
-
-        surviving_candidates = [
-            c for c in raw_candidates if str(c.get("id")) not in user_excluded_shop_ids
-        ]
-
-        if not surviving_candidates:
+        if not eligible_candidates:
             return PersonalizedRecommendationsResponse(
                 status=RecommendationStatus.EMPTY,
                 message="No new coffee shops to recommend nearby. Try expanding your search area.",
@@ -510,8 +797,8 @@ class PersonalizedRecommendationService:
                 total_candidates_evaluated=0,
             )
 
-        # 7. Candidate Feature Extraction & Deterministic Scoring (Bounded to top 10)
-        evaluation_candidates = surviving_candidates[:CANDIDATE_EVALUATION_LIMIT]
+        # 6. Candidate Feature Extraction & Deterministic Scoring (Bounded to top 10)
+        evaluation_candidates = eligible_candidates[:CANDIDATE_EVALUATION_LIMIT]
         eval_shop_ids = [str(c["id"]) for c in evaluation_candidates if c.get("id")]
 
         candidate_features_map: dict[str, dict[str, float]] = {}
@@ -557,8 +844,17 @@ class PersonalizedRecommendationService:
                 sum_p = sum(p_user.values())
                 s_taste = overlap / sum_p if sum_p > 0 else 0.0
 
-                # Baseline for unreviewed candidates if ratings match user favorites standard
-                if s_taste == 0.0 and not c_feats and cand.get("rating") is not None:
+                # Baseline for unreviewed candidates:
+                # If user has favorites but candidate has 0 textual reviews, S_taste receives
+                # a small baseline of 0.15 if candidate's provider rating is within +- 0.3
+                # of the user's favorited shops' average provider rating.
+                if (
+                    s_taste == 0.0
+                    and not c_feats
+                    and fav_avg_rating is not None
+                    and cand.get("rating") is not None
+                    and abs(float(cand["rating"]) - fav_avg_rating) <= 0.3
+                ):
                     s_taste = 0.15
 
                 # Find single best matched feature label
@@ -598,7 +894,7 @@ class PersonalizedRecommendationService:
 
         selected_candidates = scored_candidates[:clamped_limit]
 
-        # 8. Location-Independent Grounded Explanation Generation (Concurrent with Bounded Batch Timeout)
+        # 7. Location-Independent Grounded Explanation Generation (Concurrent with Bounded Batch Timeout)
         async def _resolve_candidate_explanation(
             cand_tuple: tuple[float, dict[str, Any], Optional[str]],
         ) -> str:
@@ -694,7 +990,7 @@ class PersonalizedRecommendationService:
             status=RecommendationStatus.PERSONALIZED,
             message="Recommendations tailored to your coffee preferences.",
             recommendations=recommendations,
-            total_candidates_evaluated=len(surviving_candidates),
+            total_candidates_evaluated=len(eligible_candidates),
         )
 
 

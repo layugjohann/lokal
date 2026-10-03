@@ -68,6 +68,33 @@ class TestPersonalizedFeatureExtraction(unittest.TestCase):
         self.assertEqual(extract_features_from_text("   "), set())
         self.assertEqual(extract_features_from_text("Random non-coffee text"), set())
 
+    def test_coffee_feature_ontology_count_and_completeness(self):
+        """Verify COFFEE_FEATURE_ONTOLOGY contains exactly 20 features across all 4 dimensions."""
+        self.assertEqual(len(COFFEE_FEATURE_ONTOLOGY), 20)
+        expected_features = {
+            "pour_over", "espresso", "cold_brew", "specialty_lattes", "matcha",
+            "decaf", "tea_selection", "dairy_free_milk",
+            "specialty_beans", "single_origin", "light_roast", "dark_roast",
+            "quiet_study", "cozy_aesthetic", "spacious", "pet_friendly", "outdoor_seating",
+            "pastries", "breakfast_food", "desserts",
+        }
+        self.assertEqual(set(COFFEE_FEATURE_ONTOLOGY.keys()), expected_features)
+        for _key, meta in COFFEE_FEATURE_ONTOLOGY.items():
+            self.assertIn("label", meta)
+            self.assertIn("keywords", meta)
+            self.assertGreater(len(meta["keywords"]), 0)
+
+    def test_extract_features_all_ontology_categories(self):
+        """Verify keyword matching across all newly added and existing categories."""
+        text = "They have decaf, single origin beans, oat milk, and a dog friendly patio with cheesecake!"
+        feats = extract_features_from_text(text)
+        self.assertIn("decaf", feats)
+        self.assertIn("single_origin", feats)
+        self.assertIn("dairy_free_milk", feats)
+        self.assertIn("pet_friendly", feats)
+        self.assertIn("outdoor_seating", feats)
+        self.assertIn("desserts", feats)
+
 
 class TestPersonalizedCacheAndInvalidation(unittest.TestCase):
     """Test suite for location-independent explanation cache, TTLs, and generation fencing."""
@@ -720,6 +747,198 @@ class TestPersonalizedRecommendationsService(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(res.recommendations), 1)
         # Bounded batch timeout caused graceful fallback
         self.assertIn("Recommended for its praised pour-over coffee", res.recommendations[0].explanation)
+
+    async def test_location_candidate_paging_discovers_eligible_shops_past_excluded_window(self):
+        """When page 0 of candidate search is filled with excluded shops, paging continues to page 1 to find eligible shops."""
+        user_reviews = [{"id": str(uuid4()), "shop_id": str(uuid4()), "rating": 5, "content": "I love pour-over coffee"}]
+        # Create 30 favorited shops (fills page 0)
+        fav_shops = [{"id": str(uuid4()), "shop_id": str(uuid4()), "rating": 4.5} for _ in range(30)]
+        fav_shop_ids = {f["shop_id"] for f in fav_shops}
+
+        # Page 0 has the 30 favorited shops
+        page_0 = [
+            {"id": s_id, "name": f"Fav Shop {i}", "latitude": 14.5, "longitude": 121.0, "rating": 4.5, "distance_meters": 100 + i}
+            for i, s_id in enumerate(fav_shop_ids)
+        ]
+        # Page 1 has 3 brand-new eligible shops
+        eligible_ids = [str(uuid4()) for _ in range(3)]
+        page_1 = [
+            {"id": s_id, "name": f"Eligible Shop {i}", "latitude": 14.5, "longitude": 121.0, "rating": 4.8, "distance_meters": 500 + i, "lokal_rating": 4.8, "lokal_reviews_count": 5}
+            for i, s_id in enumerate(eligible_ids)
+        ]
+
+        mock_sub = MagicMock()
+        def table_side(name):
+            m = MagicMock()
+            if name == "reviews":
+                m.select().eq().eq().execute.return_value.data = user_reviews
+                m.select().in_().eq().gte().execute.return_value.data = [
+                    {"shop_id": eligible_ids[0], "content": "Great pour-over coffee!", "rating": 5}
+                ]
+            elif name == "favorites":
+                m.select().eq().execute.return_value.data = fav_shops
+            return m
+        mock_sub.table.side_effect = table_side
+
+        # Return page_0 on first RPC call, page_1 on second RPC call
+        def rpc_side_effect(_func, params):
+            m_rpc = MagicMock()
+            offset = params.get("result_offset", 0)
+            if offset == 0:
+                m_rpc.execute.return_value.data = page_0
+            elif offset == 30:
+                m_rpc.execute.return_value.data = page_1
+            else:
+                m_rpc.execute.return_value.data = []
+            return m_rpc
+        mock_sub.rpc.side_effect = rpc_side_effect
+
+        res = await self.service.get_personalized_recommendations(user=self.user, supabase=mock_sub, latitude=14.5, longitude=121.0)
+        self.assertEqual(res.status, RecommendationStatus.PERSONALIZED)
+        self.assertEqual(len(res.recommendations), 3)
+        rec_ids = {str(r.shop.id) for r in res.recommendations}
+        self.assertEqual(rec_ids, set(eligible_ids))
+        for r_id in rec_ids:
+            self.assertNotIn(r_id, fav_shop_ids)
+
+    async def test_no_location_candidate_paging_discovers_eligible_shops_past_excluded_window(self):
+        """In no-location path, when page 0 is excluded, paging continues to page 1 to find eligible shops."""
+        user_reviews = [{"id": str(uuid4()), "shop_id": str(uuid4()), "rating": 5, "content": "I love pour-over coffee"}]
+        fav_shops = [{"id": str(uuid4()), "shop_id": str(uuid4()), "rating": 4.5} for _ in range(30)]
+        fav_shop_ids = {f["shop_id"] for f in fav_shops}
+
+        page_0 = [
+            {"id": s_id, "name": f"Fav Shop {i}", "latitude": 14.5, "longitude": 121.0, "rating": 4.5, "google_place_id": f"p0_{i}", "shop_curation": {"status": "APPROVED"}}
+            for i, s_id in enumerate(fav_shop_ids)
+        ]
+        eligible_ids = [str(uuid4()) for _ in range(2)]
+        page_1 = [
+            {"id": s_id, "name": f"Eligible Shop {i}", "latitude": 14.5, "longitude": 121.0, "rating": 4.8, "google_place_id": f"p1_{i}", "shop_curation": {"status": "APPROVED"}}
+            for i, s_id in enumerate(eligible_ids)
+        ]
+
+        mock_sub = MagicMock()
+        mock_shops = MagicMock()
+        builder = mock_shops.select.return_value.eq.return_value.order.return_value.order.return_value.limit.return_value
+        builder.execute.return_value.data = page_0
+        builder.offset.return_value.execute.return_value.data = page_1
+
+        def table_side(name):
+            m = MagicMock()
+            if name == "reviews":
+                m.select().eq().eq().execute.return_value.data = user_reviews
+                m.select().in_().eq().gte().execute.return_value.data = [
+                    {"shop_id": eligible_ids[0], "content": "Great pour-over coffee!", "rating": 5}
+                ]
+                m.select().in_().eq().execute.return_value.data = [
+                    {"shop_id": eligible_ids[0], "rating": 5.0},
+                    {"shop_id": eligible_ids[1], "rating": 4.8},
+                ]
+            elif name == "favorites":
+                m.select().eq().execute.return_value.data = fav_shops
+            elif name == "shops":
+                return mock_shops
+            return m
+        mock_sub.table.side_effect = table_side
+
+        res = await self.service.get_personalized_recommendations(user=self.user, supabase=mock_sub)
+        self.assertEqual(res.status, RecommendationStatus.PERSONALIZED)
+        self.assertEqual(len(res.recommendations), 2)
+        rec_ids = {str(r.shop.id) for r in res.recommendations}
+        self.assertEqual(rec_ids, set(eligible_ids))
+        for r_id in rec_ids:
+            self.assertNotIn(r_id, fav_shop_ids)
+
+    async def test_candidate_generation_remains_strictly_bounded(self):
+        """Candidate scanning halts once 30 eligible candidates or max pages are reached."""
+        user_reviews = [{"id": str(uuid4()), "shop_id": str(uuid4()), "rating": 5, "content": "I love pour-over coffee"}]
+        page_0 = [
+            {"id": str(uuid4()), "name": f"Shop {i}", "latitude": 14.5, "longitude": 121.0, "rating": 4.5, "distance_meters": 100 + i, "lokal_rating": 4.5, "lokal_reviews_count": 2}
+            for i in range(30)
+        ]
+
+        mock_sub = MagicMock()
+        def table_side(name):
+            m = MagicMock()
+            if name == "reviews":
+                m.select().eq().eq().execute.return_value.data = user_reviews
+                m.select().in_().eq().gte().execute.return_value.data = []
+            elif name == "favorites":
+                m.select().eq().execute.return_value.data = []
+            return m
+        mock_sub.table.side_effect = table_side
+
+        rpc_call_count = 0
+        def rpc_side(_func, _params):
+            nonlocal rpc_call_count
+            rpc_call_count += 1
+            m = MagicMock()
+            m.execute.return_value.data = page_0
+            return m
+        mock_sub.rpc.side_effect = rpc_side
+
+        res = await self.service.get_personalized_recommendations(user=self.user, supabase=mock_sub, latitude=14.5, longitude=121.0)
+        self.assertEqual(res.status, RecommendationStatus.PERSONALIZED)
+        self.assertEqual(rpc_call_count, 1)
+        self.assertEqual(res.total_candidates_evaluated, 30)
+
+    async def test_favorite_rating_baseline_rule_within_and_outside_threshold(self):
+        """Unreviewed candidate receives baseline S_taste = 0.15 iff rating within +-0.3 of user's favorited shops avg."""
+        fav_shop_id = str(uuid4())
+        user_favorites = [{"id": str(uuid4()), "shop_id": fav_shop_id, "rating": 4.8}]
+
+        cand_match_id = str(uuid4())
+        cand_nomatch_id = str(uuid4())
+
+        candidate_shops = [
+            {"id": cand_match_id, "name": "Standard Matching Shop", "latitude": 14.5, "longitude": 121.0, "rating": 4.7, "distance_meters": 500, "lokal_rating": None, "lokal_reviews_count": 0},
+            {"id": cand_nomatch_id, "name": "Below Standard Shop", "latitude": 14.5, "longitude": 121.0, "rating": 4.2, "distance_meters": 500, "lokal_rating": None, "lokal_reviews_count": 0},
+        ]
+
+        mock_sub = MagicMock()
+        def table_side(name):
+            m = MagicMock()
+            if name == "reviews":
+                m.select().eq().eq().execute.return_value.data = []
+                m.select().in_().eq().gte().execute.return_value.data = [
+                    {"shop_id": fav_shop_id, "content": "Manual brew pour-over is amazing", "rating": 5}
+                ]
+            elif name == "favorites":
+                m.select().eq().execute.return_value.data = user_favorites
+            return m
+        mock_sub.table.side_effect = table_side
+        mock_sub.rpc.return_value.execute.return_value.data = candidate_shops
+
+        res = await self.service.get_personalized_recommendations(user=self.user, supabase=mock_sub, latitude=14.5, longitude=121.0)
+        self.assertEqual(res.status, RecommendationStatus.PERSONALIZED)
+        self.assertEqual(len(res.recommendations), 2)
+        # Candidate 1 ranks first because it received S_taste = 0.15 baseline
+        self.assertEqual(str(res.recommendations[0].shop.id), cand_match_id)
+        self.assertEqual(str(res.recommendations[1].shop.id), cand_nomatch_id)
+
+    async def test_favorite_rating_baseline_not_applied_when_user_has_no_favorites(self):
+        """When user has no favorites (only reviews), unreviewed candidate does not receive favorite baseline."""
+        user_reviews = [{"id": str(uuid4()), "shop_id": str(uuid4()), "rating": 5, "content": "I love pour-over coffee"}]
+        cand_id = str(uuid4())
+        candidate_shops = [
+            {"id": cand_id, "name": "Unreviewed Shop", "latitude": 14.5, "longitude": 121.0, "rating": 4.8, "distance_meters": 500, "lokal_rating": None, "lokal_reviews_count": 0}
+        ]
+
+        mock_sub = MagicMock()
+        def table_side(name):
+            m = MagicMock()
+            if name == "reviews":
+                m.select().eq().eq().execute.return_value.data = user_reviews
+                m.select().in_().eq().gte().execute.return_value.data = []
+            elif name == "favorites":
+                m.select().eq().execute.return_value.data = []
+            return m
+        mock_sub.table.side_effect = table_side
+        mock_sub.rpc.return_value.execute.return_value.data = candidate_shops
+
+        res = await self.service.get_personalized_recommendations(user=self.user, supabase=mock_sub, latitude=14.5, longitude=121.0)
+        self.assertEqual(len(res.recommendations), 1)
+        self.assertEqual(str(res.recommendations[0].shop.id), cand_id)
 
 
 class TestPersonalizedRecommendationsEndpoint(unittest.TestCase):
