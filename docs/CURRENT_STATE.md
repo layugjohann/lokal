@@ -8,7 +8,7 @@ This document provides a snapshot of the **current state of the `main` branch** 
 
 **Phase 2 — Core Application Features**
 
-The project bootstrapping phase is complete. The mobile application foundation, FastAPI backend, Supabase integration, database schema, user authentication, maps/location integration, coffee shop CRUD API, nearby coffee shop discovery, independent business eligibility and curation, external review data layer, first-party LOKAL user reviews, mobile user authentication with secure session management, AI-generated review summaries, AI-generated "Must Try" recommendations, favorite coffee shops, and the user favorites list / profile discovery flow are established.
+The project bootstrapping phase is complete. The mobile application foundation, FastAPI backend, Supabase integration, database schema, user authentication, maps/location integration, coffee shop CRUD API, nearby coffee shop discovery, independent business eligibility and curation, external review data layer, first-party LOKAL user reviews, mobile user authentication with secure session management, AI-generated review summaries, AI-generated "Must Try" recommendations, favorite coffee shops, the user favorites list / profile discovery flow, advanced shop search and filtering, and personalized coffee shop recommendations are established.
 
 The project is now building application-level features that expand LOKAL's core user experience and community discovery capabilities.
 
@@ -18,11 +18,11 @@ The project is now building application-level features that expand LOKAL's core 
 
 🟢 **On Track**
 
-The core application stack is operational. The latest completed milestone, **Advanced Shop Search and Filtering (GitHub Issue #41)**, delivered expanded nearby coffee shop discovery with name and address search, dual independent rating filters (external provider and first-party LOKAL community ratings), and multi-criteria sorting across the database RPC, FastAPI backend, and mobile UI.
+The core application stack is operational. The latest completed milestone, **Personalized Coffee Shop Recommendations (GitHub Issue #43)**, delivered personalized coffee shop discovery powered by user taste profiling, deterministic candidate scoring, AI-synthesized grounded explanations, process-local caching with generation fencing, and a dedicated mobile "For You" discovery tab in the nearby shops sheet.
 
-Users can search nearby coffee shops by name or street address, apply separate minimum rating filters for Google ratings and LOKAL Community ratings without synthetic score blending, and sort results by distance, Google rating, or LOKAL Community rating with deterministic tie-breaking. Coffee shop cards clearly display both ratings with distinct badges (`★ {rating}` and `☕ {rating} ★ ({count})`), unreviewed shops return explicit null community ratings, and active LOKAL rating filters strictly exclude unreviewed shops. Client discovery requests are coordinated through a pure `NearbyShopsController` that guarantees monotonic request sequencing and discards stale async responses across rapid sort/filter changes, account switches, and location loss.
+Users can browse personalized coffee shop recommendations tailored to their taste profile derived from positive first-party reviews and favorited coffee shops. The recommendation engine evaluates candidate shops across a 20-feature coffee ontology spanning brew & beverage styles, beans & craft, ambiance & work, and bakery & food dimensions. Candidates are ranked using a deterministic scoring formula combining taste similarity, quality metrics, and spatial proximity. Location-independent grounded explanations are synthesized concurrently via Google Gemini (with bounded 7.0-second batch timeouts) and verified against candidate evidence, falling back to deterministic templates when external AI is unavailable. Explanations and user taste profiles are cached process-locally with thread-safe generation fencing, automatically invalidating upon user favorite or review mutations. The mobile application surfaces recommendations in a dedicated `[Nearby | For You]` segmented control in `NearbyShopsSheet`, with full support for semantic states (`loading`, `personalized`, `insufficient_data`, `empty`, `error`) and reactive refetching.
 
-The implementation is verified through **311 passing backend tests**, **141 passing mobile tests**, **70 passing database pgTAP assertions**, and **0 TypeScript compilation errors**.
+The implementation is verified through **348 passing backend tests**, **153 passing mobile tests**, **70 passing database pgTAP assertions**, and **0 TypeScript compilation errors**.
 
 The engineering workflow remains formalized under the **AI-Assisted Engineering Workflow**.
 
@@ -32,53 +32,61 @@ The next feature cycle should begin only after the current state is synchronized
 
 # Latest Completed Feature
 
-## GitHub Issue #41 — Advanced Shop Search and Filtering
+## GitHub Issue #43 — Personalized Coffee Shop Recommendations
 
 **Status:** ✅ Completed
 
 ### Completed Work
 
-* **Database & Spatial RPC Layer**:
-  * Dropped the previous 8-parameter overload of `get_nearby_shops` to prevent ambiguous function dispatch.
-  * Implemented updated 9-parameter `get_nearby_shops` SQL RPC migration in `supabase/migrations/20261002000000_advanced_search_and_filters.sql`.
-  * Expanded search matching to evaluate both `name` AND `address` via case-insensitive pattern matching (`ILIKE`) with proper wildcard escaping (`%`, `_`, `\`).
-  * Implemented a `LEFT JOIN LATERAL` on `reviews` filtered by `source = 'lokal'` to compute `lokal_rating` (numeric average rounded to 2 decimal places) and `lokal_reviews_count` for each candidate shop.
-  * Preserved dual rating independence: provider ratings (`min_rating`) and LOKAL community ratings (`min_lokal_rating`) remain separate filter dimensions without composite score blending.
-  * Enforced response contract: unreviewed shops return `lokal_rating = null` and `lokal_reviews_count = 0`. An active `min_lokal_rating` filter excludes unreviewed shops (`NULL` rating).
-  * Implemented deterministic sorting across `sort_by IN ('distance', 'rating', 'lokal_rating')` with `NULLS LAST` on rating columns, falling back to `calc.distance_meters ASC` and `calc.id ASC`.
-  * Enforced least-privilege access control: maintained `SECURITY INVOKER`, revoked all execution permissions from `PUBLIC` and `anon`, and granted execution strictly to `authenticated`.
-  * Preserved fail-closed curation: only shops with `shop_curation.status = 'APPROVED'` are returned.
-  * Created pgTAP test suite in `supabase/tests/02_advanced_search_and_filters.sql` with **15 assertions** verifying execution privileges, name search, address search, curation filtering, LOKAL rating aggregation, null handling, dual filters, and deterministic sorting.
-* **Backend Authenticated Discovery API (FastAPI)**:
-  * Extended `NearbyShopResponse` in `backend/app/schemas/shop.py` to include `lokal_rating: Optional[float] = Field(None, ge=0.0, le=5.0)` and `lokal_reviews_count: int = Field(0, ge=0)`.
-  * Updated `GET /api/v1/shops/nearby` in `backend/app/api/v1/endpoints/shops.py`:
-    * Added `min_lokal_rating: Optional[float] = Query(default=None, ge=0.0, le=5.0)`.
-    * Expanded `sort_by` validation regex to `^(distance|rating|lokal_rating)$`.
-    * Forwarded `min_lokal_rating` to `get_nearby_shops` RPC.
-  * Updated `backend/tests/test_nearby_shops.py` to verify parameter validation, RPC argument forwarding, combined filters, and schema response modeling (bringing backend test suite to **311 passing tests**).
-* **Mobile Advanced Search, Filter Chips, & Controller Lifecycle**:
-  * Updated `Shop` and `NearbySearchParams` in `mobile/src/types/shop.ts` to include `lokal_rating`, `lokal_reviews_count`, `minLokalRating`, and `'lokal_rating'` sorting.
-  * Serialized `min_lokal_rating` and `sort_by=lokal_rating` in `mobile/src/services/shopService.ts`.
-  * Extracted pure `NearbyShopsController` in `mobile/src/hooks/useNearbyShops.ts`:
-    * Encapsulates asynchronous discovery lifecycle, listener subscription, selection synchronization, and monotonic `requestId` sequencing.
-    * Automatically discards out-of-order stale responses during rapid filter/sort switching.
-    * Invalidates in-flight requests and resets state upon location loss or auth token transitions.
-  * Updated `useNearbyShops` hook to coordinate with `NearbyShopsController`, exposing `minLokalRating`, `setMinLokalRating`, and filter reset/active detection.
+* **Backend Personalized Recommendation Engine & API (FastAPI)**:
+  * Implemented `GET /api/v1/shops/recommendations/personalized` in `backend/app/api/v1/endpoints/shops.py` requiring caller authentication.
+  * Defined request query parameters in `PersonalizedRecommendationParams` (`backend/app/schemas/shop.py`): optional `latitude`, `longitude`, `radius` (default 5000m, max 50000m), and `limit` (default 5, max 5).
+  * Defined response schemas: `PersonalizedShopRecommendation` (shop fields, `explanation`, `matched_features`, `distance_meters`, `relevance_score`) and `PersonalizedRecommendationResponse` (`status` enum: `personalized`, `insufficient_data`, `empty`; `recommendations`, `explanation`, `total_candidates_evaluated`).
+  * Implemented `PersonalizedRecommendationService` in `backend/app/services/personalized_recommendation_service.py`:
+    * Enforced explicit user interaction threshold: requires $\ge 1$ favorite or $\ge 1$ positive first-party LOKAL review (rating $\ge 4.0$). If insufficient, returns `status: "insufficient_data"`, `recommendations: []`, and an informative message guiding the user to favorite or review coffee shops.
+    * Pre-limit user exclusions: retrieves user's favorited shop IDs and first-party reviewed shop IDs, filtering them out of candidate sets *before* candidate evaluation limits are applied so visited shops never starve the candidate pool.
+    * Bounded candidate discovery: pages candidate shops in chunks of 30 up to `MAX_CANDIDATE_PAGES = 3` (up to 90 raw candidates), stopping immediately once 10 eligible candidates (`CANDIDATE_EVALUATION_LIMIT = 10`) are gathered. Supports both coordinate-based spatial queries and coordinate-free discovery.
+    * Evaluates up to 10 candidates (`CANDIDATE_EVALUATION_LIMIT`) and returns the top 5 (`RECOMMENDATION_LIMIT = 5`).
+    * Structured 20-feature coffee ontology across 4 dimensions: Brew & Beverage Styles (`espresso`, `pour over`, `cold brew`, `filter coffee`, `matcha`, `tea`), Beans & Craft (`single origin`, `specialty coffee`, `house blend`, `light roast`, `dark roast`, `latte art`), Ambiance & Work (`quiet`, `wifi`, `cozy`, `work friendly`, `spacious`), and Bakery & Food (`pastries`, `breakfast`, `vegan options`).
+    * Deterministic personalization scoring model:
+      * Builds user taste profile vector from positive reviews ($\ge 4.0$) and favorites' reviews, weighted by rating ($w = 1.0 + 0.2 \times (\text{rating} - 4.0)$).
+      * Computes $S_{\text{taste}}$ via cosine similarity between user profile and candidate profile. Unreviewed candidates or candidates without text reviews receive baseline $S_{\text{taste}} = 0.15$ if their provider rating is within $\pm 0.3$ (rounded to 2 decimal places) of user's favorited shops' average provider rating.
+      * Computes $S_{\text{quality}}$ from weighted composite of LOKAL community rating (70%) and provider rating (30%), falling back to provider rating.
+      * Computes $S_{\text{proximity}}$ via linear decay over search radius when coordinates are supplied.
+      * Dynamic weight redistribution: $W_{\text{taste}} = 0.60, W_{\text{quality}} = 0.25, W_{\text{proximity}} = 0.15$ with coordinates; $W_{\text{taste}} = 0.70, W_{\text{quality}} = 0.30, W_{\text{proximity}} = 0.0$ without coordinates.
+      * Deterministic tie-breaking: `relevance_score DESC`, then `candidate.rating DESC` (`NULLS LAST`), then `candidate.id ASC`.
+  * Location-independent grounded explanation synthesis:
+    * Protocol abstraction `PersonalizedExplanationSynthesizer` in `backend/app/services/personalized_explanation_synthesizer.py`.
+    * `GeminiPersonalizedExplanationSynthesizer` targeting Google Gemini REST API (`gemini-2.5-flash` with `thinkingBudget: 0`).
+    * Concurrent candidate explanation synthesis via `asyncio.gather` bounded by a strict batch timeout of 7.0 seconds.
+    * Strictly location-independent prompt: excludes distance metrics, ensuring explanations remain valid across user coordinate updates.
+    * Grounding validation: ensures synthesized explanations reference matched features and do not exceed 280 characters.
+    * Deterministic fallback templates: ensures coherent, grounded explanations when Gemini is unavailable, times out, or fails validation.
+  * Process-local caching with generation fencing:
+    * `PersonalizedRecommendationCache` in `backend/app/services/personalized_cache.py`: caches taste profiles (1800s TTL) and explanations (3600s TTL, max 1000 items).
+    * Thread-safe generation fencing (`_user_versions`) incremented via `invalidate_user()`. Cache write operations verify generation invariance, preventing in-flight stale cache writes.
+    * Wired reactive cache invalidation into review endpoints (`POST`, `PATCH`, `DELETE` at `/api/v1/shops/{id}/reviews`) and favorite endpoints (`POST`, `DELETE` at `/api/v1/shops/{id}/favorite`).
+  * Comprehensive test suites in `backend/tests/test_personalized_recommendations.py`, `backend/tests/test_personalized_cache.py`, and `backend/tests/test_gemini_personalized_explanation.py` bringing backend test suite to **348 passing tests**.
+* **Mobile "For You" Recommendations & Controller Lifecycle**:
+  * Defined recommendation types and parameters in `mobile/src/types/shop.ts` (`PersonalizedShopRecommendation`, `PersonalizedRecommendationResponse`, `PersonalizedSearchParams`).
+  * Implemented `fetchPersonalizedRecommendations` in `mobile/src/services/shopService.ts` supporting optional coordinates and search radius.
+  * Extracted pure `PersonalizedRecommendationsController` in `mobile/src/hooks/usePersonalizedRecommendations.ts`:
+    * Manages asynchronous request sequencing with monotonic `requestId`.
+    * Handles authentication lifecycle, immediate state reset on sign out, and stale response rejection on account switch.
+  * Hook `usePersonalizedRecommendations` exposing `recommendations`, `status`, `isLoading`, `errorMessage`, and `refresh()`.
   * Updated `NearbyShopsSheet.tsx`:
-    * Updated search input placeholder to `"Search by name or address..."`.
-    * Added distinct filter chips for Google rating (`Google ★ 4.0+`, etc.) and LOKAL rating (`LOKAL ★ 4.0+`, etc.).
-    * Added `Top LOKAL` sort chip alongside `Nearest` and `Top Rated`.
-    * Rendered distinct `☕ {rating} ★ ({count})` community badges on cards alongside provider rating badges.
-    * Preserved empty state and clear-all-filters action.
-  * Wired `minLokalRating` from hook into `LokalMapView.tsx`.
-  * Added comprehensive unit tests in `mobile/tests/shopService.test.mjs` and `mobile/tests/useNearbyShops.test.mjs` exercising `NearbyShopsController` directly across rapid sort toggles, auth token invalidation, and location loss (bringing mobile test suite to **141 passing tests**).
+    * Added `[Nearby | For You]` segmented tab control when user is authenticated.
+    * Dedicated recommendation cards displaying match badge (`✨ Recommended For You`), shop name, address, distance (when device coordinates available), provider & community ratings, and synthesized explanation.
+    * Complete semantic state rendering: loading indicator, informational banner for `insufficient_data` guiding user to save/review shops, empty state when no candidates found, and error state with retry.
+    * Reactive invalidation: triggers recommendation refetch when user favorites or reviews a shop in `ShopDetailCard`.
+  * Added unit tests in `mobile/tests/usePersonalizedRecommendations.test.mjs` and `mobile/tests/shopService.test.mjs` bringing mobile test suite to **153 passing tests**.
 * **Automated Verification**:
   * Database pgTAP test suite: **70 / 70 assertions passed** across 2 suites (`supabase test db`).
-  * Backend regression suite: **311 / 311 tests passed** (`PYTHONPATH=backend ./backend/.venv/bin/python -m unittest discover -s backend/tests -t backend`).
-  * Mobile test suite: **141 / 141 tests passed** (`npm test --prefix mobile`).
+  * Backend regression suite: **348 / 348 tests passed** (`./backend/.venv/bin/python -m unittest discover -s backend/tests -v`).
+  * Mobile test suite: **153 / 153 tests passed** (`npm test --prefix mobile`).
   * Mobile TypeScript compiler: **0 errors** (`./mobile/node_modules/.bin/tsc --noEmit --project mobile/tsconfig.json`).
 * **Pull Request**:
-  * Pull Request #42 reviewed by CodeRabbit, actionable lifecycle testing finding resolved via `NearbyShopsController` extraction, approved, and merged into `main` by the Product Owner (merge commit `992d5995`).
+  * Pull Request #44 reviewed by CodeRabbit, all actionable findings resolved (generation fencing race, candidate paging early exit, pre-limit exclusions, 20-feature ontology, favorite rating baseline), approved, and merged into `main` by the Product Owner (merge commit `617ae7d0`).
 
 ---
 
@@ -106,7 +114,7 @@ The next feature cycle should begin only after the current state is synchronized
 | Issue #37 — Harden Supabase Public Schema & RLS              | ✅ Complete |
 | Issue #39 — User Favorites List & Profile Discovery          | ✅ Complete |
 | Issue #41 — Advanced Shop Search and Filtering               | ✅ Complete |
-| Personalized Recommendations                                 | ⏳ Planned  |
+| Issue #43 — Personalized Coffee Shop Recommendations         | ✅ Complete |
 
 ---
 
@@ -179,6 +187,12 @@ The React Native (Expo) mobile application currently provides:
   * Explicit null semantics: shops without LOKAL reviews display no community badge; setting a minimum LOKAL rating filter strictly excludes unreviewed shops.
   * Dedicated "Clear all filters" empty state recovery action restoring default discovery parameters.
   * Pure request coordinator `NearbyShopsController` managing monotonic request sequence counters, listener subscriptions, selection synchronization, and stale-response discarding across rapid filter/sort toggling, auth session changes, and location loss.
+* **Personalized Coffee Shop Recommendations ("For You" Tab)**:
+  * Segmented control `[Nearby | For You]` in `NearbyShopsSheet` allowing authenticated users to toggle between location-based nearby exploration and taste-profile personalized recommendations.
+  * Recommendation cards displaying match badge (`✨ Recommended For You`), coffee shop name, address, calculated distance badge (when device coordinates are available), provider rating, community rating, and synthesized explanation text.
+  * Pure request coordinator `PersonalizedRecommendationsController` managing monotonic request sequence counters (`requestId`), user principal binding (`userId`), and stale-response discarding across auth transitions and coordinates updates.
+  * Distinct semantic UI state handling: loading spinner with helper text, friendly guidance state for `insufficient_data` prompting users to favorite or review coffee shops to unlock personalized picks, empty state when no shops match within the radius, and localized error presentation with retry.
+  * Reactive recommendation refresh triggered automatically when user favorites, unfavorites, or creates/edits/deletes reviews in `ShopDetailCard`.
 * Authenticated nearby coffee shop discovery based on the user's coordinates.
 * Map markers for discovered coffee shops.
 * Nearby coffee shop list/bottom-sheet presentation.
@@ -262,13 +276,40 @@ The FastAPI backend currently provides:
   * 3-review minimum usable text threshold check; returns `status: "insufficient_reviews"` when fewer than 3 reviews are available.
   * `InMemoryRecommendationCache` (1-hour TTL, 500 capacity) with thread-safe per-shop generation tracking preventing stale cache repopulation.
   * Automatic cache invalidation and generation advancement on first-party review creation, editing, and deletion.
+* **Personalized Coffee Shop Recommendation Layer & Endpoint**:
+  * `GET /api/v1/shops/recommendations/personalized`: Authenticated endpoint returning personalized coffee shop recommendations tailored to caller's taste profile and geographic location.
+  * Request validation (`PersonalizedRecommendationParams`): optional `latitude`, `longitude`, `radius` (default 5000m, max 50000m), and `limit` (default 5, max 5).
+  * Strict interaction threshold: requires $\ge 1$ favorite or $\ge 1$ positive first-party review ($\ge 4.0$). Returns `status: "insufficient_data"` if threshold is not met.
+  * Pre-limit user exclusions: retrieves user's favorited shop IDs and first-party reviewed shop IDs, filtering them out of candidate sets *before* candidate evaluation limits are applied so visited shops never starve the candidate pool.
+  * Bounded candidate discovery: pages candidate shops in chunks of 30 up to `MAX_CANDIDATE_PAGES = 3` (up to 90 raw candidates), stopping immediately once 10 eligible candidates (`CANDIDATE_EVALUATION_LIMIT = 10`) are gathered. Supports both coordinate-based spatial queries and coordinate-free discovery.
+  * Evaluates up to 10 candidates (`CANDIDATE_EVALUATION_LIMIT`) and returns the top 5 (`RECOMMENDATION_LIMIT = 5`).
+  * 20-feature coffee ontology across 4 dimensions: Brew & Beverage Styles (`espresso`, `pour over`, `cold brew`, `filter coffee`, `matcha`, `tea`), Beans & Craft (`single origin`, `specialty coffee`, `house blend`, `light roast`, `dark roast`, `latte art`), Ambiance & Work (`quiet`, `wifi`, `cozy`, `work friendly`, `spacious`), and Bakery & Food (`pastries`, `breakfast`, `vegan options`).
+  * Deterministic scoring formula:
+    * User taste profile vector built from positive reviews ($\ge 4.0$) and favorites' reviews, weighted by rating ($w = 1.0 + 0.2 \times (\text{rating} - 4.0)$).
+    * Candidate feature extraction from candidate first-party and external reviews.
+    * $S_{\text{taste}}$ via cosine similarity. Unreviewed candidates or candidates without text reviews receive baseline $S_{\text{taste}} = 0.15$ if their provider rating is within $\pm 0.3$ (rounded to 2 decimal places) of user's favorited shops' average provider rating.
+    * $S_{\text{quality}}$ from weighted composite of LOKAL community rating (70%) and provider rating (30%), falling back to provider rating.
+    * $S_{\text{proximity}}$ via linear decay over search radius when coordinates are supplied.
+    * Dynamic weight redistribution: $W_{\text{taste}} = 0.60, W_{\text{quality}} = 0.25, W_{\text{proximity}} = 0.15$ with coordinates; $W_{\text{taste}} = 0.70, W_{\text{quality}} = 0.30, W_{\text{proximity}} = 0.0$ without coordinates.
+    * Deterministic tie-breaking: `relevance_score DESC`, then `candidate.rating DESC` (`NULLS LAST`), then `candidate.id ASC`.
+  * Location-independent grounded explanation synthesis:
+    * Protocol abstraction `PersonalizedExplanationSynthesizer` in `backend/app/services/personalized_explanation_synthesizer.py`.
+    * `GeminiPersonalizedExplanationSynthesizer` targeting Google Gemini REST API (`gemini-2.5-flash` with `thinkingBudget: 0`).
+    * Concurrent candidate explanation synthesis via `asyncio.gather` bounded by a strict batch timeout of 7.0 seconds.
+    * Strictly location-independent prompt: excludes distance metrics, ensuring explanations remain valid across user coordinate updates.
+    * Grounding validation: ensures synthesized explanations reference matched features and do not exceed 280 characters.
+    * Deterministic fallback templates: ensures coherent, grounded explanations when Gemini is unavailable, times out, or fails validation.
+  * Process-local caching with generation fencing:
+    * `PersonalizedRecommendationCache` in `backend/app/services/personalized_cache.py`: caches taste profiles (1800s TTL) and explanations (3600s TTL, max 1000 items).
+    * Thread-safe generation fencing (`_user_versions`) incremented via `invalidate_user()`. Cache write operations verify generation invariance, preventing in-flight stale cache writes.
+    * Wired reactive cache invalidation into review endpoints (`POST`, `PATCH`, `DELETE` at `/api/v1/shops/{id}/reviews`) and favorite endpoints (`POST`, `DELETE` at `/api/v1/shops/{id}/favorite`).
 * **Database Write Privilege Protection & Secure RPCs**:
   * Direct PostgREST `INSERT` and `UPDATE` on `reviews` and `favorites` revoked; writes routed through PostgreSQL `SECURITY DEFINER` RPCs (`create_user_review`, `update_user_review`, `create_user_favorite`) with `auth.uid()` derivation and revoked `PUBLIC` execution privileges.
   * Immutable author name snapshotting from user metadata with fallback to `'LOKAL User'`. Never exposes user emails or internal UUIDs in review responses.
   * Strict `source = 'lokal'` filtering across application review lookups, updates, and deletes.
 * Google Places API (New) integration for transient external review retrieval with provider attribution and source links. No caching or persistence of Google review content.
 * Robust error handling distinguishing client input errors (`400`/`422`), missing records (`404`), unique constraint conflicts (`409`), external provider failures (`502`), service unavailability (`503`), and sanitized generic server failures (`500`).
-* Automated backend regression testing with **311 passing tests**, covering auth, shops, curation, nearby discovery with advanced search and filtering, external reviews, first-party user reviews, AI review summaries, AI must-try recommendations, favorite coffee shops (including the favorites list endpoint), curator authorization, and service-role fail-closed behavior.
+* Automated backend regression testing with **348 passing tests**, covering auth, shops, curation, nearby discovery with advanced search and filtering, external reviews, first-party user reviews, AI review summaries, AI must-try recommendations, favorite coffee shops (including the favorites list endpoint), personalized coffee shop recommendations (including taste profiling, caching, and explanation synthesis), curator authorization, and service-role fail-closed behavior.
 
 ---
 
@@ -335,19 +376,22 @@ The database is managed through PostgreSQL in Supabase with full Row Level Secur
 
 # Current Data / AI Architecture Direction
 
-The project implements a hybrid review-data architecture with operational AI review summarization and grounded menu recommendations:
+The project implements a hybrid review-data architecture with operational AI review summarization, grounded menu recommendations, and personalized recommendations:
 
 ```text
 Google Places Reviews (external, transient)
                   +
        LOKAL User Reviews (first-party, persisted in Supabase)
+                  +
+           User Favorites (persisted in Supabase)
                   ↓
-          FastAPI Review Layer
+          FastAPI Service Layer
                   ↓
-         Unified Review Domain
+       Unified Review Domain & Taste Profiling
                   ↓
-                AI Layer
-  (ReviewSummaryService & ReviewRecommendationService / Gemini)
+                 AI Layer
+   (ReviewSummaryService, ReviewRecommendationService,
+    & PersonalizedRecommendationService / Gemini)
                   ↓
              LOKAL Mobile
 ```
@@ -358,7 +402,7 @@ First-party LOKAL reviews are persisted in Supabase with author name snapshottin
 
 The review domain merges first-party LOKAL reviews and external reviews into a unified provider-neutral representation (`UnifiedReview`), exposing separate external and community metrics so downstream consumers can clearly distinguish first-party feedback.
 
-The AI layer ingests sanitized reviews from the unified review domain to generate structured review summaries (`ReviewSummaryService`) and AI-grounded "Must Try" menu recommendations (`ReviewRecommendationService`), using `GeminiReviewSummarizer` and `GeminiReviewRecommender` via HTTP requests to Google Gemini API. Summaries and recommendations are cached in-memory with a 1-hour TTL and generation-guarded invalidation, without creating persistent summary or recommendation database tables.
+The AI layer ingests sanitized reviews from the unified review domain to generate structured review summaries (`ReviewSummaryService`), AI-grounded "Must Try" menu recommendations (`ReviewRecommendationService`), and personalized coffee shop recommendations (`PersonalizedRecommendationService`), using `GeminiReviewSummarizer`, `GeminiReviewRecommender`, and `GeminiPersonalizedExplanationSynthesizer` via HTTP requests to Google Gemini API. Summaries, must-try recommendations, taste profiles, and personalized explanations are cached in-memory with TTL and generation-guarded invalidation, without creating persistent summary or recommendation database tables.
 
 Independent-business eligibility and curation are maintained as a separate domain concern, ensuring review, AI, and favorite operations respect public discovery eligibility rules (`APPROVED` required).
 
@@ -366,9 +410,9 @@ Independent-business eligibility and curation are maintained as a separate domai
 
 # Next Task
 
-The next feature should be defined through the next GitHub Issue after reviewing the completed advanced shop search and filtering architecture and current application state.
+The next feature should be defined through the next GitHub Issue after reviewing the completed personalized coffee shop recommendations architecture and current application state.
 
-With user authentication, unified reviews, AI review summarization, AI must-try recommendations, coffee shop favoriting, the user favorites list / profile view, and advanced search and filtering active, the logical next capabilities include **Personalized Recommendations** or another feature prioritized by the Product Owner.
+With user authentication, unified reviews, AI review summarization, AI must-try recommendations, coffee shop favoriting, the user favorites list / profile view, advanced search and filtering, and personalized coffee shop recommendations active, the logical next capabilities include **Coffee Shop Owner Dashboard / Claiming**, **Community Feed & Social Sharing**, or another feature prioritized by the Product Owner.
 
 Before implementation:
 
@@ -384,7 +428,7 @@ Before implementation:
 
 **None.**
 
-The unified review domain, AI review summarization, AI-generated "Must Try" recommendations, coffee shop favoriting, user favorites list / profile discovery, and advanced search and filtering are operational. External reviews remain transient and compliant with provider policies, while first-party reviews and user favorites are securely persisted in Supabase with RLS and security-definer RPC protection. In-memory caching with generation versioning is active for both summaries and recommendations. Mobile user authentication, review mutations, non-blocking summary cards, non-blocking recommendations cards, interactive favorite toggles, the saved coffee shops profile view, and advanced search/filter chips coordinated through `NearbyShopsController` are operational and fully tested.
+The unified review domain, AI review summarization, AI-generated "Must Try" recommendations, coffee shop favoriting, user favorites list / profile discovery, advanced search and filtering, and personalized coffee shop recommendations are operational. External reviews remain transient and compliant with provider policies, while first-party reviews and user favorites are securely persisted in Supabase with RLS and security-definer RPC protection. In-memory caching with generation versioning is active for summaries, must-try recommendations, and personalized recommendations. Mobile user authentication, review mutations, non-blocking summary cards, non-blocking recommendations cards, interactive favorite toggles, the saved coffee shops profile view, advanced search/filter chips coordinated through `NearbyShopsController`, and the For You personalized recommendations tab coordinated through `PersonalizedRecommendationsController` are operational and fully tested.
 
 ---
 
@@ -392,6 +436,12 @@ The unified review domain, AI review summarization, AI-generated "Must Try" reco
 
 The recent development cycles established the following engineering practices:
 
+* **Location-Independent Explanation Caching**: Decoupling distance from AI-synthesized explanations allows caching recommendations safely by `(user_id, shop_id)` without explanations becoming stale when the user moves coordinates between requests.
+* **Pre-Limit Candidate Exclusions**: In recommendation systems filtering out shops the user has already visited or favorited, exclusions must be applied *before* candidate evaluation limits are enforced; otherwise, visited shops in the candidate window can falsely starve the eligible candidate set.
+* **Candidate Paging Early Exit at Evaluation Limit**: When candidate collection requires multi-page fetching to satisfy exclusions, paging should terminate as soon as the target evaluation limit (`CANDIDATE_EVALUATION_LIMIT`) is satisfied to avoid redundant database paging and candidate review work.
+* **Generation-Fenced Cache Writes**: When asynchronous operations read entity versions at request start, cache write methods must verify that the captured version still matches the current version before writing, preventing race conditions where user mutations during slow LLM calls are overwritten with stale cached data.
+* **Bounded Concurrent Batch Timeouts**: When synthesizing explanations for multiple candidates concurrently via `asyncio.gather`, bounding the entire batch with a unified timeout (e.g., 7.0s) and falling back gracefully to deterministic templates guarantees strict API latency SLA compliance even during upstream provider slowdowns.
+* **Rounded Float Baseline Comparisons**: When comparing candidate provider ratings to user favorite baseline averages within a floating-point tolerance (e.g. $\pm 0.3$), rounding the difference to 2 decimal places prevents floating-point precision anomalies (e.g. `0.30000000000000027 > 0.3`) from rejecting valid matches.
 * **Dual Rating Independence Without Composite Blending**: Separating external provider ratings (`min_rating`) from first-party community ratings (`min_lokal_rating`) preserves data provenance and user trust, preventing arbitrary weighting schemes while allowing users to filter along either or both axes independently.
 * **`LEFT JOIN LATERAL` for Candidate Aggregation in Geospatial RPCs**: Aggregating relational review metrics (average rating, review count) for spatially-filtered candidates using `LEFT JOIN LATERAL` computes aggregates only for shops within the candidate bounding set, avoiding full-table scans.
 * **Explicit Null Semantics in Optional Rating Dimensions**: In community review systems where unreviewed shops have no ratings, returning `null` for `lokal_rating` rather than defaulting to `0` clearly differentiates unrated shops from poorly rated shops. Active minimum rating filters must strictly exclude `null` ratings.
@@ -477,4 +527,4 @@ After implementation:
 
 ---
 
-**Last Updated:** Phase 2 — Core Application Features (after completion of GitHub Issue #41 and merge of PR #42)
+**Last Updated:** Phase 2 — Core Application Features (after completion of GitHub Issue #43 and merge of PR #44)
