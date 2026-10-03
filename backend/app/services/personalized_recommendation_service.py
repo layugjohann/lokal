@@ -596,7 +596,7 @@ class PersonalizedRecommendationService:
         2. Query user's first-party reviews and favorites.
         3. Pre-compute excluded shop IDs (already reviewed or favorited).
         4. Construct user taste profile and check insufficient-data gate.
-        5. Fetch up to 30 eligible, approved candidate shops using bounded paging (max 3 pages),
+        5. Fetch up to 10 eligible, approved candidate shops using bounded paging (page size 30, max 3 pages),
            excluding reviewed and favorited shops before the candidate limit is reached.
         6. Extract candidate features and compute deterministic scores (S_taste, S_quality, S_proximity).
         7. Concurrently synthesize location-independent grounded explanations for top candidates
@@ -709,10 +709,10 @@ class PersonalizedRecommendationService:
                         sid = str(s.get("id"))
                         if sid not in user_excluded_shop_ids:
                             eligible_candidates.append(s)
-                            if len(eligible_candidates) >= CANDIDATE_OVERFETCH_LIMIT:
+                            if len(eligible_candidates) >= CANDIDATE_EVALUATION_LIMIT:
                                 break
 
-                    if len(eligible_candidates) >= CANDIDATE_OVERFETCH_LIMIT:
+                    if len(eligible_candidates) >= CANDIDATE_EVALUATION_LIMIT:
                         break
                     if len(page_data) < CANDIDATE_PAGE_SIZE:
                         break
@@ -748,10 +748,10 @@ class PersonalizedRecommendationService:
                         sid = str(s.get("id"))
                         if sid not in user_excluded_shop_ids:
                             raw_eligible_shops.append(s)
-                            if len(raw_eligible_shops) >= CANDIDATE_OVERFETCH_LIMIT:
+                            if len(raw_eligible_shops) >= CANDIDATE_EVALUATION_LIMIT:
                                 break
 
-                    if len(raw_eligible_shops) >= CANDIDATE_OVERFETCH_LIMIT:
+                    if len(raw_eligible_shops) >= CANDIDATE_EVALUATION_LIMIT:
                         break
                     if len(page_data) < CANDIDATE_PAGE_SIZE:
                         break
@@ -853,7 +853,7 @@ class PersonalizedRecommendationService:
                     and not c_feats
                     and fav_avg_rating is not None
                     and cand.get("rating") is not None
-                    and abs(float(cand["rating"]) - fav_avg_rating) <= 0.3
+                    and round(abs(float(cand["rating"]) - fav_avg_rating), 2) <= 0.3
                 ):
                     s_taste = 0.15
 
@@ -990,7 +990,7 @@ class PersonalizedRecommendationService:
             status=RecommendationStatus.PERSONALIZED,
             message="Recommendations tailored to your coffee preferences.",
             recommendations=recommendations,
-            total_candidates_evaluated=len(eligible_candidates),
+            total_candidates_evaluated=len(evaluation_candidates),
         )
 
 

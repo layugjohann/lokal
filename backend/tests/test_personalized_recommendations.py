@@ -880,19 +880,79 @@ class TestPersonalizedRecommendationsService(unittest.IsolatedAsyncioTestCase):
         res = await self.service.get_personalized_recommendations(user=self.user, supabase=mock_sub, latitude=14.5, longitude=121.0)
         self.assertEqual(res.status, RecommendationStatus.PERSONALIZED)
         self.assertEqual(rpc_call_count, 1)
-        self.assertEqual(res.total_candidates_evaluated, 30)
+        self.assertEqual(res.total_candidates_evaluated, 10)
+        self.assertEqual(len(res.recommendations), 5)
+
+    async def test_candidate_paging_accumulates_up_to_evaluation_limit_across_pages(self):
+        """Paging stops as soon as 10 eligible candidates are accumulated across multiple pages."""
+        user_reviews = [{"id": str(uuid4()), "shop_id": str(uuid4()), "rating": 5, "content": "I love pour-over coffee"}]
+        fav_shops = [{"id": str(uuid4()), "shop_id": str(uuid4()), "rating": 4.5} for _ in range(50)]
+        fav_ids = [f["shop_id"] for f in fav_shops]
+
+        # Page 0: 25 excluded shops + 5 eligible shops
+        p0_eligible = [str(uuid4()) for _ in range(5)]
+        page_0 = [
+            {"id": s_id, "name": f"Fav {i}", "latitude": 14.5, "longitude": 121.0, "rating": 4.5, "distance_meters": 100 + i}
+            for i, s_id in enumerate(fav_ids[:25])
+        ] + [
+            {"id": s_id, "name": f"Eligible P0 {i}", "latitude": 14.5, "longitude": 121.0, "rating": 4.6, "distance_meters": 200 + i, "lokal_rating": 4.6, "lokal_reviews_count": 2}
+            for i, s_id in enumerate(p0_eligible)
+        ]
+
+        # Page 1: 20 excluded shops + 10 eligible shops (service needs only 5 more to reach 10)
+        p1_eligible = [str(uuid4()) for _ in range(10)]
+        page_1 = [
+            {"id": s_id, "name": f"Fav {i+25}", "latitude": 14.5, "longitude": 121.0, "rating": 4.5, "distance_meters": 300 + i}
+            for i, s_id in enumerate(fav_ids[25:45])
+        ] + [
+            {"id": s_id, "name": f"Eligible P1 {i}", "latitude": 14.5, "longitude": 121.0, "rating": 4.7, "distance_meters": 400 + i, "lokal_rating": 4.7, "lokal_reviews_count": 2}
+            for i, s_id in enumerate(p1_eligible)
+        ]
+
+        mock_sub = MagicMock()
+        def table_side(name):
+            m = MagicMock()
+            if name == "reviews":
+                m.select().eq().eq().execute.return_value.data = user_reviews
+                m.select().in_().eq().gte().execute.return_value.data = []
+            elif name == "favorites":
+                m.select().eq().execute.return_value.data = fav_shops
+            return m
+        mock_sub.table.side_effect = table_side
+
+        rpc_calls = 0
+        def rpc_side(_func, params):
+            nonlocal rpc_calls
+            rpc_calls += 1
+            offset = params.get("result_offset", 0)
+            m = MagicMock()
+            if offset == 0:
+                m.execute.return_value.data = page_0
+            elif offset == 30:
+                m.execute.return_value.data = page_1
+            else:
+                m.execute.return_value.data = []
+            return m
+        mock_sub.rpc.side_effect = rpc_side
+
+        res = await self.service.get_personalized_recommendations(user=self.user, supabase=mock_sub, latitude=14.5, longitude=121.0)
+        self.assertEqual(res.status, RecommendationStatus.PERSONALIZED)
+        # Evaluated exactly 10 candidates (5 from page 0 + 5 from page 1), stopping after page 1 (rpc_calls == 2, never calls page 2)
+        self.assertEqual(rpc_calls, 2)
+        self.assertEqual(res.total_candidates_evaluated, 10)
+        self.assertEqual(len(res.recommendations), 5)
 
     async def test_favorite_rating_baseline_rule_within_and_outside_threshold(self):
         """Unreviewed candidate receives baseline S_taste = 0.15 iff rating within +-0.3 of user's favorited shops avg."""
         fav_shop_id = str(uuid4())
-        user_favorites = [{"id": str(uuid4()), "shop_id": fav_shop_id, "rating": 4.8}]
+        user_favorites = [{"id": str(uuid4()), "shop_id": fav_shop_id, "rating": 4.4}]
 
         cand_match_id = str(uuid4())
         cand_nomatch_id = str(uuid4())
 
         candidate_shops = [
             {"id": cand_match_id, "name": "Standard Matching Shop", "latitude": 14.5, "longitude": 121.0, "rating": 4.7, "distance_meters": 500, "lokal_rating": None, "lokal_reviews_count": 0},
-            {"id": cand_nomatch_id, "name": "Below Standard Shop", "latitude": 14.5, "longitude": 121.0, "rating": 4.2, "distance_meters": 500, "lokal_rating": None, "lokal_reviews_count": 0},
+            {"id": cand_nomatch_id, "name": "Above Standard Shop", "latitude": 14.5, "longitude": 121.0, "rating": 5.0, "distance_meters": 500, "lokal_rating": None, "lokal_reviews_count": 0},
         ]
 
         mock_sub = MagicMock()
@@ -919,9 +979,11 @@ class TestPersonalizedRecommendationsService(unittest.IsolatedAsyncioTestCase):
     async def test_favorite_rating_baseline_not_applied_when_user_has_no_favorites(self):
         """When user has no favorites (only reviews), unreviewed candidate does not receive favorite baseline."""
         user_reviews = [{"id": str(uuid4()), "shop_id": str(uuid4()), "rating": 5, "content": "I love pour-over coffee"}]
-        cand_id = str(uuid4())
+        cand1_id = str(uuid4())
+        cand2_id = str(uuid4())
         candidate_shops = [
-            {"id": cand_id, "name": "Unreviewed Shop", "latitude": 14.5, "longitude": 121.0, "rating": 4.8, "distance_meters": 500, "lokal_rating": None, "lokal_reviews_count": 0}
+            {"id": cand1_id, "name": "Unreviewed 4.7 Shop", "latitude": 14.5, "longitude": 121.0, "rating": 4.7, "distance_meters": 500, "lokal_rating": None, "lokal_reviews_count": 0},
+            {"id": cand2_id, "name": "Unreviewed 5.0 Shop", "latitude": 14.5, "longitude": 121.0, "rating": 5.0, "distance_meters": 500, "lokal_rating": None, "lokal_reviews_count": 0},
         ]
 
         mock_sub = MagicMock()
@@ -937,8 +999,10 @@ class TestPersonalizedRecommendationsService(unittest.IsolatedAsyncioTestCase):
         mock_sub.rpc.return_value.execute.return_value.data = candidate_shops
 
         res = await self.service.get_personalized_recommendations(user=self.user, supabase=mock_sub, latitude=14.5, longitude=121.0)
-        self.assertEqual(len(res.recommendations), 1)
-        self.assertEqual(str(res.recommendations[0].shop.id), cand_id)
+        self.assertEqual(len(res.recommendations), 2)
+        # Because baseline is skipped, Candidate 2 (5.0 rating) defeats Candidate 1 (4.7 rating) on quality score alone
+        self.assertEqual(str(res.recommendations[0].shop.id), cand2_id)
+        self.assertEqual(str(res.recommendations[1].shop.id), cand1_id)
 
 
 class TestPersonalizedRecommendationsEndpoint(unittest.TestCase):
