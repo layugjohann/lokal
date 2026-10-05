@@ -205,7 +205,7 @@ class ClaimService:
         try:
             query = (
                 supabase.table("shop_claims")
-                .select("*, shops(*)")
+                .select("*, shop:shops(*)")
                 .order("created_at", desc=True)
                 .range(offset, offset + limit - 1)
             )
@@ -229,7 +229,7 @@ class ClaimService:
         try:
             res = (
                 supabase.table("shop_claims")
-                .select("*, shops(*)")
+                .select("*, shop:shops(*)")
                 .eq("id", str(claim_id))
                 .execute()
             )
@@ -315,12 +315,13 @@ class ClaimService:
                     "reviewed_at": now_utc,
                 })
                 .eq("id", str(claim_id))
+                .eq("status", "PENDING")
                 .execute()
             )
             if not update_res.data:
                 raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail="Ownership claim not found.",
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="Claim status changed during review. Reload and try again.",
                 )
             return self.get_claim_detail(claim_id, supabase)
         except APIError as exc:
@@ -361,12 +362,13 @@ class ClaimService:
                     "reviewed_at": now_utc,
                 })
                 .eq("id", str(claim_id))
+                .eq("status", "PENDING")
                 .execute()
             )
             if not update_res.data:
                 raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail="Ownership claim not found.",
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="Claim status changed during review. Reload and try again.",
                 )
             return self.get_claim_detail(claim_id, supabase)
         except APIError as exc:
@@ -402,12 +404,13 @@ class ClaimService:
                     "reviewed_at": now_utc,
                 })
                 .eq("id", str(claim_id))
+                .eq("status", "APPROVED")
                 .execute()
             )
             if not update_res.data:
                 raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail="Ownership claim not found.",
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="Claim status changed during review. Reload and try again.",
                 )
             return self.get_claim_detail(claim_id, supabase)
         except APIError as exc:

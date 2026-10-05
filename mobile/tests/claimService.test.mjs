@@ -343,6 +343,43 @@ test('updateOwnerShop sends PATCH request with safe fields and returns updated s
   }
 });
 
+test('updateOwnerShop sends explicit null address when address is cleared', async () => {
+  const originalFetch = globalThis.fetch;
+  let requestedBody = '';
+
+  const mockUpdatedShop = {
+    id: 'shop-1',
+    name: 'Cafe Without Address',
+    address: null,
+    latitude: 14.5,
+    longitude: 121.0,
+    rating: 4.6,
+  };
+
+  globalThis.fetch = async (input, init) => {
+    requestedBody = init?.body || '';
+    return {
+      ok: true,
+      json: async () => mockUpdatedShop,
+    };
+  };
+
+  try {
+    const result = await updateOwnerShop(
+      'shop-1',
+      { name: 'Cafe Without Address', address: null },
+      'valid-token'
+    );
+    assert.deepStrictEqual(result, mockUpdatedShop);
+    const parsedBody = JSON.parse(requestedBody);
+    assert.strictEqual(parsedBody.name, 'Cafe Without Address');
+    assert.strictEqual(parsedBody.address, null);
+    assert.ok('address' in parsedBody);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test('updateOwnerShop handles validation error detail array properly', async () => {
   const originalFetch = globalThis.fetch;
 

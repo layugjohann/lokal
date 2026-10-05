@@ -100,11 +100,10 @@ class OwnerService:
         try:
             reviews_res = (
                 supabase.table("reviews")
-                .select("*")
+                .select("id, rating, content, author_name, created_at, updated_at")
                 .eq("shop_id", str_shop_id)
                 .eq("source", "lokal")
                 .order("created_at", desc=True)
-                .limit(20)
                 .execute()
             )
             raw_reviews = reviews_res.data or []
@@ -112,27 +111,29 @@ class OwnerService:
             logger.error(f"Database error retrieving reviews for shop {str_shop_id}: {exc.message}")
             raw_reviews = []
 
-        # Compute community metrics
-        lokal_reviews_count = len(raw_reviews)
+        # Compute community metrics across all valid reviews
+        valid_reviews = [
+            r for r in raw_reviews
+            if r.get("rating") is not None and isinstance(r.get("rating"), (int, float)) and 1 <= r["rating"] <= 5
+        ]
+        lokal_reviews_count = len(valid_reviews)
         lokal_rating: Optional[float] = None
         if lokal_reviews_count > 0:
-            total_stars = sum(r.get("rating", 0) for r in raw_reviews if r.get("rating") is not None)
-            valid_count = sum(1 for r in raw_reviews if r.get("rating") is not None)
-            if valid_count > 0:
-                lokal_rating = round(total_stars / valid_count, 2)
+            total_stars = sum(float(r["rating"]) for r in valid_reviews)
+            lokal_rating = round(total_stars / lokal_reviews_count, 2)
 
-        # Build sanitized recent reviews (stripping user UUIDs and emails)
+        # Build sanitized recent reviews (top 5 valid reviews, stripping user UUIDs and emails)
         recent_reviews = [
             UnifiedReview(
                 id=str(r.get("id")),
                 source="lokal",
-                rating=float(r.get("rating", 5)),
+                rating=float(r["rating"]),
                 text=r.get("content"),
                 author={"display_name": r.get("author_name") or "LOKAL User"},
                 published_at=r.get("created_at"),
                 updated_at=r.get("updated_at"),
             )
-            for r in raw_reviews[:5]
+            for r in valid_reviews[:5]
         ]
 
 

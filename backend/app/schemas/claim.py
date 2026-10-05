@@ -1,8 +1,8 @@
 from datetime import datetime
 from enum import Enum
-from typing import Optional, Union
+from typing import Any, Optional, Union
 from uuid import UUID
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from .shop import ShopResponse
 
@@ -71,6 +71,21 @@ class ShopClaimResponse(BaseModel):
     rejection_reason: Optional[str] = Field(None, description="Explanation if claim was rejected or revoked")
     created_at: Union[datetime, str] = Field(..., description="Submission timestamp")
     updated_at: Union[datetime, str] = Field(..., description="Last update timestamp")
+
+    @model_validator(mode="before")
+    @classmethod
+    def derive_rejection_reason(cls, data: Any) -> Any:
+        """Derive user-facing rejection_reason from internal review_notes for REJECTED and REVOKED claims."""
+        if isinstance(data, dict):
+            status = data.get("status")
+            status_str = status.value if hasattr(status, "value") else str(status) if status is not None else ""
+            if status_str in ("REJECTED", "REVOKED"):
+                if not data.get("rejection_reason"):
+                    data = {**data, "rejection_reason": data.get("review_notes")}
+            elif status_str in ("PENDING", "APPROVED"):
+                if data.get("rejection_reason"):
+                    data = {**data, "rejection_reason": None}
+        return data
 
 
 class ShopClaimDetailResponse(ShopClaimResponse):

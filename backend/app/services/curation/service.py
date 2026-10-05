@@ -260,8 +260,12 @@ class CurationService:
                     "status": "REVOKED",
                     "review_notes": f"Automatically revoked due to coffee shop curation status change to {decision.status.value}.",
                 }).eq("shop_id", str(shop_id)).eq("status", "APPROVED").execute()
-            except Exception as claim_exc:
-                logger.error(f"Failed to auto-revoke approved claims for shop {shop_id}: {claim_exc}")
+            except APIError as claim_exc:
+                logger.error(f"Failed to auto-revoke approved claims for shop {shop_id}: {claim_exc.message}")
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail="A database error occurred while updating associated ownership claims.",
+                ) from claim_exc
 
         # 6. Log audit record
         audit_payload = {
@@ -347,8 +351,12 @@ class CurationService:
                     "status": "REVOKED",
                     "review_notes": f"Automatically revoked due to coffee shop manual curation override to {status_in.value}.",
                 }).eq("shop_id", str(shop_id)).eq("status", "APPROVED").execute()
-            except Exception as claim_exc:
-                logger.error(f"Failed to auto-revoke approved claims for shop {shop_id}: {claim_exc}")
+            except APIError as claim_exc:
+                logger.error(f"Failed to auto-revoke approved claims for shop {shop_id}: {claim_exc.message}")
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail="A database error occurred while updating associated ownership claims.",
+                ) from claim_exc
 
         # 5. Insert audit record
         audit_payload = {

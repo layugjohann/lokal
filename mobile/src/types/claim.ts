@@ -27,7 +27,7 @@ export interface ClaimSubmissionPayload {
 
 export interface OwnerShopUpdatePayload {
   name?: string;
-  address?: string;
+  address?: string | null;
 }
 
 export interface OwnerDashboardData {

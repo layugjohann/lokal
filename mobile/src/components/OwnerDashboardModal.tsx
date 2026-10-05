@@ -120,7 +120,7 @@ export default function OwnerDashboardModal({
         shopId,
         {
           name: trimmedName,
-          address: trimmedAddress || undefined,
+          address: trimmedAddress === '' ? null : trimmedAddress,
         },
         authToken
       );
@@ -225,7 +225,7 @@ export default function OwnerDashboardModal({
                   <Text style={styles.metricLabel}>Google Places</Text>
                   <Text style={styles.metricValue}>
                     {data.rating !== null && data.rating !== undefined
-                      ? `★ ${formatRating(data.rating)}`
+                      ? formatRating(data.rating)
                       : 'N/A'}
                   </Text>
                   <Text style={styles.metricSub}>External rating</Text>

@@ -448,10 +448,13 @@ class TestClaimEndpoints(unittest.TestCase):
         })
 
         with patch.object(self.mock_supabase.table("shop_claims"), "update") as mock_update:
-            mock_update.return_value.eq.return_value.execute.side_effect = APIError({
+            mock_builder = MagicMock()
+            mock_builder.eq.return_value = mock_builder
+            mock_builder.execute.side_effect = APIError({
                 "message": "duplicate key value violates unique constraint idx_unique_approved_claim_per_shop",
                 "code": "23505",
             })
+            mock_update.return_value = mock_builder
             res = self.client.post(f"/api/v1/claims/{claim_id}/approve", json={})
             self.assertEqual(res.status_code, 409)
             self.assertIn("already has an approved owner", res.json()["detail"])
@@ -495,6 +498,137 @@ class TestClaimEndpoints(unittest.TestCase):
         data = res.json()
         self.assertEqual(data["status"], "REVOKED")
         self.assertEqual(data["review_notes"], "Business sold.")
+
+    def test_user_claim_rejection_reason_derived_from_review_notes(self):
+        """Item 1: REJECTED/REVOKED claims derive user-facing rejection_reason from review_notes."""
+        claim_id = str(uuid4())
+        self.claims_data.append({
+            "id": claim_id,
+            "shop_id": self.shop_id,
+            "user_id": self.user_id,
+            "status": "REJECTED",
+            "claimant_name": "Applicant",
+            "claimant_role": "Owner",
+            "review_notes": "Business registration document could not be validated.",
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        })
+
+        # Test GET /api/v1/claims/mine
+        res = self.client.get("/api/v1/claims/mine")
+        self.assertEqual(res.status_code, 200)
+        claims = res.json()
+        self.assertEqual(len(claims), 1)
+        self.assertEqual(claims[0]["status"], "REJECTED")
+        self.assertEqual(claims[0]["rejection_reason"], "Business registration document could not be validated.")
+        # Ensure least-privilege boundary: review_notes and user_id are not exposed
+        self.assertNotIn("review_notes", claims[0])
+        self.assertNotIn("user_id", claims[0])
+
+        # Test GET /api/v1/shops/{shop_id}/claim
+        res_shop = self.client.get(f"/api/v1/shops/{self.shop_id}/claim")
+        self.assertEqual(res_shop.status_code, 200)
+        shop_claim = res_shop.json()
+        self.assertEqual(shop_claim["rejection_reason"], "Business registration document could not be validated.")
+        self.assertNotIn("review_notes", shop_claim)
+
+    def test_user_claim_approved_or_pending_does_not_expose_review_notes(self):
+        """Item 1: PENDING/APPROVED claims do not expose internal review notes via rejection_reason."""
+        claim_id = str(uuid4())
+        self.claims_data.append({
+            "id": claim_id,
+            "shop_id": self.shop_id,
+            "user_id": self.user_id,
+            "status": "APPROVED",
+            "claimant_name": "Owner",
+            "claimant_role": "Owner",
+            "review_notes": "Internal verification passed.",
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        })
+
+        res = self.client.get("/api/v1/claims/mine")
+        self.assertEqual(res.status_code, 200)
+        claims = res.json()
+        self.assertEqual(len(claims), 1)
+        self.assertEqual(claims[0]["status"], "APPROVED")
+        self.assertIsNone(claims[0]["rejection_reason"])
+        self.assertNotIn("review_notes", claims[0])
+
+    def test_curator_approve_claim_status_changed_conflict_409(self):
+        """Item 3: If claim status changed from PENDING concurrently, approval returns 409 Conflict."""
+        app.dependency_overrides[get_current_user] = lambda: self.curator_user
+        claim_id = str(uuid4())
+        self.claims_data.append({
+            "id": claim_id,
+            "shop_id": self.shop_id,
+            "user_id": self.user_id,
+            "status": "PENDING",
+            "claimant_name": "Racer",
+            "claimant_role": "Owner",
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        })
+
+        with patch.object(self.mock_supabase.table("shop_claims"), "update") as mock_update:
+            mock_builder = MagicMock()
+            mock_builder.eq.return_value = mock_builder
+            mock_builder.execute.return_value = MagicMock(data=[])
+            mock_update.return_value = mock_builder
+
+            res = self.client.post(f"/api/v1/claims/{claim_id}/approve", json={})
+            self.assertEqual(res.status_code, 409)
+            self.assertIn("Claim status changed during review", res.json()["detail"])
+
+    def test_curator_reject_claim_status_changed_conflict_409(self):
+        """Item 3: If claim status changed from PENDING concurrently, rejection returns 409 Conflict."""
+        app.dependency_overrides[get_current_user] = lambda: self.curator_user
+        claim_id = str(uuid4())
+        self.claims_data.append({
+            "id": claim_id,
+            "shop_id": self.shop_id,
+            "user_id": self.user_id,
+            "status": "PENDING",
+            "claimant_name": "Applicant",
+            "claimant_role": "Owner",
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        })
+
+        with patch.object(self.mock_supabase.table("shop_claims"), "update") as mock_update:
+            mock_builder = MagicMock()
+            mock_builder.eq.return_value = mock_builder
+            mock_builder.execute.return_value = MagicMock(data=[])
+            mock_update.return_value = mock_builder
+
+            res = self.client.post(f"/api/v1/claims/{claim_id}/reject", json={"review_notes": "Too late."})
+            self.assertEqual(res.status_code, 409)
+            self.assertIn("Claim status changed during review", res.json()["detail"])
+
+    def test_curator_revoke_claim_status_changed_conflict_409(self):
+        """Item 3: If claim status changed from APPROVED concurrently, revocation returns 409 Conflict."""
+        app.dependency_overrides[get_current_user] = lambda: self.curator_user
+        claim_id = str(uuid4())
+        self.claims_data.append({
+            "id": claim_id,
+            "shop_id": self.shop_id,
+            "user_id": self.user_id,
+            "status": "APPROVED",
+            "claimant_name": "Applicant",
+            "claimant_role": "Owner",
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        })
+
+        with patch.object(self.mock_supabase.table("shop_claims"), "update") as mock_update:
+            mock_builder = MagicMock()
+            mock_builder.eq.return_value = mock_builder
+            mock_builder.execute.return_value = MagicMock(data=[])
+            mock_update.return_value = mock_builder
+
+            res = self.client.post(f"/api/v1/claims/{claim_id}/revoke", json={"review_notes": "Revoking."})
+            self.assertEqual(res.status_code, 409)
+            self.assertIn("Claim status changed during review", res.json()["detail"])
 
 
 if __name__ == "__main__":
