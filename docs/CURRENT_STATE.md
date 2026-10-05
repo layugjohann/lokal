@@ -8,7 +8,7 @@ This document provides a snapshot of the **current state of the `main` branch** 
 
 **Phase 2 — Core Application Features**
 
-The project bootstrapping phase is complete. The mobile application foundation, FastAPI backend, Supabase integration, database schema, user authentication, maps/location integration, coffee shop CRUD API, nearby coffee shop discovery, independent business eligibility and curation, external review data layer, first-party LOKAL user reviews, mobile user authentication with secure session management, AI-generated review summaries, AI-generated "Must Try" recommendations, favorite coffee shops, the user favorites list / profile discovery flow, advanced shop search and filtering, and personalized coffee shop recommendations are established.
+The project bootstrapping phase is complete. The mobile application foundation, FastAPI backend, Supabase integration, database schema, user authentication, maps/location integration, coffee shop CRUD API, nearby coffee shop discovery, independent business eligibility and curation, external review data layer, first-party LOKAL user reviews, mobile user authentication with secure session management, AI-generated review summaries, AI-generated "Must Try" recommendations, favorite coffee shops, the user favorites list / profile discovery flow, advanced shop search and filtering, personalized coffee shop recommendations, and coffee shop owner claiming and dashboard are established.
 
 The project is now building application-level features that expand LOKAL's core user experience and community discovery capabilities.
 
@@ -18,11 +18,11 @@ The project is now building application-level features that expand LOKAL's core 
 
 🟢 **On Track**
 
-The core application stack is operational. The latest completed milestone, **Personalized Coffee Shop Recommendations (GitHub Issue #43)**, delivered personalized coffee shop discovery powered by user taste profiling, deterministic candidate scoring, AI-synthesized grounded explanations, process-local caching with generation fencing, and a dedicated mobile "For You" discovery tab in the nearby shops sheet.
+The core application stack is operational. The latest completed milestone, **Coffee Shop Owner Claiming and Dashboard (GitHub Issue #45)**, delivered an end-to-end verified ownership lifecycle enabling independent coffee shop owners to claim their businesses, access a dedicated owner dashboard, manage shop metadata, and track community reviews, while providing curators with a robust review and audit gateway.
 
-Users can browse personalized coffee shop recommendations tailored to their taste profile derived from positive first-party reviews and favorited coffee shops. The recommendation engine evaluates candidate shops across a 20-feature coffee ontology spanning brew & beverage styles, beans & craft, ambiance & work, and bakery & food dimensions. Candidates are ranked using a deterministic scoring formula combining taste similarity, quality metrics, and spatial proximity. Location-independent grounded explanations are synthesized concurrently via Google Gemini (with bounded 7.0-second batch timeouts) and verified against candidate evidence, falling back to deterministic templates when external AI is unavailable. Explanations and user taste profiles are cached process-locally with thread-safe generation fencing, automatically invalidating upon user favorite or review mutations. The mobile application surfaces recommendations in a dedicated `[Nearby | For You]` segmented control in `NearbyShopsSheet`, with full support for semantic states (`loading`, `personalized`, `insufficient_data`, `empty`, `error`) and reactive refetching.
+Users can claim unowned independent coffee shops through an authenticated multi-field submission flow (`ClaimShopModal`), track submission status across reactive state badges (`Pending Review`, `Approved`, `Rejected`, `Revoked`), review curator rejection notes, and manage their claimed listings via a dedicated `[Favorites | My Claims]` tab in the user profile. Curators review, approve, reject, or revoke claims through a privileged curation gateway. Once approved, verified coffee shop owners gain access to a dedicated Owner Dashboard (`OwnerDashboardModal`) displaying verified ownership badges, key performance indicators (LOKAL community rating and all-time review count computed in PostgreSQL via `get_shop_review_aggregates`), a bounded feed of recent first-party reviews (top 5, stripping sensitive user UUIDs and emails), and quick-edit controls for shop name and street address (supporting explicit address clearing). The data model guarantees exactly one approved owner per shop via partial unique index `idx_unique_approved_claim_per_shop`, enforces curation coordination via row-level locking (`FOR UPDATE` on `shop_curation`) during approval RPC `approve_shop_claim`, automatically and atomically revokes active owner claims if a shop is demoted away from `APPROVED` via database trigger `trg_revoke_claims_on_curation_demotion`, and strictly forbids unauthorized field injection on owner shop updates using Pydantic `extra = "forbid"`.
 
-The implementation is verified through **348 passing backend tests**, **153 passing mobile tests**, **70 passing database pgTAP assertions**, and **0 TypeScript compilation errors**.
+The implementation is verified through **395 passing backend tests**, **179 passing mobile tests**, **97 passing database pgTAP assertions**, and **0 TypeScript compilation errors**.
 
 The engineering workflow remains formalized under the **AI-Assisted Engineering Workflow**.
 
@@ -32,61 +32,62 @@ The next feature cycle should begin only after the current state is synchronized
 
 # Latest Completed Feature
 
-## GitHub Issue #43 — Personalized Coffee Shop Recommendations
+## GitHub Issue #45 — Coffee Shop Owner Claiming and Dashboard
 
 **Status:** ✅ Completed
 
 ### Completed Work
 
-* **Backend Personalized Recommendation Engine & API (FastAPI)**:
-  * Implemented `GET /api/v1/shops/recommendations/personalized` in `backend/app/api/v1/endpoints/shops.py` requiring caller authentication.
-  * Defined request query parameters in `PersonalizedRecommendationParams` (`backend/app/schemas/shop.py`): optional `latitude`, `longitude`, `radius` (default 5000m, max 50000m), and `limit` (default 5, max 5).
-  * Defined response schemas: `PersonalizedShopRecommendation` (shop fields, `explanation`, `matched_features`, `distance_meters`, `relevance_score`) and `PersonalizedRecommendationResponse` (`status` enum: `personalized`, `insufficient_data`, `empty`; `recommendations`, `explanation`, `total_candidates_evaluated`).
-  * Implemented `PersonalizedRecommendationService` in `backend/app/services/personalized_recommendation_service.py`:
-    * Enforced explicit user interaction threshold: requires $\ge 1$ favorite or $\ge 1$ positive first-party LOKAL review (rating $\ge 4.0$). If insufficient, returns `status: "insufficient_data"`, `recommendations: []`, and an informative message guiding the user to favorite or review coffee shops.
-    * Pre-limit user exclusions: retrieves user's favorited shop IDs and first-party reviewed shop IDs, filtering them out of candidate sets *before* candidate evaluation limits are applied so visited shops never starve the candidate pool.
-    * Bounded candidate discovery: pages candidate shops in chunks of 30 up to `MAX_CANDIDATE_PAGES = 3` (up to 90 raw candidates), stopping immediately once 10 eligible candidates (`CANDIDATE_EVALUATION_LIMIT = 10`) are gathered. Supports both coordinate-based spatial queries and coordinate-free discovery.
-    * Evaluates up to 10 candidates (`CANDIDATE_EVALUATION_LIMIT`) and returns the top 5 (`RECOMMENDATION_LIMIT = 5`).
-    * Structured 20-feature coffee ontology across 4 dimensions: Brew & Beverage Styles (`espresso`, `pour over`, `cold brew`, `filter coffee`, `matcha`, `tea`), Beans & Craft (`single origin`, `specialty coffee`, `house blend`, `light roast`, `dark roast`, `latte art`), Ambiance & Work (`quiet`, `wifi`, `cozy`, `work friendly`, `spacious`), and Bakery & Food (`pastries`, `breakfast`, `vegan options`).
-    * Deterministic personalization scoring model:
-      * Builds user taste profile vector from positive reviews ($\ge 4.0$) and favorites' reviews, weighted by rating ($w = 1.0 + 0.2 \times (\text{rating} - 4.0)$).
-      * Computes $S_{\text{taste}}$ via cosine similarity between user profile and candidate profile. Unreviewed candidates or candidates without text reviews receive baseline $S_{\text{taste}} = 0.15$ if their provider rating is within $\pm 0.3$ (rounded to 2 decimal places) of user's favorited shops' average provider rating.
-      * Computes $S_{\text{quality}}$ from weighted composite of LOKAL community rating (70%) and provider rating (30%), falling back to provider rating.
-      * Computes $S_{\text{proximity}}$ via linear decay over search radius when coordinates are supplied.
-      * Dynamic weight redistribution: $W_{\text{taste}} = 0.60, W_{\text{quality}} = 0.25, W_{\text{proximity}} = 0.15$ with coordinates; $W_{\text{taste}} = 0.70, W_{\text{quality}} = 0.30, W_{\text{proximity}} = 0.0$ without coordinates.
-      * Deterministic tie-breaking: `relevance_score DESC`, then `candidate.rating DESC` (`NULLS LAST`), then `candidate.id ASC`.
-  * Location-independent grounded explanation synthesis:
-    * Protocol abstraction `PersonalizedExplanationSynthesizer` in `backend/app/services/personalized_explanation_synthesizer.py`.
-    * `GeminiPersonalizedExplanationSynthesizer` targeting Google Gemini REST API (`gemini-2.5-flash` with `thinkingBudget: 0`).
-    * Concurrent candidate explanation synthesis via `asyncio.gather` bounded by a strict batch timeout of 7.0 seconds.
-    * Strictly location-independent prompt: excludes distance metrics, ensuring explanations remain valid across user coordinate updates.
-    * Grounding validation: ensures synthesized explanations reference matched features and do not exceed 280 characters.
-    * Deterministic fallback templates: ensures coherent, grounded explanations when Gemini is unavailable, times out, or fails validation.
-  * Process-local caching with generation fencing:
-    * `PersonalizedRecommendationCache` in `backend/app/services/personalized_cache.py`: caches taste profiles (1800s TTL) and explanations (3600s TTL, max 1000 items).
-    * Thread-safe generation fencing (`_user_versions`) incremented via `invalidate_user()`. Cache write operations verify generation invariance, preventing in-flight stale cache writes.
-    * Wired reactive cache invalidation into review endpoints (`POST`, `PATCH`, `DELETE` at `/api/v1/shops/{id}/reviews`) and favorite endpoints (`POST`, `DELETE` at `/api/v1/shops/{id}/favorite`).
-  * Comprehensive test suites in `backend/tests/test_personalized_recommendations.py`, `backend/tests/test_personalized_cache.py`, and `backend/tests/test_gemini_personalized_explanation.py` bringing backend test suite to **348 passing tests**.
-* **Mobile "For You" Recommendations & Controller Lifecycle**:
-  * Defined recommendation types and parameters in `mobile/src/types/shop.ts` (`PersonalizedShopRecommendation`, `PersonalizedRecommendationResponse`, `PersonalizedSearchParams`).
-  * Implemented `fetchPersonalizedRecommendations` in `mobile/src/services/shopService.ts` supporting optional coordinates and search radius.
-  * Extracted pure `PersonalizedRecommendationsController` in `mobile/src/hooks/usePersonalizedRecommendations.ts`:
-    * Manages asynchronous request sequencing with monotonic `requestId`.
-    * Handles authentication lifecycle, immediate state reset on sign out, and stale response rejection on account switch.
-  * Hook `usePersonalizedRecommendations` exposing `recommendations`, `status`, `isLoading`, `errorMessage`, and `refresh()`.
-  * Updated `NearbyShopsSheet.tsx`:
-    * Added `[Nearby | For You]` segmented tab control when user is authenticated.
-    * Dedicated recommendation cards displaying match badge (`✨ Recommended For You`), shop name, address, distance (when device coordinates available), provider & community ratings, and synthesized explanation.
-    * Complete semantic state rendering: loading indicator, informational banner for `insufficient_data` guiding user to save/review shops, empty state when no candidates found, and error state with retry.
-    * Reactive invalidation: triggers recommendation refetch when user favorites or reviews a shop in `ShopDetailCard`.
-  * Added unit tests in `mobile/tests/usePersonalizedRecommendations.test.mjs` and `mobile/tests/shopService.test.mjs` bringing mobile test suite to **153 passing tests**.
+* **Database Schema, Migrations, & Stored Procedures (`supabase/migrations/20261006000000_shop_claims.sql`)**:
+  * Created `claim_status` enum (`PENDING`, `APPROVED`, `REJECTED`, `REVOKED`) and `shop_claims` table with audit fields (`claimant_name`, `claimant_phone`, `claimant_role`, `business_proof`, `review_notes`, `reviewed_at`, `curator_id`, `created_at`, `updated_at`).
+  * Enforced single approved owner constraint at the database boundary via partial unique index `idx_unique_approved_claim_per_shop` (`UNIQUE (shop_id) WHERE status = 'APPROVED'`).
+  * Enforced single pending claim constraint per user and shop via partial unique index `idx_unique_pending_claim_per_user_shop` (`UNIQUE (shop_id, user_id) WHERE status = 'PENDING'`).
+  * Enabled Row Level Security (RLS) on `shop_claims`: revoked direct `INSERT`, `UPDATE`, and `DELETE` grants from `anon`, `authenticated`, and `public`, requiring all mutations to transit the backend `service_role` gateway. Permitted `SELECT` for authenticated users for their own claims (`auth.uid() = user_id`) and curators/admins.
+  * Implemented automated atomic claim revocation trigger `trg_revoke_claims_on_curation_demotion` on `shop_curation` (`AFTER UPDATE OF status` when `OLD.status = 'APPROVED' AND NEW.status != 'APPROVED'`) ensuring moving a shop away from `APPROVED` atomically transitions any active approved owner claim to `REVOKED` within the same transaction.
+  * Implemented claim approval curation verification trigger `trg_check_claim_approval_curation` on `shop_claims` (`BEFORE UPDATE OF status` when transitioning to `APPROVED`) locking `shop_curation` `FOR SHARE` and rejecting approvals if the shop is not `APPROVED` (`P0001`).
+  * Implemented atomic approval RPC `approve_shop_claim(p_claim_id, p_curator_id, p_review_notes)`: `SECURITY DEFINER` with `SET search_path = public, pg_temp`, locking `shop_curation` `FOR UPDATE` to serialize against concurrent demotions, transitioning the claim to `APPROVED`, revoking execution from `PUBLIC`, `anon`, and `authenticated`, and granting strictly to `service_role`.
+  * Implemented database-computed review aggregation RPC `get_shop_review_aggregates(p_shop_id)`: `SECURITY DEFINER STABLE` with `SET search_path = public, pg_temp`, computing count and average rating across first-party reviews (`source = 'lokal'`) directly in PostgreSQL while filtering out `null` and out-of-range ratings, avoiding loading full review sets into application memory.
+  * Created comprehensive pgTAP test suite `supabase/tests/03_shop_claims.sql` containing **27 assertions** covering RLS policies, least privilege, partial unique indexes, curation demotion revocation, approval serialization, RPC execution permissions, and review aggregates.
+* **Backend Claims & Owner Services (FastAPI)**:
+  * Implemented user claim endpoints in `backend/app/api/v1/endpoints/claims.py`:
+    * `POST /api/v1/shops/{shop_id}/claim`: Validates shop exists and is `APPROVED`; enforces single pending claim per user and single approved claim per shop; creates claim in `PENDING` status.
+    * `GET /api/v1/shops/{shop_id}/claim`: Retrieves caller's claim status for a shop.
+    * `GET /api/v1/claims/mine`: Lists all claims submitted by the authenticated caller.
+  * Implemented least-privilege response projection (`ShopClaimResponse` in `backend/app/schemas/claim.py`): strips internal `user_id` and raw curator notes, conditionally projecting `rejection_reason` derived from `review_notes` only for `REJECTED` and `REVOKED` claims while suppressing internal notes for `PENDING` and `APPROVED` claims.
+  * Implemented curator claims management gateway in `backend/app/api/v1/endpoints/claims.py` and `ClaimService` (`backend/app/services/claims.py`):
+    * `GET /api/v1/claims`: Paginated claims listing with optional `status_filter` (Curator only).
+    * `GET /api/v1/claims/{id}`: Detailed claim view with embedded shop details (Curator only).
+    * `POST /api/v1/claims/{id}/approve`: Invokes `approve_shop_claim` RPC via `service_role`, translating database unique violation `23505` to HTTP 409 Conflict ("This coffee shop already has an approved owner"), unapproved curation `P0001` to HTTP 400 Bad Request, status change races `P0005` to HTTP 409 Conflict, and missing claim `P0002` to HTTP 404 Not Found.
+    * `POST /api/v1/claims/{id}/reject`: Transitions claim to `REJECTED` with required review notes.
+    * `POST /api/v1/claims/{id}/revoke`: Revokes an active approved claim (`APPROVED -> REVOKED`).
+  * Implemented coffee shop owner dashboard endpoints in `backend/app/api/v1/endpoints/owner.py` and `OwnerService` (`backend/app/services/owner.py`):
+    * `verify_active_owner`: Enforces active approved claim (`status = 'APPROVED'`) and validates shop curation remains `APPROVED`. Fails closed with `HTTP 403 Forbidden` if ownership is unapproved or shop curation is demoted.
+    * `GET /api/v1/owner/shops/{shop_id}/dashboard`: Returns `OwnerDashboardResponse` containing full shop details, active claim info, PostgreSQL-computed `lokal_reviews_count` and `lokal_rating`, and bounded `recent_reviews` (top 5, stripping sensitive user UUIDs and emails).
+    * `PATCH /api/v1/owner/shops/{shop_id}`: Allows owners to update `name` and `address` via `OwnerShopUpdate`. Strictly forbids protected/system fields (`rating`, `google_place_id`, `latitude`, `longitude`, `curation status`, etc.) using Pydantic `extra = "forbid"` (returning `HTTP 422 Unprocessable Entity`), while supporting explicit address clearing (`{"address": null}`).
+  * Added comprehensive backend unit tests in `backend/tests/test_claims.py` (25 tests) and `backend/tests/test_owner_dashboard.py` (22 tests), bringing total backend test suite to **395 passing tests**.
+* **Mobile Claiming Experience & Owner Dashboard (React Native + Expo)**:
+  * Implemented claim button and `ClaimShopModal` in `mobile/src/components/ShopDetailCard.tsx`:
+    * Form fields for Claimant Name, Contact Phone, Role, and Business Proof / DTI registration with validation and loading states.
+    * Semantic status badges on shop detail cards: `Pending Review` (amber) with guidance; `Claim Rejected` (red) with curator `rejection_reason`; `Claim Revoked` (gray) with explanation.
+  * Implemented pure request coordinator `ShopClaimController` in `mobile/src/hooks/useShopClaim.ts` managing monotonic request sequence counters, listener dispatch, and stale response cancellation across shop and account switches.
+  * Extended `ProfileView.tsx`:
+    * Added segmented control `[Favorites | My Claims]` for authenticated users.
+    * Claims tab rendering user's submitted claims with status badges, rejection explanations, and timestamps.
+    * Interactive `Open Dashboard` button on approved claims opening the owner dashboard modal.
+    * Monotonic request invalidation: incrementing `claimsRequestId.current += 1` on profile close (`!visible`) or token loss (`!authToken`), ensuring in-flight network responses are discarded and cannot repopulate state after close.
+  * Implemented `OwnerDashboardModal.tsx`:
+    * Verified owner badge (`☕ Verified Owner`).
+    * KPI summary cards for LOKAL Community Rating, Total Reviews Count, and Claim Status.
+    * Quick-edit form for shop Name and Address with client validation, dirty state detection, and explicit null address clearing.
+    * Recent reviews feed displaying top customer reviews with star ratings, author display names, and relative timestamps.
+  * Added mobile unit tests in `mobile/tests/claimController.test.mjs` and `mobile/tests/claimService.test.mjs` bringing mobile test suite to **179 passing tests**.
 * **Automated Verification**:
-  * Database pgTAP test suite: **70 / 70 assertions passed** across 2 suites (`supabase test db`).
-  * Backend regression suite: **348 / 348 tests passed** (`./backend/.venv/bin/python -m unittest discover -s backend/tests -v`).
-  * Mobile test suite: **153 / 153 tests passed** (`npm test --prefix mobile`).
+  * Database pgTAP test suite: **97 / 97 assertions passed** across 3 suites (`supabase test db`).
+  * Backend regression suite: **395 / 395 tests passed** (`./backend/.venv/bin/python -m unittest discover -s backend/tests -v`).
+  * Mobile test suite: **179 / 179 tests passed** (`npm test --prefix mobile`).
   * Mobile TypeScript compiler: **0 errors** (`./mobile/node_modules/.bin/tsc --noEmit --project mobile/tsconfig.json`).
 * **Pull Request**:
-  * Pull Request #44 reviewed by CodeRabbit, all actionable findings resolved (generation fencing race, candidate paging early exit, pre-limit exclusions, 20-feature ontology, favorite rating baseline), approved, and merged into `main` by the Product Owner (merge commit `617ae7d0`).
+  * Pull Request #46 reviewed by CodeRabbit, all actionable findings resolved (atomic curation demotion revocation, approval serialization with row-level locking, database review aggregation, profile request cancellation, service-role privilege isolation, and safe search path), approved, and merged into `main` by the Product Owner (merge commit `97553d02`).
 
 ---
 
@@ -115,6 +116,7 @@ The next feature cycle should begin only after the current state is synchronized
 | Issue #39 — User Favorites List & Profile Discovery          | ✅ Complete |
 | Issue #41 — Advanced Shop Search and Filtering               | ✅ Complete |
 | Issue #43 — Personalized Coffee Shop Recommendations         | ✅ Complete |
+| Issue #45 — Coffee Shop Owner Claiming and Dashboard         | ✅ Complete |
 
 ---
 
@@ -134,6 +136,19 @@ The React Native (Expo) mobile application currently provides:
   * Stale favorite mutation protection: `ShopDetailCard` success callbacks verify `currentFavoriteMutationId` ownership before updating parent state.
   * Principal-bound instance lifecycle (`getProfilePrincipalKey`) ensuring account switches cleanly remount the profile view and clear selected shops, while same-account token refreshes preserve instance stability.
   * Pure request sequencer `FavoritesController` providing monotonic request IDs, immediate cache clearing on principal switch, late response discarding, and isolation on replacement fetch failures.
+* **Coffee Shop Owner Claiming & Dashboard Experience**:
+  * Interactive "Claim This Shop" modal flow (`ClaimShopModal`) accessible from `ShopDetailCard` for authenticated users.
+  * Form inputs for Claimant Name, Contact Phone, Role, and Business Proof (e.g. DTI / BIR registration) with client validation and submission error handling.
+  * Reactive shop claim status badges displayed on `ShopDetailCard`: `Pending Review` (amber) with explanatory guidance; `Claim Rejected` (red) with curator-provided `rejection_reason`; and `Claim Revoked` (gray).
+  * Pure request coordinator `ShopClaimController` (`mobile/src/hooks/useShopClaim.ts`) managing monotonic request sequencing, listener subscriptions, and stale-response cancellation across shop selections and authentication transitions.
+  * Segmented control `[Favorites | My Claims]` within `ProfileView` enabling authenticated users to toggle between saved favorite coffee shops and their submitted ownership claims.
+  * My Claims tab rendering user's submitted claims with status badges, submission timestamps, curator rejection explanations, and direct `Open Dashboard` action for approved claims.
+  * Monotonic request invalidation guard (`claimsRequestId.current += 1`) in `ProfileView` triggered when the profile view is closed (`!visible`) or on auth token loss (`!authToken`), preventing in-flight claim responses from overwriting state after modal dismissal.
+  * Dedicated Owner Dashboard modal (`OwnerDashboardModal`):
+    * Verified owner badge (`☕ Verified Owner`).
+    * Key performance indicators: LOKAL Community Rating, Total Reviews Count, and Claim Status.
+    * Quick-edit form for shop Name and Address with client validation, dirty state tracking, and explicit address clearing (`null`).
+    * Bounded customer reviews feed showing top 5 reviews with star ratings, author display names, and relative timestamps, omitting sensitive user UUIDs and emails.
 * **Authentication & Session Lifecycle Management**:
   * User registration and login screens (`RegisterView`, `LoginView`) with input validation, password matching, inline error presentation, and loading states.
   * Hardware-backed credential persistence via `expo-secure-store` with fail-fast security preventing silent in-memory downgrades in native or production runtimes.
@@ -232,6 +247,7 @@ The FastAPI backend currently provides:
   * `20260930000000_favorite_coffee_shops.sql`: Favorites schema, unique constraints, RLS policies, table privilege hardening, and secure `create_user_favorite` RPC.
   * `20261001000000_harden_public_schema_and_rls.sql`: Row Level Security enablement across all six public tables, least-privilege table and column grants, revocation of direct client shop mutations, and column-level curation protection.
   * `20261002000000_advanced_search_and_filters.sql`: Advanced search across shop name and street address, independent LOKAL community rating calculation (`LEFT JOIN LATERAL` on reviews), `min_lokal_rating` filtering, deterministic multi-column sorting (`distance`, `rating`, `lokal_rating`), and least-privilege security model (`SECURITY INVOKER`, execution revoked from `anon`/`PUBLIC`, granted strictly to `authenticated`).
+  * `20261006000000_shop_claims.sql`: Coffee shop ownership claims table (`shop_claims`), `claim_status` enum (`PENDING`, `APPROVED`, `REJECTED`, `REVOKED`), partial unique indexes for single-approved claim per shop and single-pending claim per user/shop, atomic curation-demotion revocation trigger, approval curation check trigger, privileged `approve_shop_claim` RPC with row locking (`FOR UPDATE` on `shop_curation`), and database-computed review aggregation RPC `get_shop_review_aggregates`.
 * User registration (`POST /api/v1/auth/register`) with email and password.
 * User authentication (`POST /api/v1/auth/login`) returning JWT session tokens.
 * Non-admin token-scoped user logout (`POST /api/v1/auth/logout`).
@@ -308,8 +324,22 @@ The FastAPI backend currently provides:
   * Immutable author name snapshotting from user metadata with fallback to `'LOKAL User'`. Never exposes user emails or internal UUIDs in review responses.
   * Strict `source = 'lokal'` filtering across application review lookups, updates, and deletes.
 * Google Places API (New) integration for transient external review retrieval with provider attribution and source links. No caching or persistence of Google review content.
+* **Coffee Shop Ownership Claims & Curator Verification Gateway**:
+  * `POST /api/v1/shops/{shop_id}/claim`: Validates target coffee shop exists and is `APPROVED`; enforces single pending claim per user and single approved claim per shop; creates claim in `PENDING` status.
+  * `GET /api/v1/shops/{shop_id}/claim`: Retrieves caller's claim status for a shop.
+  * `GET /api/v1/claims/mine`: Lists all claims submitted by the authenticated caller.
+  * `GET /api/v1/claims`: Paginated claims listing with optional `status_filter` (Curator only).
+  * `GET /api/v1/claims/{id}`: Detailed claim view with embedded shop details (Curator only).
+  * `POST /api/v1/claims/{id}/approve`: Invokes `approve_shop_claim` RPC via `service_role`, translating database unique violation `23505` to HTTP 409 Conflict ("This coffee shop already has an approved owner"), unapproved curation `P0001` to HTTP 400 Bad Request, status change races `P0005` to HTTP 409 Conflict, and missing claim `P0002` to HTTP 404 Not Found.
+  * `POST /api/v1/claims/{id}/reject`: Transitions claim to `REJECTED` with required review notes.
+  * `POST /api/v1/claims/{id}/revoke`: Revokes an active approved claim (`APPROVED -> REVOKED`).
+  * Least-privilege response projection (`ShopClaimResponse`): strips internal `user_id` and raw curator notes, conditionally projecting `rejection_reason` derived from `review_notes` only for `REJECTED` and `REVOKED` claims while suppressing internal notes for `PENDING` and `APPROVED` claims.
+* **Coffee Shop Owner Dashboard & Shop Management Endpoints**:
+  * `verify_active_owner`: Enforces active approved claim (`status = 'APPROVED'`) and validates shop curation remains `APPROVED`. Fails closed with `HTTP 403 Forbidden` if ownership is unapproved or shop curation is demoted.
+  * `GET /api/v1/owner/shops/{shop_id}/dashboard`: Returns `OwnerDashboardResponse` containing full shop details, active claim info, PostgreSQL-computed `lokal_reviews_count` and `lokal_rating`, and bounded `recent_reviews` (top 5, stripping sensitive user UUIDs and emails).
+  * `PATCH /api/v1/owner/shops/{shop_id}`: Allows owners to update `name` and `address` via `OwnerShopUpdate`. Strictly forbids protected/system fields (`rating`, `google_place_id`, `latitude`, `longitude`, `curation status`, etc.) using Pydantic `extra = "forbid"` (returning `HTTP 422 Unprocessable Entity`), while supporting explicit address clearing (`{"address": null}`).
 * Robust error handling distinguishing client input errors (`400`/`422`), missing records (`404`), unique constraint conflicts (`409`), external provider failures (`502`), service unavailability (`503`), and sanitized generic server failures (`500`).
-* Automated backend regression testing with **348 passing tests**, covering auth, shops, curation, nearby discovery with advanced search and filtering, external reviews, first-party user reviews, AI review summaries, AI must-try recommendations, favorite coffee shops (including the favorites list endpoint), personalized coffee shop recommendations (including taste profiling, caching, and explanation synthesis), curator authorization, and service-role fail-closed behavior.
+* Automated backend regression testing with **395 passing tests**, covering auth, shops, curation, nearby discovery with advanced search and filtering, external reviews, first-party user reviews, AI review summaries, AI must-try recommendations, favorite coffee shops (including the favorites list endpoint), personalized coffee shop recommendations (including taste profiling, caching, and explanation synthesis), coffee shop ownership claiming and curator verification lifecycle, owner dashboard metrics and profile editing with protected-field validation, curator authorization, and service-role fail-closed behavior.
 
 ---
 
@@ -324,6 +354,7 @@ The database is managed through PostgreSQL in Supabase with full Row Level Secur
   * `menu_items`: Coffee shop menu items (internal/service-role access only).
   * `reviews`: Stores first-party LOKAL user reviews and historical/external review metadata.
   * `favorites`: Stores authenticated user favorite coffee shops with uniqueness constraints and foreign key cascade deletions.
+  * `shop_claims`: Stores coffee shop ownership claims (`claimant_name`, `claimant_phone`, `claimant_role`, `business_proof`, `status`, `review_notes`, `reviewed_at`, `curator_id`, `created_at`, `updated_at`).
 * **Least-Privilege Table & Column Grants**:
   * `shops`: `SELECT` granted to `anon` and `authenticated`. All direct client write grants (`INSERT`, `UPDATE`, `DELETE`) are revoked. Full `ALL` access granted strictly to `service_role`.
   * `shop_curation`: Direct table `SELECT` revoked from `anon`, `authenticated`, and `public`. Column-level `SELECT (shop_id, status)` granted to `anon` and `authenticated`. Sensitive columns (`curator_notes`, `evidence_source`, `confidence`, `curator_id`, `location_count`) are restricted from client roles. Full access granted strictly to `service_role`.
@@ -331,6 +362,7 @@ The database is managed through PostgreSQL in Supabase with full Row Level Secur
   * `shop_curation_audit`: All privileges revoked from `anon` and `public`. `SELECT` granted to `authenticated`. Full access granted strictly to `service_role`.
   * `reviews`: Direct `INSERT` and `UPDATE` revoked from client roles. `SELECT` and `DELETE` granted to `authenticated`. Full access granted to `service_role`.
   * `favorites`: Direct `INSERT` and `UPDATE` revoked from client roles. `SELECT` and `DELETE` granted to `authenticated`. Full access granted to `service_role`.
+  * `shop_claims`: Direct `INSERT`, `UPDATE`, and `DELETE` revoked from `anon`, `authenticated`, and `public`. `SELECT` granted to `authenticated`. Full access granted strictly to `service_role`.
 * **Row Level Security (RLS) Policies**:
   * `shops`:
     * Public/Authenticated `SELECT`: Allowed for coffee shops where `shop_curation.status = 'APPROVED'`, or where JWT `(auth.jwt() -> 'app_metadata' ->> 'role') IN ('curator', 'admin')`.
@@ -349,6 +381,9 @@ The database is managed through PostgreSQL in Supabase with full Row Level Secur
   * `favorites`:
     * `SELECT`: Authenticated users can select only their own favorites (`auth.uid() = user_id`).
     * `DELETE`: Authenticated users can delete only their own favorites (`auth.uid() = user_id`).
+  * `shop_claims`:
+    * Authenticated `SELECT`: Allowed for claims belonging to caller (`auth.uid() = user_id`) or where JWT `(auth.jwt() -> 'app_metadata' ->> 'role') IN ('curator', 'admin')`.
+    * Mutations: Direct client mutations are blocked; mutations must proceed via FastAPI gateway using `service_role`.
 * **Review Schema & Integrity**:
   * `user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE`
   * `author_name TEXT NOT NULL DEFAULT 'LOKAL User'`
@@ -361,16 +396,27 @@ The database is managed through PostgreSQL in Supabase with full Row Level Secur
   * `created_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now())`
   * `uq_favorites_user_shop UNIQUE (user_id, shop_id)`: Enforces single favorite record per user per coffee shop.
   * Indexes: `idx_favorites_user_shop ON favorites (user_id, shop_id)`.
+* **Shop Claims Schema & Integrity**:
+  * `user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE`
+  * `shop_id UUID NOT NULL REFERENCES shops(id) ON DELETE CASCADE`
+  * `status claim_status NOT NULL DEFAULT 'PENDING'`
+  * `idx_unique_approved_claim_per_shop UNIQUE (shop_id) WHERE status = 'APPROVED'`: Enforces exactly one approved owner per coffee shop at the database boundary.
+  * `idx_unique_pending_claim_per_user_shop UNIQUE (shop_id, user_id) WHERE status = 'PENDING'`: Enforces at most one pending claim per user per coffee shop.
+  * Trigger `trg_revoke_claims_on_curation_demotion` on `shop_curation`: automatically and atomically revokes active approved owner claims if a shop is demoted away from `APPROVED`.
+  * Trigger `trg_check_claim_approval_curation` on `shop_claims`: verifies shop is currently `APPROVED` before allowing a claim to transition to `APPROVED`.
 * **Controlled Database RPCs**:
   * `create_user_review(p_shop_id, p_rating, p_content)`: Security definer RPC validating rating (1–5), verifying shop existence and `APPROVED` curation status, enforcing uniqueness, resolving author display name snapshot from user profile metadata, and inserting review with server timestamps.
   * `update_user_review(p_shop_id, p_rating, p_content, p_update_content)`: Security definer RPC enforcing field presence, validating rating, verifying shop is `APPROVED`, enforcing caller ownership and `source = 'lokal'`, preserving server-managed fields, and updating `rating`, `content`, and `updated_at`.
   * `create_user_favorite(p_shop_id)`: Security definer RPC validating caller authentication (`auth.uid() IS NOT NULL`), verifying target shop existence and `APPROVED` curation status in `shop_curation`, inserting favorite record with server-derived `auth.uid()`, and handling duplicate conflicts idempotently.
   * `get_nearby_shops(user_lat, user_lon, radius_meters, max_results, search_query, min_rating, min_lokal_rating, sort_by, user_id)`: Security invoker spatial discovery RPC evaluating PostGIS distance against spatial index, enforcing `APPROVED` curation status, matching search query against shop name and street address via `ILIKE`, computing LOKAL community rating aggregates via `LEFT JOIN LATERAL` on `reviews (source = 'lokal')`, applying independent provider and LOKAL rating filters, and deterministically sorting candidates across `'distance'`, `'rating'`, and `'lokal_rating'`.
-  * Stored procedure execution privileges are revoked from `PUBLIC` and `anon`, and granted strictly to `authenticated`.
+  * `approve_shop_claim(p_claim_id, p_curator_id, p_review_notes)`: Security definer RPC with `SET search_path = public, pg_temp`, locking `shop_curation` `FOR UPDATE` to serialize against concurrent demotions, transitioning claim to `APPROVED`, revoking execution from `PUBLIC`, `anon`, and `authenticated`, and granting strictly to `service_role`.
+  * `get_shop_review_aggregates(p_shop_id)`: Security definer stable RPC with `SET search_path = public, pg_temp`, computing count and average rating across first-party reviews (`source = 'lokal'`) directly in PostgreSQL while filtering out `null` and out-of-range ratings, revoking execution from `PUBLIC` and `anon`, and granting strictly to `authenticated` and `service_role`.
+  * Stored procedure execution privileges are revoked from `PUBLIC` and `anon`, and granted strictly according to the least-privilege security model (`authenticated` for user-facing discovery and review/favorite RPCs; `service_role` for privileged claim approval).
 * **Automated Database Test Suite (`supabase/tests/`)**:
-  * Executable pgTAP test suites containing **70 total assertions** across two test suites:
+  * Executable pgTAP test suites containing **97 total assertions** across three test suites:
     * `01_rls_and_permissions.sql`: **55 assertions** verifying RLS flags, table permissions, column privileges, and allow/deny query behaviors for `anon`, ordinary `authenticated`, and curator roles.
     * `02_advanced_search_and_filters.sql`: **15 assertions** verifying `get_nearby_shops` execution permissions (denied to `anon`/`PUBLIC`, granted to `authenticated`), name/address search matching, `APPROVED`-only curation filtering, LOKAL rating aggregation, null handling for unreviewed shops, `min_lokal_rating` threshold filtering, combined filters, and deterministic sorting.
+    * `03_shop_claims.sql`: **27 assertions** verifying `shop_claims` RLS policies, table permissions, partial unique indexes, curation demotion revocation, approval serialization, RPC execution permissions, and review aggregates.
 
 ---
 
@@ -410,13 +456,13 @@ Independent-business eligibility and curation are maintained as a separate domai
 
 # Next Task
 
-The next feature should be defined through the next GitHub Issue after reviewing the completed personalized coffee shop recommendations architecture and current application state.
+The next feature should be defined through the next GitHub Issue after reviewing the completed coffee shop owner claiming and dashboard architecture and current application state.
 
-With user authentication, unified reviews, AI review summarization, AI must-try recommendations, coffee shop favoriting, the user favorites list / profile view, advanced search and filtering, and personalized coffee shop recommendations active, the logical next capabilities include **Coffee Shop Owner Dashboard / Claiming**, **Community Feed & Social Sharing**, or another feature prioritized by the Product Owner.
+With user authentication, unified reviews, AI review summarization, AI must-try recommendations, coffee shop favoriting, the user favorites list / profile view, advanced search and filtering, personalized coffee shop recommendations, and coffee shop owner claiming and dashboard active, the logical next capabilities include **Community Feed & Social Sharing**, **Coffee Shop Menus & Photo Gallery**, or another feature prioritized by the Product Owner.
 
 Before implementation:
 
-1. Review the current database schema, curation layer, review service, favorites service, AI services, and mobile components.
+1. Review the current database schema, curation layer, review service, favorites service, AI services, owner claiming and dashboard services, and mobile components.
 2. Define the product requirement and observable acceptance criteria for the next capability.
 3. Review dependencies, latency implications, and data modeling trade-offs.
 4. Create and approve the next GitHub Issue.
@@ -428,7 +474,7 @@ Before implementation:
 
 **None.**
 
-The unified review domain, AI review summarization, AI-generated "Must Try" recommendations, coffee shop favoriting, user favorites list / profile discovery, advanced search and filtering, and personalized coffee shop recommendations are operational. External reviews remain transient and compliant with provider policies, while first-party reviews and user favorites are securely persisted in Supabase with RLS and security-definer RPC protection. In-memory caching with generation versioning is active for summaries, must-try recommendations, and personalized recommendations. Mobile user authentication, review mutations, non-blocking summary cards, non-blocking recommendations cards, interactive favorite toggles, the saved coffee shops profile view, advanced search/filter chips coordinated through `NearbyShopsController`, and the For You personalized recommendations tab coordinated through `PersonalizedRecommendationsController` are operational and fully tested.
+The unified review domain, AI review summarization, AI-generated "Must Try" recommendations, coffee shop favoriting, user favorites list / profile discovery, advanced search and filtering, personalized coffee shop recommendations, and coffee shop owner claiming and dashboard are operational. External reviews remain transient and compliant with provider policies, while first-party reviews, user favorites, and shop claims are securely persisted in Supabase with RLS, triggers, and security-definer RPC protection. In-memory caching with generation versioning is active for summaries, must-try recommendations, and personalized recommendations. Mobile user authentication, review mutations, non-blocking summary cards, non-blocking recommendations cards, interactive favorite toggles, the saved coffee shops profile view, advanced search/filter chips coordinated through `NearbyShopsController`, the For You personalized recommendations tab coordinated through `PersonalizedRecommendationsController`, owner claim submissions via `ClaimShopModal` coordinated through `ShopClaimController`, the My Claims profile tab, and `OwnerDashboardModal` are operational and verified through 395 backend tests, 179 mobile tests, 97 database pgTAP assertions, and 0 TypeScript errors.
 
 ---
 
@@ -436,6 +482,14 @@ The unified review domain, AI review summarization, AI-generated "Must Try" reco
 
 The recent development cycles established the following engineering practices:
 
+* **Partial Unique Indexes for State-Filtered Multi-Entity Constraints**: Using PostgreSQL partial unique indexes (`UNIQUE (shop_id) WHERE status = 'APPROVED'`) enforces strict single-entity business invariants (e.g. exactly one approved owner per shop) directly at the storage engine level, preventing race conditions that application-level validation cannot catch, while allowing multiple historical rejected or revoked records.
+* **Row-Level Locking for Cross-Entity Workflow Serialization**: When approving an ownership claim depends on shop curation status, locking the parent entity (`SELECT ... FROM shop_curation WHERE shop_id = ... FOR UPDATE`) inside the approval stored procedure serializes concurrent approval and demotion transactions, preventing approval of demoted shops or concurrent race windows.
+* **Trigger-Based Atomic Lifecycle Synchronization**: When demoting a parent entity's status (e.g., transitioning shop curation from `APPROVED` to `EXCLUDED` or `PENDING_REVIEW`), using a PostgreSQL trigger (`AFTER UPDATE OF status`) to synchronously cascade status revocations to dependent entities (e.g. `shop_claims`) guarantees that both operations commit or abort together within the same database transaction.
+* **Database-Side Aggregate RPCs for Scalable Metric Computation**: Instead of loading review collections into application memory or executing raw unbounded queries to compute community ratings and review counts for dashboards, defining a database-level stored procedure (`get_shop_review_aggregates`) leverages PostgreSQL relational engine performance and minimizes network I/O.
+* **Request-Schema Field Forbidding (`extra = "forbid"`)**: For privileged entity updates executed via high-privilege backend database clients (`service_role`), enforcing `extra = "forbid"` at the Pydantic schema validation boundary (`OwnerShopUpdate`) explicitly rejects attempts to submit protected system fields (such as `rating`, `curation_status`, `google_place_id`, coordinates) rather than silently discarding them.
+* **Least-Privilege Projection of Internal Review Notes**: When internal review notes contain sensitive curator justifications, user-facing projections (`ShopClaimResponse`) must selectively project these notes as `rejection_reason` only for negative outcome states (`REJECTED`, `REVOKED`) while omitting them for `PENDING` or `APPROVED` states to maintain least-privilege security boundaries.
+* **Explicit `search_path` and RPC Execution Revocation on `SECURITY DEFINER`**: PostgreSQL `SECURITY DEFINER` functions run with the privileges of their owner. Setting an explicit `SET search_path = public, pg_temp` prevents malicious search-path hijacking, and revoking execution from `PUBLIC`, `anon`, and `authenticated` ensures privileged database procedures can only be invoked by the trusted backend `service_role`.
+* **Monotonic Request Invalidation on Modal Dismissal**: Incrementing monotonic request sequence counters when dismissing views or modals (`claimsRequestId.current += 1` on `!visible`) ensures any in-flight asynchronous HTTP requests are safely discarded upon arrival and cannot resurrect or repopulate discarded component state.
 * **Location-Independent Explanation Caching**: Decoupling distance from AI-synthesized explanations allows caching recommendations safely by `(user_id, shop_id)` without explanations becoming stale when the user moves coordinates between requests.
 * **Pre-Limit Candidate Exclusions**: In recommendation systems filtering out shops the user has already visited or favorited, exclusions must be applied *before* candidate evaluation limits are enforced; otherwise, visited shops in the candidate window can falsely starve the eligible candidate set.
 * **Candidate Paging Early Exit at Evaluation Limit**: When candidate collection requires multi-page fetching to satisfy exclusions, paging should terminate as soon as the target evaluation limit (`CANDIDATE_EVALUATION_LIMIT`) is satisfied to avoid redundant database paging and candidate review work.
@@ -527,4 +581,4 @@ After implementation:
 
 ---
 
-**Last Updated:** Phase 2 — Core Application Features (after completion of GitHub Issue #43 and merge of PR #44)
+**Last Updated:** Phase 2 — Core Application Features (after completion of GitHub Issue #45 and merge of PR #46)

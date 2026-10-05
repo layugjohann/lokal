@@ -80,6 +80,7 @@ Responsibilities include:
 * Coffee shop data
 * User reviews
 * Favorites
+* Coffee shop claims & owner management
 * Application data
 * Secure authentication
 * Row Level Security (RLS) & least-privilege access control
