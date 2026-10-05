@@ -253,19 +253,9 @@ class CurationService:
                 detail="A database error occurred while saving evaluation results.",
             ) from exc
 
-        # 5. Automatically revoke active approved owner claims if status is not APPROVED
-        if decision.status.value != "APPROVED":
-            try:
-                supabase.table("shop_claims").update({
-                    "status": "REVOKED",
-                    "review_notes": f"Automatically revoked due to coffee shop curation status change to {decision.status.value}.",
-                }).eq("shop_id", str(shop_id)).eq("status", "APPROVED").execute()
-            except APIError as claim_exc:
-                logger.error(f"Failed to auto-revoke approved claims for shop {shop_id}: {claim_exc.message}")
-                raise HTTPException(
-                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                    detail="A database error occurred while updating associated ownership claims.",
-                ) from claim_exc
+        # 5. Note: Active approved owner claims are atomically revoked by the database trigger
+        # `trg_revoke_claims_on_curation_demotion` in the exact same transaction as the
+        # `shop_curation` update above, guaranteeing that both succeed or neither commits.
 
         # 6. Log audit record
         audit_payload = {
@@ -344,19 +334,9 @@ class CurationService:
                 detail="A database error occurred while saving manual override.",
             )
 
-        # 4. Automatically revoke active approved owner claims if status is not APPROVED
-        if status_in != ShopEligibilityStatus.APPROVED:
-            try:
-                supabase.table("shop_claims").update({
-                    "status": "REVOKED",
-                    "review_notes": f"Automatically revoked due to coffee shop manual curation override to {status_in.value}.",
-                }).eq("shop_id", str(shop_id)).eq("status", "APPROVED").execute()
-            except APIError as claim_exc:
-                logger.error(f"Failed to auto-revoke approved claims for shop {shop_id}: {claim_exc.message}")
-                raise HTTPException(
-                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                    detail="A database error occurred while updating associated ownership claims.",
-                ) from claim_exc
+        # 4. Note: Active approved owner claims are atomically revoked by the database trigger
+        # `trg_revoke_claims_on_curation_demotion` in the exact same transaction as the
+        # `shop_curation` update above, guaranteeing that both succeed or neither commits.
 
         # 5. Insert audit record
         audit_payload = {

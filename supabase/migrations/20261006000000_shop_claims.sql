@@ -81,3 +81,35 @@ CREATE POLICY "Allow users to read own claims and curators to read all" ON shop_
 DROP POLICY IF EXISTS "Allow service role full access on shop_claims" ON shop_claims;
 CREATE POLICY "Allow service role full access on shop_claims" ON shop_claims
     TO service_role USING (true) WITH CHECK (true);
+
+-- ============================================================================
+-- 5. Atomic Curation Demotion Trigger
+-- ============================================================================
+-- Ensures that transitioning a shop away from APPROVED (to EXCLUDED or PENDING_REVIEW)
+-- atomically revokes any active approved claims in the exact same database transaction.
+-- If revocation fails, the entire transaction rolls back and curation status does not commit.
+-- Restoration back to APPROVED does not resurrect revoked claims.
+CREATE OR REPLACE FUNCTION revoke_approved_claims_on_curation_demotion()
+RETURNS TRIGGER AS $$
+BEGIN
+    IF OLD.status = 'APPROVED' AND NEW.status != 'APPROVED' THEN
+        UPDATE shop_claims
+        SET status = 'REVOKED',
+            review_notes = COALESCE(
+                'Automatically revoked due to coffee shop curation status change to ' || NEW.status || '.',
+                review_notes
+            ),
+            updated_at = timezone('utc'::text, now())
+        WHERE shop_id = NEW.shop_id
+          AND status = 'APPROVED';
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+DROP TRIGGER IF EXISTS trg_revoke_claims_on_curation_demotion ON shop_curation;
+CREATE TRIGGER trg_revoke_claims_on_curation_demotion
+    AFTER UPDATE OF status ON shop_curation
+    FOR EACH ROW
+    WHEN (OLD.status = 'APPROVED' AND NEW.status != 'APPROVED')
+    EXECUTE FUNCTION revoke_approved_claims_on_curation_demotion();

@@ -3,7 +3,7 @@
 -- and executable allow/deny behavior across anon, authenticated (ordinary & curator), and service roles.
 
 BEGIN;
-SELECT plan(15);
+SELECT plan(18);
 
 -- ============================================================================
 -- 0. Seed test fixtures (runs as postgres/superuser within transaction)
@@ -156,6 +156,73 @@ SELECT lives_ok(
 SELECT is_empty(
     'SELECT * FROM shop_claims WHERE shop_id = ''a0000000-0000-0000-0000-000000000001''',
     'Claims are cleanly removed when shop is deleted'
+);
+
+-- ============================================================================
+-- 6. Atomic Curation Demotion & Lifecycle Enforcement
+-- ============================================================================
+-- Seed shop 3 and approved claim 3 for atomic lifecycle testing
+INSERT INTO shops (id, name, address, latitude, longitude) VALUES
+    ('a0000000-0000-0000-0000-000000000003', 'Approved Cafe 3', '789 Third St', 14.5600, 121.0350)
+ON CONFLICT (id) DO NOTHING;
+
+INSERT INTO shop_curation (shop_id, status) VALUES
+    ('a0000000-0000-0000-0000-000000000003', 'APPROVED')
+ON CONFLICT (shop_id) DO NOTHING;
+
+INSERT INTO shop_claims (id, shop_id, user_id, status, claimant_name, claimant_role) VALUES
+    ('c0000000-0000-0000-0000-000000000003', 'a0000000-0000-0000-0000-000000000003', '11111111-1111-1111-1111-111111111111', 'APPROVED', 'Owner C', 'Owner')
+ON CONFLICT (id) DO NOTHING;
+
+-- 1. Demoting curation from APPROVED to EXCLUDED atomically revokes active approved claim
+UPDATE shop_curation SET status = 'EXCLUDED' WHERE shop_id = 'a0000000-0000-0000-0000-000000000003';
+
+SELECT results_eq(
+    'SELECT status FROM shop_claims WHERE id = ''c0000000-0000-0000-0000-000000000003''',
+    ARRAY['REVOKED'::shop_claim_status],
+    'Curation demotion to EXCLUDED atomically revokes active APPROVED claim via trigger'
+);
+
+-- 2. Restoring curation to APPROVED does NOT resurrect revoked claim (remains REVOKED)
+UPDATE shop_curation SET status = 'APPROVED' WHERE shop_id = 'a0000000-0000-0000-0000-000000000003';
+
+SELECT results_eq(
+    'SELECT status FROM shop_claims WHERE id = ''c0000000-0000-0000-0000-000000000003''',
+    ARRAY['REVOKED'::shop_claim_status],
+    'Curation restoration back to APPROVED does NOT resurrect revoked claim'
+);
+
+-- 3. Atomic rollback: failure during claim revocation rolls back curation transition
+-- Reset claim to APPROVED for testing rollback
+UPDATE shop_claims SET status = 'APPROVED' WHERE id = 'c0000000-0000-0000-0000-000000000003';
+
+-- Temporarily elevate to table owner to add a check constraint simulating atomic failure
+RESET ROLE;
+ALTER TABLE shop_claims ADD CONSTRAINT test_simulate_revocation_failure CHECK (status != 'REVOKED');
+
+SET LOCAL ROLE service_role;
+SET LOCAL "request.jwt.claim.role" = 'service_role';
+SET LOCAL "request.jwt.claims" = '{"role": "service_role"}';
+
+SELECT throws_ok(
+    'UPDATE shop_curation SET status = ''EXCLUDED'' WHERE shop_id = ''a0000000-0000-0000-0000-000000000003''',
+    '23514',
+    NULL,
+    'Failure in claim revocation trigger aborts the entire curation transition transaction'
+);
+
+RESET ROLE;
+ALTER TABLE shop_claims DROP CONSTRAINT test_simulate_revocation_failure;
+
+SET LOCAL ROLE service_role;
+SET LOCAL "request.jwt.claim.role" = 'service_role';
+SET LOCAL "request.jwt.claims" = '{"role": "service_role"}';
+
+-- Verify curation status was NOT committed and remained APPROVED
+SELECT results_eq(
+    'SELECT status FROM shop_curation WHERE shop_id = ''a0000000-0000-0000-0000-000000000003''',
+    ARRAY['APPROVED'::shop_eligibility_status],
+    'Curation status remained APPROVED after failed atomic revocation transaction'
 );
 
 ROLLBACK;

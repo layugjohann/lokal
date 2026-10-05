@@ -96,33 +96,58 @@ class OwnerService:
                 detail="A database error occurred while retrieving coffee shop data.",
             )
 
-        # Fetch first-party LOKAL reviews
+        # 1. Fetch lightweight rating aggregates across all valid first-party reviews
         try:
-            reviews_res = (
+            ratings_res = (
+                supabase.table("reviews")
+                .select("rating")
+                .eq("shop_id", str_shop_id)
+                .eq("source", "lokal")
+                .execute()
+            )
+            raw_ratings = ratings_res.data or []
+        except APIError as exc:
+            logger.error(f"Database error retrieving review ratings for shop {str_shop_id}: {exc.message}")
+            raw_ratings = []
+
+        # Validate numeric ratings (1.0 to 5.0) for aggregate metrics
+        valid_ratings = [
+            float(r["rating"])
+            for r in raw_ratings
+            if r.get("rating") is not None
+            and isinstance(r.get("rating"), (int, float))
+            and not isinstance(r.get("rating"), bool)
+            and 1.0 <= float(r["rating"]) <= 5.0
+        ]
+        lokal_reviews_count = len(valid_ratings)
+        lokal_rating: Optional[float] = None
+        if lokal_reviews_count > 0:
+            lokal_rating = round(sum(valid_ratings) / lokal_reviews_count, 2)
+
+        # 2. Fetch bounded recent reviews (top 5 valid reviews, stripping user UUIDs and emails)
+        try:
+            recent_res = (
                 supabase.table("reviews")
                 .select("id, rating, content, author_name, created_at, updated_at")
                 .eq("shop_id", str_shop_id)
                 .eq("source", "lokal")
                 .order("created_at", desc=True)
+                .limit(10)
                 .execute()
             )
-            raw_reviews = reviews_res.data or []
+            raw_recent = recent_res.data or []
         except APIError as exc:
-            logger.error(f"Database error retrieving reviews for shop {str_shop_id}: {exc.message}")
-            raw_reviews = []
+            logger.error(f"Database error retrieving recent reviews for shop {str_shop_id}: {exc.message}")
+            raw_recent = []
 
-        # Compute community metrics across all valid reviews
-        valid_reviews = [
-            r for r in raw_reviews
-            if r.get("rating") is not None and isinstance(r.get("rating"), (int, float)) and 1 <= r["rating"] <= 5
+        valid_recent = [
+            r for r in raw_recent
+            if r.get("rating") is not None
+            and isinstance(r.get("rating"), (int, float))
+            and not isinstance(r.get("rating"), bool)
+            and 1.0 <= float(r["rating"]) <= 5.0
         ]
-        lokal_reviews_count = len(valid_reviews)
-        lokal_rating: Optional[float] = None
-        if lokal_reviews_count > 0:
-            total_stars = sum(float(r["rating"]) for r in valid_reviews)
-            lokal_rating = round(total_stars / lokal_reviews_count, 2)
 
-        # Build sanitized recent reviews (top 5 valid reviews, stripping user UUIDs and emails)
         recent_reviews = [
             UnifiedReview(
                 id=str(r.get("id")),
@@ -133,9 +158,8 @@ class OwnerService:
                 published_at=r.get("created_at"),
                 updated_at=r.get("updated_at"),
             )
-            for r in valid_reviews[:5]
+            for r in valid_recent[:5]
         ]
-
 
         return {
             "shop": shop,
