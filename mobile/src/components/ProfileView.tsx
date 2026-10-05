@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   StyleSheet,
   View,
@@ -13,14 +13,17 @@ import { AuthUser } from '../types/auth';
 import { Shop } from '../types/shop';
 import { FavoriteShop } from '../types/favorite';
 import { LocationCoordinates } from '../types/location';
+import { ShopClaim } from '../types/claim';
 import { useFavorites } from '../hooks/useFavorites';
 import { getUserDisplayName } from '../services/authService';
+import { fetchMyClaims } from '../services/claimService';
 import {
   formatDistance,
   formatRating,
   calculateDistanceMeters,
 } from '../services/shopService';
 import ShopDetailCard from './ShopDetailCard';
+import OwnerDashboardModal from './OwnerDashboardModal';
 
 export { getUserDisplayName };
 
@@ -46,6 +49,13 @@ export default function ProfileView({
   onLogout,
 }: ProfileViewProps) {
   const [selectedFavoriteShop, setSelectedFavoriteShop] = useState<Shop | null>(null);
+  const [activeTab, setActiveTab] = useState<'favorites' | 'claims'>('favorites');
+  const [claims, setClaims] = useState<ShopClaim[]>([]);
+  const [isClaimsLoading, setIsClaimsLoading] = useState<boolean>(false);
+  const [claimsErrorMessage, setClaimsErrorMessage] = useState<string | null>(null);
+  const [ownerDashboardShopId, setOwnerDashboardShopId] = useState<string | null>(null);
+
+  const claimsRequestId = useRef<number>(0);
 
   const {
     favorites,
@@ -58,10 +68,47 @@ export default function ProfileView({
     visible ? user?.id : null
   );
 
-  // Reset selected shop when profile closes or auth token becomes unavailable
+  const loadClaims = useCallback(async () => {
+    if (!authToken) {
+      setClaims([]);
+      setIsClaimsLoading(false);
+      return;
+    }
+
+    const requestId = ++claimsRequestId.current;
+    setIsClaimsLoading(true);
+    setClaimsErrorMessage(null);
+
+    try {
+      const claimsData = await fetchMyClaims(authToken);
+      if (requestId === claimsRequestId.current) {
+        setClaims(claimsData);
+        setIsClaimsLoading(false);
+      }
+    } catch (err: unknown) {
+      if (requestId === claimsRequestId.current) {
+        const message = err instanceof Error ? err.message : 'Failed to load your claims.';
+        setClaimsErrorMessage(message);
+        setIsClaimsLoading(false);
+      }
+    }
+  }, [authToken]);
+
+  useEffect(() => {
+    if (visible && authToken && activeTab === 'claims') {
+      loadClaims();
+    }
+  }, [visible, authToken, activeTab, loadClaims]);
+
+  // Reset selected shop & claims when profile closes or auth token becomes unavailable
   useEffect(() => {
     if (!visible || !authToken) {
+      claimsRequestId.current += 1;
       setSelectedFavoriteShop(null);
+      setOwnerDashboardShopId(null);
+      setClaims([]);
+      setIsClaimsLoading(false);
+      setClaimsErrorMessage(null);
     }
   }, [visible, authToken]);
 
@@ -185,107 +232,327 @@ export default function ProfileView({
                 </TouchableOpacity>
               </View>
 
-              {/* Favorites Section Header */}
-              <View style={styles.sectionHeader}>
-                <Text style={styles.sectionTitle}>Saved Coffee Shops</Text>
-                {!isLoading && !errorMessage && favorites.length > 0 && (
-                  <View style={styles.countBadge}>
-                    <Text style={styles.countText}>{favorites.length}</Text>
-                  </View>
-                )}
+              {/* Tab Selector */}
+              <View style={styles.tabContainer}>
+                <TouchableOpacity
+                  style={[styles.tabButton, activeTab === 'favorites' && styles.tabButtonActive]}
+                  onPress={() => setActiveTab('favorites')}
+                  accessibilityRole="button"
+                  accessibilityLabel="Saved coffee shops tab"
+                  activeOpacity={0.7}
+                >
+                  <Text
+                    style={[
+                      styles.tabButtonText,
+                      activeTab === 'favorites' && styles.tabButtonTextActive,
+                    ]}
+                  >
+                    Saved Shops
+                  </Text>
+                  {!isLoading && !errorMessage && favorites.length > 0 && (
+                    <View
+                      style={[
+                        styles.tabBadge,
+                        activeTab === 'favorites' && styles.tabBadgeActive,
+                      ]}
+                    >
+                      <Text
+                        style={[
+                          styles.tabBadgeText,
+                          activeTab === 'favorites' && styles.tabBadgeTextActive,
+                        ]}
+                      >
+                        {favorites.length}
+                      </Text>
+                    </View>
+                  )}
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[styles.tabButton, activeTab === 'claims' && styles.tabButtonActive]}
+                  onPress={() => setActiveTab('claims')}
+                  accessibilityRole="button"
+                  accessibilityLabel="My claims tab"
+                  activeOpacity={0.7}
+                >
+                  <Text
+                    style={[
+                      styles.tabButtonText,
+                      activeTab === 'claims' && styles.tabButtonTextActive,
+                    ]}
+                  >
+                    My Claims
+                  </Text>
+                  {!isClaimsLoading && !claimsErrorMessage && claims.length > 0 && (
+                    <View
+                      style={[
+                        styles.tabBadge,
+                        activeTab === 'claims' && styles.tabBadgeActive,
+                      ]}
+                    >
+                      <Text
+                        style={[
+                          styles.tabBadgeText,
+                          activeTab === 'claims' && styles.tabBadgeTextActive,
+                        ]}
+                      >
+                        {claims.length}
+                      </Text>
+                    </View>
+                  )}
+                </TouchableOpacity>
               </View>
 
-              {/* Loading State */}
-              {isLoading && (
-                <View style={styles.stateContainer}>
-                  <ActivityIndicator size="small" color="#4A2E18" />
-                  <Text style={styles.stateText}>Loading your favorites...</Text>
-                </View>
-              )}
+              {activeTab === 'favorites' ? (
+                <>
+                  {/* Favorites Section Header */}
+                  <View style={styles.sectionHeader}>
+                    <Text style={styles.sectionTitle}>Saved Coffee Shops</Text>
+                    {!isLoading && !errorMessage && favorites.length > 0 && (
+                      <View style={styles.countBadge}>
+                        <Text style={styles.countText}>{favorites.length}</Text>
+                      </View>
+                    )}
+                  </View>
 
-              {/* Error State */}
-              {errorMessage && !isLoading && (
-                <View style={styles.stateContainer}>
-                  <Text style={styles.errorText}>{errorMessage}</Text>
-                  <TouchableOpacity
-                    style={styles.retryButton}
-                    onPress={refetch}
-                    accessibilityRole="button"
-                    accessibilityLabel="Retry loading favorites"
-                    activeOpacity={0.8}
-                  >
-                    <Text style={styles.retryButtonText}>Retry</Text>
-                  </TouchableOpacity>
-                </View>
-              )}
+                  {/* Loading State */}
+                  {isLoading && (
+                    <View style={styles.stateContainer}>
+                      <ActivityIndicator size="small" color="#4A2E18" />
+                      <Text style={styles.stateText}>Loading your favorites...</Text>
+                    </View>
+                  )}
 
-              {/* Empty State */}
-              {!isLoading && !errorMessage && favorites.length === 0 && (
-                <View style={styles.emptyContainer}>
-                  <Text style={styles.emptyIcon}>☕</Text>
-                  <Text style={styles.emptyTitle}>No saved coffee shops yet</Text>
-                  <Text style={styles.emptySubtitle}>
-                    Tap the heart icon on any coffee shop to save it to your favorites.
-                  </Text>
-                </View>
-              )}
-
-              {/* Favorites List */}
-              {!isLoading && !errorMessage && favorites.length > 0 && (
-                <FlatList
-                  data={favorites}
-                  keyExtractor={(item) => item.id}
-                  contentContainerStyle={styles.listContent}
-                  renderItem={({ item }) => {
-                    let distText = '';
-                    if (userLocation) {
-                      const dist = calculateDistanceMeters(
-                        userLocation.latitude,
-                        userLocation.longitude,
-                        item.latitude,
-                        item.longitude
-                      );
-                      distText = formatDistance(dist);
-                    }
-                    const ratingText = formatRating(item.rating);
-
-                    return (
+                  {/* Error State */}
+                  {errorMessage && !isLoading && (
+                    <View style={styles.stateContainer}>
+                      <Text style={styles.errorText}>{errorMessage}</Text>
                       <TouchableOpacity
-                        style={styles.favoriteCard}
-                        onPress={() => handleOpenShopDetail(item)}
+                        style={styles.retryButton}
+                        onPress={refetch}
                         accessibilityRole="button"
-                        accessibilityLabel={`Open ${item.name} details`}
-                        activeOpacity={0.7}
+                        accessibilityLabel="Retry loading favorites"
+                        activeOpacity={0.8}
                       >
-                        <View style={styles.cardHeaderRow}>
-                          <Text style={styles.cardShopName} numberOfLines={1}>
-                            {item.name}
-                          </Text>
-                          <Text style={styles.heartIcon}>♥</Text>
-                        </View>
-                        <View style={styles.metaRow}>
-                          <Text style={styles.ratingText}>{ratingText}</Text>
-                          {Boolean(distText) && <Text style={styles.dot}>•</Text>}
-                          {Boolean(distText) && (
-                            <Text style={styles.distanceText}>{distText}</Text>
-                          )}
-                        </View>
-                        {item.address ? (
-                          <Text style={styles.cardAddress} numberOfLines={1}>
-                            {item.address}
-                          </Text>
-                        ) : (
-                          <Text style={styles.cardAddressMuted}>
-                            Address not available
-                          </Text>
-                        )}
+                        <Text style={styles.retryButtonText}>Retry</Text>
                       </TouchableOpacity>
-                    );
-                  }}
-                />
+                    </View>
+                  )}
+
+                  {/* Empty State */}
+                  {!isLoading && !errorMessage && favorites.length === 0 && (
+                    <View style={styles.emptyContainer}>
+                      <Text style={styles.emptyIcon}>☕</Text>
+                      <Text style={styles.emptyTitle}>No saved coffee shops yet</Text>
+                      <Text style={styles.emptySubtitle}>
+                        Tap the heart icon on any coffee shop to save it to your favorites.
+                      </Text>
+                    </View>
+                  )}
+
+                  {/* Favorites List */}
+                  {!isLoading && !errorMessage && favorites.length > 0 && (
+                    <FlatList
+                      data={favorites}
+                      keyExtractor={(item) => item.id}
+                      contentContainerStyle={styles.listContent}
+                      renderItem={({ item }) => {
+                        let distText = '';
+                        if (userLocation) {
+                          const dist = calculateDistanceMeters(
+                            userLocation.latitude,
+                            userLocation.longitude,
+                            item.latitude,
+                            item.longitude
+                          );
+                          distText = formatDistance(dist);
+                        }
+                        const ratingText = formatRating(item.rating);
+
+                        return (
+                          <TouchableOpacity
+                            style={styles.favoriteCard}
+                            onPress={() => handleOpenShopDetail(item)}
+                            accessibilityRole="button"
+                            accessibilityLabel={`Open ${item.name} details`}
+                            activeOpacity={0.7}
+                          >
+                            <View style={styles.cardHeaderRow}>
+                              <Text style={styles.cardShopName} numberOfLines={1}>
+                                {item.name}
+                              </Text>
+                              <Text style={styles.heartIcon}>♥</Text>
+                            </View>
+                            <View style={styles.metaRow}>
+                              <Text style={styles.ratingText}>{ratingText}</Text>
+                              {Boolean(distText) && <Text style={styles.dot}>•</Text>}
+                              {Boolean(distText) && (
+                                <Text style={styles.distanceText}>{distText}</Text>
+                              )}
+                            </View>
+                            {item.address ? (
+                              <Text style={styles.cardAddress} numberOfLines={1}>
+                                {item.address}
+                              </Text>
+                            ) : (
+                              <Text style={styles.cardAddressMuted}>
+                                Address not available
+                              </Text>
+                            )}
+                          </TouchableOpacity>
+                        );
+                      }}
+                    />
+                  )}
+                </>
+              ) : (
+                <>
+                  {/* Claims Section Header */}
+                  <View style={styles.sectionHeader}>
+                    <Text style={styles.sectionTitle}>My Ownership Claims</Text>
+                    {!isClaimsLoading && !claimsErrorMessage && claims.length > 0 && (
+                      <View style={styles.countBadge}>
+                        <Text style={styles.countText}>{claims.length}</Text>
+                      </View>
+                    )}
+                  </View>
+
+                  {/* Claims Loading State */}
+                  {isClaimsLoading && (
+                    <View style={styles.stateContainer}>
+                      <ActivityIndicator size="small" color="#4A2E18" />
+                      <Text style={styles.stateText}>Loading your claims...</Text>
+                    </View>
+                  )}
+
+                  {/* Claims Error State */}
+                  {claimsErrorMessage && !isClaimsLoading && (
+                    <View style={styles.stateContainer}>
+                      <Text style={styles.errorText}>{claimsErrorMessage}</Text>
+                      <TouchableOpacity
+                        style={styles.retryButton}
+                        onPress={loadClaims}
+                        accessibilityRole="button"
+                        accessibilityLabel="Retry loading claims"
+                        activeOpacity={0.8}
+                      >
+                        <Text style={styles.retryButtonText}>Retry</Text>
+                      </TouchableOpacity>
+                    </View>
+                  )}
+
+                  {/* Claims Empty State */}
+                  {!isClaimsLoading && !claimsErrorMessage && claims.length === 0 && (
+                    <View style={styles.emptyContainer}>
+                      <Text style={styles.emptyIcon}>📋</Text>
+                      <Text style={styles.emptyTitle}>No ownership claims yet</Text>
+                      <Text style={styles.emptySubtitle}>
+                        Are you a coffee shop owner or manager? You can submit an ownership claim directly from any coffee shop detail page.
+                      </Text>
+                    </View>
+                  )}
+
+                  {/* Claims List */}
+                  {!isClaimsLoading && !claimsErrorMessage && claims.length > 0 && (
+                    <FlatList
+                      data={claims}
+                      keyExtractor={(item) => item.id}
+                      contentContainerStyle={styles.listContent}
+                      renderItem={({ item }) => {
+                        const getStatusConfig = (status: ShopClaim['status']) => {
+                          switch (status) {
+                            case 'APPROVED':
+                              return {
+                                label: 'Verified Owner',
+                                badgeStyle: styles.badgeApproved,
+                                textStyle: styles.badgeTextApproved,
+                              };
+                            case 'PENDING':
+                              return {
+                                label: 'Under Review',
+                                badgeStyle: styles.badgePending,
+                                textStyle: styles.badgeTextPending,
+                              };
+                            case 'REJECTED':
+                              return {
+                                label: 'Claim Rejected',
+                                badgeStyle: styles.badgeRejected,
+                                textStyle: styles.badgeTextRejected,
+                              };
+                            case 'REVOKED':
+                              return {
+                                label: 'Claim Revoked',
+                                badgeStyle: styles.badgeRevoked,
+                                textStyle: styles.badgeTextRevoked,
+                              };
+                            default:
+                              return {
+                                label: status,
+                                badgeStyle: styles.badgeDefault,
+                                textStyle: styles.badgeTextDefault,
+                              };
+                          }
+                        };
+
+                        const config = getStatusConfig(item.status);
+                        const formattedDate = new Date(item.created_at).toLocaleDateString(undefined, {
+                          year: 'numeric',
+                          month: 'short',
+                          day: 'numeric',
+                        });
+
+                        return (
+                          <View style={styles.claimCard}>
+                            <View style={styles.claimHeaderRow}>
+                              <View style={[styles.statusBadge, config.badgeStyle]}>
+                                <Text style={[styles.statusBadgeText, config.textStyle]}>
+                                  {config.label}
+                                </Text>
+                              </View>
+                              <Text style={styles.claimDateText}>{formattedDate}</Text>
+                            </View>
+
+                            <View style={styles.claimMetaRow}>
+                              <Text style={styles.claimantText}>
+                                Claimed as <Text style={styles.claimantBold}>{item.claimant_name}</Text> ({item.claimant_role})
+                              </Text>
+                            </View>
+
+                            {item.rejection_reason ? (
+                              <View style={styles.rejectionBox}>
+                                <Text style={styles.rejectionLabel}>Review Note:</Text>
+                                <Text style={styles.rejectionText}>{item.rejection_reason}</Text>
+                              </View>
+                            ) : null}
+
+                            {item.status === 'APPROVED' ? (
+                              <TouchableOpacity
+                                style={styles.dashboardButton}
+                                onPress={() => setOwnerDashboardShopId(item.shop_id)}
+                                accessibilityRole="button"
+                                accessibilityLabel="Open Owner Dashboard"
+                                activeOpacity={0.8}
+                              >
+                                <Text style={styles.dashboardButtonText}>Open Owner Dashboard →</Text>
+                              </TouchableOpacity>
+                            ) : null}
+                          </View>
+                        );
+                      }}
+                    />
+                  )}
+                </>
               )}
             </>
           )}
+
+          {/* Owner Dashboard Modal */}
+          <OwnerDashboardModal
+            visible={Boolean(ownerDashboardShopId)}
+            shopId={ownerDashboardShopId || ''}
+            authToken={authToken}
+            onClose={() => setOwnerDashboardShopId(null)}
+          />
         </View>
       </SafeAreaView>
     </Modal>
@@ -529,5 +796,162 @@ const styles = StyleSheet.create({
     color: '#4A2E18',
     fontSize: 14,
     fontWeight: '600',
+  },
+  tabContainer: {
+    flexDirection: 'row',
+    marginTop: 18,
+    marginBottom: 6,
+    backgroundColor: '#EFEAE4',
+    borderRadius: 10,
+    padding: 3,
+    gap: 4,
+  },
+  tabButton: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    gap: 6,
+  },
+  tabButtonActive: {
+    backgroundColor: '#FFFFFF',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.1,
+    shadowRadius: 2,
+    elevation: 2,
+  },
+  tabButtonText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#8A7E72',
+  },
+  tabButtonTextActive: {
+    color: '#4A2E18',
+  },
+  tabBadge: {
+    backgroundColor: '#DCD4CB',
+    borderRadius: 8,
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+  },
+  tabBadgeActive: {
+    backgroundColor: '#4A2E18',
+  },
+  tabBadgeText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#6B5E55',
+  },
+  tabBadgeTextActive: {
+    color: '#FAF8F5',
+  },
+  claimCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: '#EFEAE4',
+    gap: 10,
+  },
+  claimHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  statusBadge: {
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 6,
+  },
+  statusBadgeText: {
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  badgeApproved: {
+    backgroundColor: '#DEF7EC',
+    borderWidth: 1,
+    borderColor: '#BCF0DA',
+  },
+  badgeTextApproved: {
+    color: '#03543F',
+  },
+  badgePending: {
+    backgroundColor: '#FEF3C7',
+    borderWidth: 1,
+    borderColor: '#FDE68A',
+  },
+  badgeTextPending: {
+    color: '#92400E',
+  },
+  badgeRejected: {
+    backgroundColor: '#FDE8E8',
+    borderWidth: 1,
+    borderColor: '#FBD5D5',
+  },
+  badgeTextRejected: {
+    color: '#9B1C1C',
+  },
+  badgeRevoked: {
+    backgroundColor: '#F3F4F6',
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+  },
+  badgeTextRevoked: {
+    color: '#4B5563',
+  },
+  badgeDefault: {
+    backgroundColor: '#EFEAE4',
+  },
+  badgeTextDefault: {
+    color: '#4A2E18',
+  },
+  claimDateText: {
+    fontSize: 12,
+    color: '#8A7E72',
+  },
+  claimMetaRow: {
+    marginTop: 2,
+  },
+  claimantText: {
+    fontSize: 14,
+    color: '#6B5E55',
+  },
+  claimantBold: {
+    fontWeight: '600',
+    color: '#2C1810',
+  },
+  rejectionBox: {
+    backgroundColor: '#FAF5F5',
+    borderRadius: 8,
+    padding: 10,
+    borderWidth: 1,
+    borderColor: '#F5E6E6',
+  },
+  rejectionLabel: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#8A3B28',
+    marginBottom: 2,
+  },
+  rejectionText: {
+    fontSize: 13,
+    color: '#5C382C',
+  },
+  dashboardButton: {
+    backgroundColor: '#4A2E18',
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    borderRadius: 8,
+    alignItems: 'center',
+    marginTop: 4,
+  },
+  dashboardButtonText: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '700',
   },
 });

@@ -253,7 +253,11 @@ class CurationService:
                 detail="A database error occurred while saving evaluation results.",
             ) from exc
 
-        # 5. Log audit record
+        # 5. Note: Active approved owner claims are atomically revoked by the database trigger
+        # `trg_revoke_claims_on_curation_demotion` in the exact same transaction as the
+        # `shop_curation` update above, guaranteeing that both succeed or neither commits.
+
+        # 6. Log audit record
         audit_payload = {
             "shop_id": str(shop_id),
             "old_status": current_curation.get("status") if current_curation else None,
@@ -274,6 +278,7 @@ class CurationService:
             ) from exc
 
         return CurationEvaluationResponse(
+
             shop_id=str(shop_id),
             status=decision.status,
             location_count=decision.location_count,
@@ -329,7 +334,11 @@ class CurationService:
                 detail="A database error occurred while saving manual override.",
             )
 
-        # 4. Insert audit record
+        # 4. Note: Active approved owner claims are atomically revoked by the database trigger
+        # `trg_revoke_claims_on_curation_demotion` in the exact same transaction as the
+        # `shop_curation` update above, guaranteeing that both succeed or neither commits.
+
+        # 5. Insert audit record
         audit_payload = {
             "shop_id": str(shop_id),
             "old_status": current.get("status") if current else None,
@@ -350,3 +359,4 @@ class CurationService:
             ) from exc
 
         return ShopCurationResponse.model_validate(updated_record)
+

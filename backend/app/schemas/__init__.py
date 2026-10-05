@@ -6,6 +6,13 @@ from .auth import (
     SessionResponse,
     UserResponse,
 )
+from .claim import (
+    ClaimCreate,
+    ClaimReviewRequest,
+    ShopClaimDetailResponse,
+    ShopClaimResponse,
+    ShopClaimStatus,
+)
 from .curation import (
     CurationConfidence,
     CurationEvaluationResponse,
@@ -14,6 +21,10 @@ from .curation import (
     ShopEligibilityStatus,
 )
 from .favorite import FavoriteShopResponse, FavoriteStatusResponse
+from .owner import (
+    OwnerDashboardResponse,
+    OwnerShopUpdate,
+)
 from .review import (
     ProviderAttribution,
     RecommendationItem,
@@ -71,4 +82,12 @@ __all__ = [
     "CurationEvaluationResponse",
     "FavoriteStatusResponse",
     "FavoriteShopResponse",
+    "ShopClaimStatus",
+    "ClaimCreate",
+    "ClaimReviewRequest",
+    "ShopClaimResponse",
+    "ShopClaimDetailResponse",
+    "OwnerShopUpdate",
+    "OwnerDashboardResponse",
 ]
+
