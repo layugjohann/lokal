@@ -103,9 +103,12 @@ export default function ProfileView({
   // Reset selected shop & claims when profile closes or auth token becomes unavailable
   useEffect(() => {
     if (!visible || !authToken) {
+      claimsRequestId.current += 1;
       setSelectedFavoriteShop(null);
       setOwnerDashboardShopId(null);
       setClaims([]);
+      setIsClaimsLoading(false);
+      setClaimsErrorMessage(null);
     }
   }, [visible, authToken]);
 

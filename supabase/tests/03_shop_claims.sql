@@ -3,7 +3,7 @@
 -- and executable allow/deny behavior across anon, authenticated (ordinary & curator), and service roles.
 
 BEGIN;
-SELECT plan(18);
+SELECT plan(24);
 
 -- ============================================================================
 -- 0. Seed test fixtures (runs as postgres/superuser within transaction)
@@ -11,7 +11,8 @@ SELECT plan(18);
 INSERT INTO auth.users (id, email) VALUES
     ('11111111-1111-1111-1111-111111111111', 'user_a@example.com'),
     ('22222222-2222-2222-2222-222222222222', 'user_b@example.com'),
-    ('33333333-3333-3333-3333-333333333333', 'curator@example.com')
+    ('33333333-3333-3333-3333-333333333333', 'curator@example.com'),
+    ('44444444-4444-4444-4444-444444444444', 'user_d@example.com')
 ON CONFLICT (id) DO NOTHING;
 
 INSERT INTO shops (id, name, address, latitude, longitude) VALUES
@@ -225,4 +226,84 @@ SELECT results_eq(
     'Curation status remained APPROVED after failed atomic revocation transaction'
 );
 
+-- ============================================================================
+-- 7. Claim Approval Serialization & Coordination Tests
+-- ============================================================================
+-- Seed shop 4 (APPROVED) and pending claims 4 and 5
+INSERT INTO shops (id, name, address, latitude, longitude) VALUES
+    ('a0000000-0000-0000-0000-000000000004', 'Approved Cafe 4', '101 Fourth St', 14.5610, 121.0360)
+ON CONFLICT (id) DO NOTHING;
+
+INSERT INTO shop_curation (shop_id, status) VALUES
+    ('a0000000-0000-0000-0000-000000000004', 'APPROVED')
+ON CONFLICT (shop_id) DO NOTHING;
+
+INSERT INTO shop_claims (id, shop_id, user_id, status, claimant_name, claimant_role) VALUES
+    ('c0000000-0000-0000-0000-000000000004', 'a0000000-0000-0000-0000-000000000004', '11111111-1111-1111-1111-111111111111', 'PENDING', 'Owner D', 'Owner'),
+    ('c0000000-0000-0000-0000-000000000005', 'a0000000-0000-0000-0000-000000000004', '22222222-2222-2222-2222-222222222222', 'PENDING', 'Compete D', 'Manager')
+ON CONFLICT (id) DO NOTHING;
+
+-- 1. Normal approval of a currently APPROVED shop succeeds via approve_shop_claim
+SELECT lives_ok(
+    'SELECT approve_shop_claim(''c0000000-0000-0000-0000-000000000004'', ''33333333-3333-3333-3333-333333333333'', ''Approved by curator'')',
+    'approve_shop_claim succeeds for pending claim on APPROVED shop'
+);
+
+-- 2. Competing approval for same shop violates idx_unique_approved_claim_per_shop (23505)
+SELECT throws_ok(
+    'SELECT approve_shop_claim(''c0000000-0000-0000-0000-000000000005'', ''33333333-3333-3333-3333-333333333333'', ''Competing approval'')',
+    '23505',
+    NULL,
+    'approve_shop_claim raises 23505 when shop already has an approved claim'
+);
+
+-- Demote shop 4 to EXCLUDED
+UPDATE shop_curation SET status = 'EXCLUDED' WHERE shop_id = 'a0000000-0000-0000-0000-000000000004';
+
+-- 3. Attempting to approve claim on demoted (EXCLUDED) shop fails with P0001
+SELECT throws_ok(
+    'SELECT approve_shop_claim(''c0000000-0000-0000-0000-000000000005'', ''33333333-3333-3333-3333-333333333333'', ''Late approval'')',
+    'P0001',
+    'Cannot approve claim: coffee shop is not currently approved for public discovery.',
+    'approve_shop_claim fails with P0001 when target shop is not APPROVED'
+);
+
+-- 4. Direct UPDATE of claim status to APPROVED on demoted shop is rejected by trg_check_claim_approval_curation
+SELECT throws_ok(
+    'UPDATE shop_claims SET status = ''APPROVED'' WHERE id = ''c0000000-0000-0000-0000-000000000005''',
+    'P0001',
+    'Cannot approve claim: coffee shop is not currently approved for public discovery.',
+    'Direct update to APPROVED on unapproved shop is rejected by database trigger'
+);
+
+-- ============================================================================
+-- 8. Owner Dashboard Review Aggregates RPC Tests
+-- ============================================================================
+-- Seed reviews for shop 4:
+-- 2 valid reviews (5 and 4 stars)
+-- 1 out-of-range rating (6)
+-- 1 null rating
+-- 1 third-party review (source = google)
+INSERT INTO reviews (id, shop_id, user_id, author_name, rating, content, source) VALUES
+    ('b0000000-0000-0000-0000-000000000001', 'a0000000-0000-0000-0000-000000000004', '11111111-1111-1111-1111-111111111111', 'Reviewer 1', 5.0, 'Superb', 'lokal'),
+    ('b0000000-0000-0000-0000-000000000002', 'a0000000-0000-0000-0000-000000000004', '22222222-2222-2222-2222-222222222222', 'Reviewer 2', 4.0, 'Good', 'lokal'),
+    ('b0000000-0000-0000-0000-000000000004', 'a0000000-0000-0000-0000-000000000004', '33333333-3333-3333-3333-333333333333', 'Reviewer 4', NULL, 'No rating', 'lokal'),
+    ('b0000000-0000-0000-0000-000000000005', 'a0000000-0000-0000-0000-000000000004', '44444444-4444-4444-4444-444444444444', 'Reviewer 5', 5.0, 'Google review', 'google')
+ON CONFLICT (id) DO NOTHING;
+
+-- 5. get_shop_review_aggregates returns count=2 and avg=4.50 (excludes null, invalid, third-party)
+SELECT results_eq(
+    'SELECT reviews_count, average_rating FROM get_shop_review_aggregates(''a0000000-0000-0000-0000-000000000004'')',
+    'VALUES (2::bigint, 4.50::numeric)',
+    'get_shop_review_aggregates correctly filters valid first-party reviews and computes count & avg'
+);
+
+-- 6. Shop with no reviews returns count=0 and average_rating IS NULL
+SELECT results_eq(
+    'SELECT reviews_count, average_rating FROM get_shop_review_aggregates(''a0000000-0000-0000-0000-000000000003'')',
+    'VALUES (0::bigint, NULL::numeric)',
+    'get_shop_review_aggregates returns count 0 and NULL avg for unreviewed shop'
+);
+
 ROLLBACK;
+

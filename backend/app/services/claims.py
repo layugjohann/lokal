@@ -257,83 +257,52 @@ class ClaimService:
 
         Translates database partial unique index violations (code 23505) into HTTP 409 Conflict.
         """
-        claim = self.get_claim_detail(claim_id, supabase)
-        if claim.get("status") != "PENDING":
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Cannot approve a claim with status '{claim.get('status')}'. Only PENDING claims can be approved.",
-            )
-
-        shop_id = claim.get("shop_id")
-
-        # Verify shop is currently APPROVED in shop_curation
+        rpc_params = {
+            "p_claim_id": str(claim_id),
+            "p_curator_id": str(curator_id),
+            "p_review_notes": review_notes,
+        }
         try:
-            curation_res = supabase.table("shop_curation").select("status").eq("shop_id", shop_id).execute()
-            curation_status = curation_res.data[0]["status"] if curation_res.data else "PENDING_REVIEW"
-            if curation_status != "APPROVED":
+            res = supabase.rpc("approve_shop_claim", rpc_params).execute()
+            if not res.data:
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail="Failed to approve ownership claim.",
+                )
+            return self.get_claim_detail(claim_id, supabase)
+        except HTTPException:
+            raise
+        except APIError as exc:
+            logger.warning(f"Database error approving claim {claim_id}: {exc.message}")
+            if exc.code == "23505" or "unique constraint" in (exc.message or "").lower():
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="This coffee shop already has an approved owner.",
+                )
+            if exc.code == "P0001" or "not currently approved" in (exc.message or "").lower():
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="Cannot approve claim: coffee shop is not currently approved for public discovery.",
                 )
-        except APIError as exc:
-            logger.error(f"Database error checking curation status for shop {shop_id}: {exc.message}")
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="A database error occurred while verifying shop curation.",
-            )
-
-        # Pre-check for existing approved claim
-        try:
-            existing_approved = (
-                supabase.table("shop_claims")
-                .select("id")
-                .eq("shop_id", shop_id)
-                .eq("status", "APPROVED")
-                .execute()
-            )
-            if existing_approved.data:
-                raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT,
-                    detail="This coffee shop already has an approved owner.",
-                )
-        except APIError as exc:
-            logger.error(f"Database error checking existing approved claims for shop {shop_id}: {exc.message}")
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="A database error occurred while verifying existing claims.",
-            )
-
-        # Attempt status transition with concurrency race protection at DB boundary
-        now_utc = datetime.now(timezone.utc).isoformat()
-        try:
-            update_res = (
-                supabase.table("shop_claims")
-                .update({
-                    "status": "APPROVED",
-                    "curator_id": str(curator_id),
-                    "review_notes": review_notes,
-                    "reviewed_at": now_utc,
-                })
-                .eq("id", str(claim_id))
-                .eq("status", "PENDING")
-                .execute()
-            )
-            if not update_res.data:
+            if exc.code in ("P0003", "P0005") or "status changed" in (exc.message or "").lower() or "only pending" in (exc.message or "").lower():
                 raise HTTPException(
                     status_code=status.HTTP_409_CONFLICT,
                     detail="Claim status changed during review. Reload and try again.",
                 )
-            return self.get_claim_detail(claim_id, supabase)
-        except APIError as exc:
-            logger.warning(f"Database error approving claim {claim_id}: {exc.message}")
-            if exc.code == "23505":
+            if exc.code == "P0002" or "not found" in (exc.message or "").lower():
                 raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT,
-                    detail="This coffee shop already has an approved owner.",
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Ownership claim not found.",
                 )
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="A database error occurred while approving the claim.",
+            )
+        except Exception as exc:
+            logger.error(f"Unexpected error approving claim {claim_id}: {exc}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="An unexpected error occurred while processing the request.",
             )
 
     def reject_claim(

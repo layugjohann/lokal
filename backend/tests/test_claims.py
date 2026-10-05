@@ -119,6 +119,14 @@ class MockSupabaseTable:
         return mock_resp
 
 
+class MockRpcCall:
+    def __init__(self, callback):
+        self._callback = callback
+
+    def execute(self):
+        return self._callback()
+
+
 class MockSupabaseClient:
     def __init__(self, tables=None):
         self._table_data = tables if tables is not None else {}
@@ -129,6 +137,54 @@ class MockSupabaseClient:
             data = self._table_data.setdefault(name, [])
             self._tables[name] = MockSupabaseTable(data)
         return self._tables[name]
+
+    def rpc(self, name, params=None):
+        params = params or {}
+        if name == "approve_shop_claim":
+            def execute():
+                claim_id = str(params.get("p_claim_id"))
+                curator_id = str(params.get("p_curator_id"))
+                review_notes = params.get("p_review_notes")
+
+                claims = self._table_data.get("shop_claims", [])
+                target_claim = None
+                for c in claims:
+                    if str(c.get("id")) == claim_id:
+                        target_claim = c
+                        break
+
+                if not target_claim:
+                    raise APIError({"message": "Ownership claim not found.", "code": "P0002"})
+
+                if target_claim.get("status") != "PENDING":
+                    raise APIError({"message": "Cannot approve claim: only PENDING claims may be approved.", "code": "P0003"})
+
+                shop_id = target_claim.get("shop_id")
+                curations = self._table_data.get("shop_curation", [])
+                curation = next((cur for cur in curations if str(cur.get("shop_id")) == str(shop_id)), None)
+                if not curation or curation.get("status") != "APPROVED":
+                    raise APIError({"message": "Cannot approve claim: coffee shop is not currently approved for public discovery.", "code": "P0001"})
+
+                # Unique constraint check (one approved claim per shop)
+                for c in claims:
+                    if str(c.get("shop_id")) == str(shop_id) and str(c.get("id")) != claim_id and c.get("status") == "APPROVED":
+                        raise APIError({"message": "duplicate key value violates unique constraint idx_unique_approved_claim_per_shop", "code": "23505"})
+
+                target_claim["status"] = "APPROVED"
+                target_claim["curator_id"] = curator_id
+                target_claim["review_notes"] = review_notes
+                target_claim["reviewed_at"] = datetime.now(timezone.utc).isoformat()
+                target_claim["updated_at"] = datetime.now(timezone.utc).isoformat()
+
+                resp = MagicMock()
+                resp.data = [target_claim]
+                return resp
+
+            return MockRpcCall(execute)
+
+        resp = MagicMock()
+        resp.data = []
+        return MockRpcCall(lambda: resp)
 
 
 
@@ -447,14 +503,13 @@ class TestClaimEndpoints(unittest.TestCase):
             "claimant_role": "Owner",
         })
 
-        with patch.object(self.mock_supabase.table("shop_claims"), "update") as mock_update:
+        with patch.object(self.mock_supabase, "rpc") as mock_rpc:
             mock_builder = MagicMock()
-            mock_builder.eq.return_value = mock_builder
             mock_builder.execute.side_effect = APIError({
                 "message": "duplicate key value violates unique constraint idx_unique_approved_claim_per_shop",
                 "code": "23505",
             })
-            mock_update.return_value = mock_builder
+            mock_rpc.return_value = mock_builder
             res = self.client.post(f"/api/v1/claims/{claim_id}/approve", json={})
             self.assertEqual(res.status_code, 409)
             self.assertIn("already has an approved owner", res.json()["detail"])
@@ -570,15 +625,46 @@ class TestClaimEndpoints(unittest.TestCase):
             "updated_at": datetime.now(timezone.utc).isoformat(),
         })
 
-        with patch.object(self.mock_supabase.table("shop_claims"), "update") as mock_update:
+        with patch.object(self.mock_supabase, "rpc") as mock_rpc:
             mock_builder = MagicMock()
-            mock_builder.eq.return_value = mock_builder
-            mock_builder.execute.return_value = MagicMock(data=[])
-            mock_update.return_value = mock_builder
+            mock_builder.execute.side_effect = APIError({
+                "message": "Claim status changed during review. Reload and try again.",
+                "code": "P0005",
+            })
+            mock_rpc.return_value = mock_builder
 
             res = self.client.post(f"/api/v1/claims/{claim_id}/approve", json={})
             self.assertEqual(res.status_code, 409)
             self.assertIn("Claim status changed during review", res.json()["detail"])
+
+    def test_curator_approve_claim_demoted_or_unapproved_shop_returns_400(self):
+        """Code P0001: Attempting to approve a claim for a non-approved shop returns 400 Bad Request."""
+        app.dependency_overrides[get_current_user] = lambda: self.curator_user
+        claim_id = str(uuid4())
+        self.claims_data.append({
+            "id": claim_id,
+            "shop_id": self.shop_id,
+            "user_id": self.user_id,
+            "status": "PENDING",
+            "claimant_name": "Applicant",
+            "claimant_role": "Owner",
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        })
+        # Set curation to EXCLUDED
+        self.curation_data[0]["status"] = "EXCLUDED"
+
+        res = self.client.post(f"/api/v1/claims/{claim_id}/approve", json={})
+        self.assertEqual(res.status_code, 400)
+        self.assertIn("not currently approved for public discovery", res.json()["detail"])
+
+    def test_curator_approve_claim_not_found_returns_404(self):
+        """Code P0002: Attempting to approve a nonexistent claim returns 404 Not Found."""
+        app.dependency_overrides[get_current_user] = lambda: self.curator_user
+        non_existent_claim_id = str(uuid4())
+        res = self.client.post(f"/api/v1/claims/{non_existent_claim_id}/approve", json={})
+        self.assertEqual(res.status_code, 404)
+        self.assertIn("Ownership claim not found", res.json()["detail"])
 
     def test_curator_reject_claim_status_changed_conflict_409(self):
         """Item 3: If claim status changed from PENDING concurrently, rejection returns 409 Conflict."""

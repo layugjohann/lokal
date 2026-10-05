@@ -245,3 +245,165 @@ test('ShopClaimController setClaim updates state directly', () => {
   assert.deepStrictEqual(controller.getState().claim, mockClaim);
   assert.strictEqual(controller.getState().errorMessage, null);
 });
+
+// ============================================================================
+// ProfileView Claims Request Invalidation & Reset Tests
+// ============================================================================
+
+class ProfileClaimsLifecycleManager {
+  constructor(fetchClaimsFn) {
+    this.fetchClaimsFn = fetchClaimsFn;
+    this.claimsRequestId = 0;
+    this.claims = [];
+    this.isClaimsLoading = false;
+    this.claimsErrorMessage = null;
+    this.selectedFavoriteShop = null;
+    this.ownerDashboardShopId = null;
+  }
+
+  async loadClaims(authToken) {
+    if (!authToken) {
+      this.claims = [];
+      this.isClaimsLoading = false;
+      return;
+    }
+
+    const requestId = ++this.claimsRequestId;
+    this.isClaimsLoading = true;
+    this.claimsErrorMessage = null;
+
+    try {
+      const claimsData = await this.fetchClaimsFn(authToken);
+      if (requestId === this.claimsRequestId) {
+        this.claims = claimsData;
+        this.isClaimsLoading = false;
+      }
+    } catch (err) {
+      if (requestId === this.claimsRequestId) {
+        const message = err instanceof Error ? err.message : 'Failed to load your claims.';
+        this.claimsErrorMessage = message;
+        this.isClaimsLoading = false;
+      }
+    }
+  }
+
+  handleVisibilityOrAuthChange(visible, authToken) {
+    if (!visible || !authToken) {
+      this.claimsRequestId += 1;
+      this.selectedFavoriteShop = null;
+      this.ownerDashboardShopId = null;
+      this.claims = [];
+      this.isClaimsLoading = false;
+      this.claimsErrorMessage = null;
+    }
+  }
+}
+
+test('ProfileView claims loading: normal claim loading succeeds when current', async () => {
+  const mockClaims = [
+    {
+      id: 'claim-1',
+      shop_id: 'shop-1',
+      status: 'APPROVED',
+      claimant_name: 'Owner Alice',
+      claimant_role: 'Owner',
+      rejection_reason: null,
+      created_at: '2026-10-06T00:00:00Z',
+      updated_at: '2026-10-06T00:00:00Z',
+    },
+  ];
+
+  const manager = new ProfileClaimsLifecycleManager(async () => mockClaims);
+  await manager.loadClaims('token-123');
+
+  assert.strictEqual(manager.isClaimsLoading, false);
+  assert.strictEqual(manager.claimsErrorMessage, null);
+  assert.deepStrictEqual(manager.claims, mockClaims);
+});
+
+test('ProfileView claims loading: profile close (!visible) invalidates in-flight fetch and prevents stale claims from populating', async () => {
+  let resolveFetch;
+  const inFlightPromise = new Promise((resolve) => {
+    resolveFetch = resolve;
+  });
+
+  const manager = new ProfileClaimsLifecycleManager(async () => inFlightPromise);
+
+  // 1. Start loading claims while modal is visible
+  const loadPromise = manager.loadClaims('token-123');
+  assert.strictEqual(manager.isClaimsLoading, true);
+
+  // 2. User closes profile modal before network fetch completes (visible -> false)
+  manager.handleVisibilityOrAuthChange(false, 'token-123');
+
+  // Modal reset immediately cleared claims state
+  assert.strictEqual(manager.isClaimsLoading, false);
+  assert.deepStrictEqual(manager.claims, []);
+
+  // 3. Network fetch resolves late
+  resolveFetch([
+    {
+      id: 'stale-claim',
+      shop_id: 'shop-1',
+      status: 'APPROVED',
+      claimant_name: 'Late Owner',
+      claimant_role: 'Owner',
+    },
+  ]);
+  await loadPromise;
+
+  // In-flight response must be discarded because claimsRequestId was incremented on close
+  assert.deepStrictEqual(manager.claims, []);
+  assert.strictEqual(manager.isClaimsLoading, false);
+});
+
+test('ProfileView claims loading: auth token loss (!authToken) invalidates in-flight fetch and prevents stale claims from populating', async () => {
+  let resolveFetch;
+  const inFlightPromise = new Promise((resolve) => {
+    resolveFetch = resolve;
+  });
+
+  const manager = new ProfileClaimsLifecycleManager(async () => inFlightPromise);
+
+  // 1. Start loading claims
+  const loadPromise = manager.loadClaims('token-123');
+  assert.strictEqual(manager.isClaimsLoading, true);
+
+  // 2. Auth token becomes null (e.g. logout or session expiry)
+  manager.handleVisibilityOrAuthChange(true, null);
+
+  assert.strictEqual(manager.isClaimsLoading, false);
+  assert.deepStrictEqual(manager.claims, []);
+
+  // 3. Late network response resolves
+  resolveFetch([{ id: 'unauthorized-claim', shop_id: 'shop-1', status: 'PENDING' }]);
+  await loadPromise;
+
+  // Late response must not populate claims
+  assert.deepStrictEqual(manager.claims, []);
+  assert.strictEqual(manager.isClaimsLoading, false);
+});
+
+test('ProfileView claims loading: error from in-flight request is discarded if profile closes before error occurs', async () => {
+  let rejectFetch;
+  const inFlightPromise = new Promise((_, reject) => {
+    rejectFetch = reject;
+  });
+
+  const manager = new ProfileClaimsLifecycleManager(async () => inFlightPromise);
+
+  const loadPromise = manager.loadClaims('token-123');
+  assert.strictEqual(manager.isClaimsLoading, true);
+
+  // Profile closes
+  manager.handleVisibilityOrAuthChange(false, 'token-123');
+
+  // Network fails after close
+  rejectFetch(new Error('Network error'));
+  await loadPromise;
+
+  // Stale error must not leak into component state
+  assert.strictEqual(manager.claimsErrorMessage, null);
+  assert.strictEqual(manager.isClaimsLoading, false);
+});
+

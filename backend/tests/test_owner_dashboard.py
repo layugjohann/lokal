@@ -167,6 +167,14 @@ class MockSupabaseTable:
         return mock_resp
 
 
+class MockRpcCall:
+    def __init__(self, callback):
+        self._callback = callback
+
+    def execute(self):
+        return self._callback()
+
+
 class MockSupabaseClient:
     def __init__(self, tables=None):
         self._table_data = tables if tables is not None else {}
@@ -178,6 +186,36 @@ class MockSupabaseClient:
             data = self._table_data.setdefault(name, [])
             self._tables[name] = MockSupabaseTable(data, name=name, client=self)
         return self._tables[name]
+
+    def rpc(self, name, params=None):
+        params = params or {}
+        if name == "get_shop_review_aggregates":
+            def execute():
+                p_shop_id = params.get("p_shop_id")
+                reviews = self._table_data.get("reviews", [])
+                valid_reviews = [
+                    r for r in reviews
+                    if str(r.get("shop_id")) == str(p_shop_id)
+                    and r.get("source") == "lokal"
+                    and r.get("rating") is not None
+                    and isinstance(r.get("rating"), (int, float))
+                    and not isinstance(r.get("rating"), bool)
+                    and 1.0 <= float(r["rating"]) <= 5.0
+                ]
+                resp = MagicMock()
+                if valid_reviews:
+                    count = len(valid_reviews)
+                    avg = round(sum(float(r["rating"]) for r in valid_reviews) / count, 2)
+                    resp.data = [{"reviews_count": count, "average_rating": avg}]
+                else:
+                    resp.data = [{"reviews_count": 0, "average_rating": None}]
+                return resp
+
+            return MockRpcCall(execute)
+
+        resp = MagicMock()
+        resp.data = []
+        return MockRpcCall(lambda: resp)
 
 
 class TestOwnerDashboardEndpoints(unittest.TestCase):

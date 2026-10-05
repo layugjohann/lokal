@@ -96,33 +96,17 @@ class OwnerService:
                 detail="A database error occurred while retrieving coffee shop data.",
             )
 
-        # 1. Fetch lightweight rating aggregates across all valid first-party reviews
+        # 1. Fetch review aggregates directly from PostgreSQL (avoids loading all ratings into memory)
         try:
-            ratings_res = (
-                supabase.table("reviews")
-                .select("rating")
-                .eq("shop_id", str_shop_id)
-                .eq("source", "lokal")
-                .execute()
-            )
-            raw_ratings = ratings_res.data or []
-        except APIError as exc:
-            logger.error(f"Database error retrieving review ratings for shop {str_shop_id}: {exc.message}")
-            raw_ratings = []
-
-        # Validate numeric ratings (1.0 to 5.0) for aggregate metrics
-        valid_ratings = [
-            float(r["rating"])
-            for r in raw_ratings
-            if r.get("rating") is not None
-            and isinstance(r.get("rating"), (int, float))
-            and not isinstance(r.get("rating"), bool)
-            and 1.0 <= float(r["rating"]) <= 5.0
-        ]
-        lokal_reviews_count = len(valid_ratings)
-        lokal_rating: Optional[float] = None
-        if lokal_reviews_count > 0:
-            lokal_rating = round(sum(valid_ratings) / lokal_reviews_count, 2)
+            agg_res = supabase.rpc("get_shop_review_aggregates", {"p_shop_id": str_shop_id}).execute()
+            agg_row = agg_res.data[0] if (agg_res.data and len(agg_res.data) > 0) else {}
+            lokal_reviews_count = int(agg_row.get("reviews_count") or 0)
+            raw_avg = agg_row.get("average_rating")
+            lokal_rating: Optional[float] = float(raw_avg) if raw_avg is not None else None
+        except (APIError, Exception) as exc:
+            logger.error(f"Database error retrieving review aggregates for shop {str_shop_id}: {exc}")
+            lokal_reviews_count = 0
+            lokal_rating = None
 
         # 2. Fetch bounded recent reviews (top 5 valid reviews, stripping user UUIDs and emails)
         try:
