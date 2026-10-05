@@ -90,10 +90,14 @@ CREATE POLICY "Allow service role full access on shop_claims" ON shop_claims
 -- If revocation fails, the entire transaction rolls back and curation status does not commit.
 -- Restoration back to APPROVED does not resurrect revoked claims.
 CREATE OR REPLACE FUNCTION revoke_approved_claims_on_curation_demotion()
-RETURNS TRIGGER AS $$
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
 BEGIN
     IF OLD.status = 'APPROVED' AND NEW.status != 'APPROVED' THEN
-        UPDATE shop_claims
+        UPDATE public.shop_claims
         SET status = 'REVOKED',
             review_notes = COALESCE(
                 'Automatically revoked due to coffee shop curation status change to ' || NEW.status || '.',
@@ -105,7 +109,7 @@ BEGIN
     END IF;
     RETURN NEW;
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
+$$;
 
 DROP TRIGGER IF EXISTS trg_revoke_claims_on_curation_demotion ON shop_curation;
 CREATE TRIGGER trg_revoke_claims_on_curation_demotion
@@ -122,15 +126,19 @@ CREATE TRIGGER trg_revoke_claims_on_curation_demotion
 -- race conditions between approval and concurrent curation demotions.
 
 CREATE OR REPLACE FUNCTION check_claim_approval_shop_curation()
-RETURNS TRIGGER AS $$
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
 DECLARE
-    v_curation_status shop_eligibility_status;
+    v_curation_status public.shop_eligibility_status;
 BEGIN
     IF NEW.status = 'APPROVED' AND (OLD IS NULL OR OLD.status != 'APPROVED') THEN
         -- Coordinate with curation at the database boundary:
         -- Lock the shop_curation row FOR SHARE to serialize against concurrent curation transitions.
         SELECT status INTO v_curation_status
-        FROM shop_curation
+        FROM public.shop_curation
         WHERE shop_id = NEW.shop_id
         FOR SHARE;
 
@@ -141,7 +149,7 @@ BEGIN
     END IF;
     RETURN NEW;
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
+$$;
 
 DROP TRIGGER IF EXISTS trg_check_claim_approval_curation ON shop_claims;
 CREATE TRIGGER trg_check_claim_approval_curation
@@ -150,20 +158,25 @@ CREATE TRIGGER trg_check_claim_approval_curation
     WHEN (NEW.status = 'APPROVED' AND OLD.status != 'APPROVED')
     EXECUTE FUNCTION check_claim_approval_shop_curation();
 
--- Dedicated atomic approval RPC establishing a curation-first serialization boundary
+-- Dedicated atomic approval RPC establishing a curation-first serialization boundary.
+-- Privileged operation executable strictly by service_role via backend curator endpoint.
 CREATE OR REPLACE FUNCTION approve_shop_claim(
     p_claim_id UUID,
     p_curator_id UUID,
     p_review_notes TEXT DEFAULT NULL
 )
-RETURNS shop_claims AS $$
+RETURNS shop_claims
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
 DECLARE
-    v_claim shop_claims;
-    v_curation_status shop_eligibility_status;
+    v_claim public.shop_claims;
+    v_curation_status public.shop_eligibility_status;
 BEGIN
     -- 1. Fetch claim and ensure it exists and is currently PENDING
     SELECT * INTO v_claim
-    FROM shop_claims
+    FROM public.shop_claims
     WHERE id = p_claim_id;
 
     IF NOT FOUND THEN
@@ -179,7 +192,7 @@ BEGIN
     -- 2. Lock the target shop_curation row FOR UPDATE to establish serialization boundary
     -- against concurrent curation demotions.
     SELECT status INTO v_curation_status
-    FROM shop_curation
+    FROM public.shop_curation
     WHERE shop_id = v_claim.shop_id
     FOR UPDATE;
 
@@ -191,7 +204,7 @@ BEGIN
     -- 3. Atomically transition claim from PENDING to APPROVED
     -- If another claim was concurrently approved for this shop, idx_unique_approved_claim_per_shop
     -- will throw 23505 (unique_violation), preserving the partial unique index authority.
-    UPDATE shop_claims
+    UPDATE public.shop_claims
     SET status = 'APPROVED',
         curator_id = p_curator_id,
         review_notes = p_review_notes,
@@ -208,9 +221,13 @@ BEGIN
 
     RETURN v_claim;
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
+$$;
 
-GRANT EXECUTE ON FUNCTION approve_shop_claim(UUID, UUID, TEXT) TO authenticated, service_role;
+-- Explicitly revoke execution from PUBLIC, anon, and authenticated roles
+REVOKE ALL ON FUNCTION approve_shop_claim(UUID, UUID, TEXT) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION approve_shop_claim(UUID, UUID, TEXT) FROM anon;
+REVOKE EXECUTE ON FUNCTION approve_shop_claim(UUID, UUID, TEXT) FROM authenticated;
+GRANT EXECUTE ON FUNCTION approve_shop_claim(UUID, UUID, TEXT) TO service_role;
 
 -- ============================================================================
 -- 7. Owner Dashboard Review Aggregates RPC
@@ -221,20 +238,25 @@ CREATE OR REPLACE FUNCTION get_shop_review_aggregates(p_shop_id UUID)
 RETURNS TABLE (
     reviews_count BIGINT,
     average_rating NUMERIC
-) AS $$
+)
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
 BEGIN
     RETURN QUERY
     SELECT
         COUNT(*)::BIGINT AS reviews_count,
         ROUND(AVG(rating)::numeric, 2) AS average_rating
-    FROM reviews
+    FROM public.reviews
     WHERE shop_id = p_shop_id
       AND source = 'lokal'
       AND rating IS NOT NULL
       AND rating >= 1.0
       AND rating <= 5.0;
 END;
-$$ LANGUAGE plpgsql STABLE SECURITY DEFINER;
+$$;
 
 GRANT EXECUTE ON FUNCTION get_shop_review_aggregates(UUID) TO authenticated, service_role;
 

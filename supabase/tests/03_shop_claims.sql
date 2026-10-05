@@ -3,7 +3,7 @@
 -- and executable allow/deny behavior across anon, authenticated (ordinary & curator), and service roles.
 
 BEGIN;
-SELECT plan(24);
+SELECT plan(27);
 
 -- ============================================================================
 -- 0. Seed test fixtures (runs as postgres/superuser within transaction)
@@ -59,6 +59,14 @@ SELECT throws_ok(
     'anon is denied INSERT on shop_claims'
 );
 
+-- Anon is denied EXECUTE on approve_shop_claim
+SELECT throws_ok(
+    'SELECT approve_shop_claim(''c0000000-0000-0000-0000-000000000002'', ''33333333-3333-3333-3333-333333333333'', ''Anon attempt'')',
+    '42501',
+    NULL,
+    'anon is denied EXECUTE on approve_shop_claim'
+);
+
 -- ============================================================================
 -- 3. Authenticated Ordinary User (User A) Verification
 -- ============================================================================
@@ -104,6 +112,14 @@ SELECT throws_ok(
     'authenticated is denied direct DELETE on shop_claims'
 );
 
+-- User A is denied direct EXECUTE on approve_shop_claim
+SELECT throws_ok(
+    'SELECT approve_shop_claim(''c0000000-0000-0000-0000-000000000002'', ''33333333-3333-3333-3333-333333333333'', ''User A attempt'')',
+    '42501',
+    NULL,
+    'authenticated is denied direct EXECUTE on approve_shop_claim'
+);
+
 -- ============================================================================
 -- 4. Curator User Verification
 -- ============================================================================
@@ -117,6 +133,14 @@ SELECT results_eq(
     'SELECT count(*)::integer FROM shop_claims',
     ARRAY[2],
     'Curator can view all claims across all users'
+);
+
+-- Curator connecting under authenticated role is denied direct EXECUTE on approve_shop_claim (must execute via service_role backend gateway)
+SELECT throws_ok(
+    'SELECT approve_shop_claim(''c0000000-0000-0000-0000-000000000002'', ''33333333-3333-3333-3333-333333333333'', ''Curator direct attempt'')',
+    '42501',
+    NULL,
+    'curator role under authenticated is denied direct EXECUTE on approve_shop_claim'
 );
 
 -- ============================================================================
@@ -243,10 +267,14 @@ INSERT INTO shop_claims (id, shop_id, user_id, status, claimant_name, claimant_r
     ('c0000000-0000-0000-0000-000000000005', 'a0000000-0000-0000-0000-000000000004', '22222222-2222-2222-2222-222222222222', 'PENDING', 'Compete D', 'Manager')
 ON CONFLICT (id) DO NOTHING;
 
--- 1. Normal approval of a currently APPROVED shop succeeds via approve_shop_claim
+SET LOCAL ROLE service_role;
+SET LOCAL "request.jwt.claim.role" = 'service_role';
+SET LOCAL "request.jwt.claims" = '{"role": "service_role"}';
+
+-- 1. Normal approval of a currently APPROVED shop succeeds via approve_shop_claim (service_role)
 SELECT lives_ok(
     'SELECT approve_shop_claim(''c0000000-0000-0000-0000-000000000004'', ''33333333-3333-3333-3333-333333333333'', ''Approved by curator'')',
-    'approve_shop_claim succeeds for pending claim on APPROVED shop'
+    'service_role can execute approve_shop_claim successfully for pending claim on APPROVED shop'
 );
 
 -- 2. Competing approval for same shop violates idx_unique_approved_claim_per_shop (23505)
