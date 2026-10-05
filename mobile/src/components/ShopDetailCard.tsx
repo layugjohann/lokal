@@ -9,6 +9,7 @@ import {
   Image,
   Linking,
   TextInput,
+  Alert,
 } from 'react-native';
 import { Shop } from '../types/shop';
 import { ShopReviewsResponse, ShopReviewSummaryResponse, ShopRecommendationsResponse, UnifiedReview, ProviderAttribution } from '../types/review';
@@ -27,6 +28,9 @@ import {
   addFavorite,
   removeFavorite,
 } from '../services/favoriteService';
+import { useShopClaim } from '../hooks/useShopClaim';
+import ClaimShopModal from './ClaimShopModal';
+import OwnerDashboardModal from './OwnerDashboardModal';
 
 interface ShopDetailCardProps {
   shop: Shop;
@@ -34,6 +38,7 @@ interface ShopDetailCardProps {
   authToken?: string | null;
   onFavoriteChange?: (shopId: string, isFavorite: boolean) => void;
   onReviewChange?: (shopId: string) => void;
+  onShopUpdated?: (shop: Shop) => void;
 }
 
 export default function ShopDetailCard({
@@ -42,9 +47,19 @@ export default function ShopDetailCard({
   authToken,
   onFavoriteChange,
   onReviewChange,
+  onShopUpdated,
 }: ShopDetailCardProps) {
-  const formattedDistance = formatDistance(shop.distance_meters);
-  const formattedRating = formatRating(shop.rating);
+  const [currentShop, setCurrentShop] = useState<Shop>(shop);
+  useEffect(() => {
+    setCurrentShop(shop);
+  }, [shop]);
+
+  const { claim, setClaim } = useShopClaim(shop.id, authToken);
+  const [isClaimModalOpen, setIsClaimModalOpen] = useState<boolean>(false);
+  const [isDashboardModalOpen, setIsDashboardModalOpen] = useState<boolean>(false);
+
+  const formattedDistance = formatDistance(currentShop.distance_meters);
+  const formattedRating = formatRating(currentShop.rating);
 
   const [reviewsData, setReviewsData] = useState<ShopReviewsResponse | null>(null);
   const [myReview, setMyReview] = useState<UnifiedReview | null>(null);
@@ -52,6 +67,7 @@ export default function ShopDetailCard({
   const [reviewsError, setReviewsError] = useState<string | null>(null);
   const currentRequestId = useRef<number>(0);
   const currentMutationId = useRef<number>(0);
+
 
   // AI Review Summary state
   const [summaryData, setSummaryData] = useState<ShopReviewSummaryResponse | null>(null);
@@ -441,7 +457,7 @@ export default function ShopDetailCard({
     <View style={styles.card}>
       <View style={styles.headerRow}>
         <Text style={styles.name} numberOfLines={2}>
-          {shop.name}
+          {currentShop.name}
         </Text>
         <View style={styles.headerActions}>
           <TouchableOpacity
@@ -527,15 +543,81 @@ export default function ShopDetailCard({
         ) : null}
       </View>
 
-      {shop.address ? (
+      {currentShop.address ? (
         <Text style={styles.address} numberOfLines={2}>
-          {shop.address}
+          {currentShop.address}
         </Text>
       ) : (
         <Text style={styles.noAddress}>Address not available</Text>
       )}
 
+      {/* Ownership Claim & Management Banner */}
+      <View style={styles.claimSection}>
+        {claim?.status === 'APPROVED' ? (
+          <View style={styles.approvedOwnerBanner}>
+            <View style={styles.ownerTextGroup}>
+              <Text style={styles.ownerTitle}>👑 You manage this coffee shop</Text>
+              <Text style={styles.ownerSubtitle}>Verified owner listing</Text>
+            </View>
+            <TouchableOpacity
+              style={styles.dashboardButton}
+              onPress={() => setIsDashboardModalOpen(true)}
+              accessibilityRole="button"
+              accessibilityLabel="Open owner dashboard"
+              activeOpacity={0.8}
+            >
+              <Text style={styles.dashboardButtonText}>Dashboard</Text>
+            </TouchableOpacity>
+          </View>
+        ) : claim?.status === 'PENDING' ? (
+          <View style={styles.pendingClaimBanner}>
+            <Text style={styles.pendingClaimTitle}>⏳ Claim Under Review</Text>
+            <Text style={styles.pendingClaimSubtitle}>
+              Your ownership claim is currently being evaluated by our curators.
+            </Text>
+          </View>
+        ) : claim?.status === 'REJECTED' ? (
+          <View style={styles.rejectedClaimBanner}>
+            <View style={styles.rejectedTextGroup}>
+              <Text style={styles.rejectedClaimTitle}>✕ Claim Not Approved</Text>
+              {claim.rejection_reason ? (
+                <Text style={styles.rejectedClaimSubtitle}>{claim.rejection_reason}</Text>
+              ) : null}
+            </View>
+            <TouchableOpacity
+              style={styles.reclaimButton}
+              onPress={() => setIsClaimModalOpen(true)}
+              accessibilityRole="button"
+              accessibilityLabel="Submit a new claim"
+              activeOpacity={0.8}
+            >
+              <Text style={styles.reclaimButtonText}>Re-claim</Text>
+            </TouchableOpacity>
+          </View>
+        ) : (
+          <View style={styles.unclaimedBanner}>
+            <Text style={styles.unclaimedText}>Own or manage this café?</Text>
+            <TouchableOpacity
+              style={styles.claimAction}
+              onPress={() => {
+                if (!authToken) {
+                  Alert.alert('Sign In Required', 'Please sign in to your LOKAL account to claim a coffee shop listing.');
+                } else {
+                  setIsClaimModalOpen(true);
+                }
+              }}
+              accessibilityRole="button"
+              accessibilityLabel="Claim this coffee shop listing"
+              activeOpacity={0.7}
+            >
+              <Text style={styles.claimActionText}>Claim this listing →</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+      </View>
+
       <View style={styles.divider} />
+
 
       <ScrollView
         style={styles.reviewsScroll}
@@ -999,9 +1081,34 @@ export default function ShopDetailCard({
           </Text>
         )}
       </ScrollView>
+
+      <ClaimShopModal
+        visible={isClaimModalOpen}
+        shop={currentShop}
+        authToken={authToken || null}
+        onClose={() => setIsClaimModalOpen(false)}
+        onClaimSuccess={(newClaim) => {
+          setClaim(newClaim);
+          setIsClaimModalOpen(false);
+        }}
+      />
+
+      <OwnerDashboardModal
+        visible={isDashboardModalOpen}
+        shopId={currentShop.id}
+        authToken={authToken || null}
+        onClose={() => setIsDashboardModalOpen(false)}
+        onShopUpdated={(updatedShop) => {
+          setCurrentShop(updatedShop);
+          if (onShopUpdated) {
+            onShopUpdated(updatedShop);
+          }
+        }}
+      />
     </View>
   );
 }
+
 
 const styles = StyleSheet.create({
   card: {
@@ -1765,4 +1872,123 @@ const styles = StyleSheet.create({
     color: '#55433C',
     lineHeight: 16,
   },
+  claimSection: {
+    marginVertical: 10,
+  },
+  approvedOwnerBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#FAF0E6',
+    borderWidth: 1,
+    borderColor: '#D4A373',
+    borderRadius: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+  },
+  ownerTextGroup: {
+    flex: 1,
+    marginRight: 8,
+  },
+  ownerTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#8B4513',
+  },
+  ownerSubtitle: {
+    fontSize: 11,
+    color: '#6B5E55',
+    marginTop: 1,
+  },
+  dashboardButton: {
+    backgroundColor: '#4A2E18',
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: 6,
+  },
+  dashboardButtonText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#FFFFFF',
+  },
+  pendingClaimBanner: {
+    backgroundColor: '#FFF8E7',
+    borderWidth: 1,
+    borderColor: '#F3D292',
+    borderRadius: 10,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+  },
+  pendingClaimTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#8A5D00',
+  },
+  pendingClaimSubtitle: {
+    fontSize: 11,
+    color: '#6B5E55',
+    marginTop: 2,
+    lineHeight: 15,
+  },
+  rejectedClaimBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#FDF2F2',
+    borderWidth: 1,
+    borderColor: '#F8D7DA',
+    borderRadius: 10,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+  },
+  rejectedTextGroup: {
+    flex: 1,
+    marginRight: 8,
+  },
+  rejectedClaimTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#9C3434',
+  },
+  rejectedClaimSubtitle: {
+    fontSize: 11,
+    color: '#721C24',
+    marginTop: 2,
+  },
+  reclaimButton: {
+    backgroundColor: '#9C3434',
+    paddingVertical: 5,
+    paddingHorizontal: 10,
+    borderRadius: 6,
+  },
+  reclaimButtonText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#FFFFFF',
+  },
+  unclaimedBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#F8F6F2',
+    borderWidth: 1,
+    borderColor: '#E8E2D9',
+    borderRadius: 8,
+    paddingVertical: 7,
+    paddingHorizontal: 10,
+  },
+  unclaimedText: {
+    fontSize: 12,
+    color: '#6B5E55',
+  },
+  claimAction: {
+    paddingVertical: 2,
+    paddingHorizontal: 4,
+  },
+  claimActionText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#8B4513',
+  },
 });
+

@@ -253,7 +253,17 @@ class CurationService:
                 detail="A database error occurred while saving evaluation results.",
             ) from exc
 
-        # 5. Log audit record
+        # 5. Automatically revoke active approved owner claims if status is not APPROVED
+        if decision.status.value != "APPROVED":
+            try:
+                supabase.table("shop_claims").update({
+                    "status": "REVOKED",
+                    "review_notes": f"Automatically revoked due to coffee shop curation status change to {decision.status.value}.",
+                }).eq("shop_id", str(shop_id)).eq("status", "APPROVED").execute()
+            except Exception as claim_exc:
+                logger.error(f"Failed to auto-revoke approved claims for shop {shop_id}: {claim_exc}")
+
+        # 6. Log audit record
         audit_payload = {
             "shop_id": str(shop_id),
             "old_status": current_curation.get("status") if current_curation else None,
@@ -274,6 +284,7 @@ class CurationService:
             ) from exc
 
         return CurationEvaluationResponse(
+
             shop_id=str(shop_id),
             status=decision.status,
             location_count=decision.location_count,
@@ -329,7 +340,17 @@ class CurationService:
                 detail="A database error occurred while saving manual override.",
             )
 
-        # 4. Insert audit record
+        # 4. Automatically revoke active approved owner claims if status is not APPROVED
+        if status_in != ShopEligibilityStatus.APPROVED:
+            try:
+                supabase.table("shop_claims").update({
+                    "status": "REVOKED",
+                    "review_notes": f"Automatically revoked due to coffee shop manual curation override to {status_in.value}.",
+                }).eq("shop_id", str(shop_id)).eq("status", "APPROVED").execute()
+            except Exception as claim_exc:
+                logger.error(f"Failed to auto-revoke approved claims for shop {shop_id}: {claim_exc}")
+
+        # 5. Insert audit record
         audit_payload = {
             "shop_id": str(shop_id),
             "old_status": current.get("status") if current else None,
@@ -350,3 +371,4 @@ class CurationService:
             ) from exc
 
         return ShopCurationResponse.model_validate(updated_record)
+
