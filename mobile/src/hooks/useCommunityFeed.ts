@@ -238,10 +238,13 @@ export class CommunityFeedController {
     }
 
     const currentId = ++this.requestId;
+    const isNewPrincipal = effectivePrincipal !== this.currentPrincipal;
     this.currentPrincipal = effectivePrincipal;
 
     this.setState({
       ...this.state,
+      items: isNewPrincipal ? [] : this.state.items,
+      hasMore: isNewPrincipal ? false : this.state.hasMore,
       isRefreshing: true,
       errorMessage: null,
     });
@@ -267,6 +270,8 @@ export class CommunityFeedController {
         err instanceof Error ? err.message : 'Unable to refresh community feed.';
       this.setState({
         ...this.state,
+        items: isNewPrincipal ? [] : this.state.items,
+        hasMore: isNewPrincipal ? false : this.state.hasMore,
         isLoadingMore: false,
         isRefreshing: false,
         errorMessage: message,

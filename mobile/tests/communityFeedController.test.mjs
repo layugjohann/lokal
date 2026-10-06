@@ -206,6 +206,73 @@ test('CommunityFeedController principal switch immediately clears state and isol
   await userBPromise;
 });
 
+test('CommunityFeedController refresh with principal change immediately clears state and isolates accounts on failure', async () => {
+  let rejectRefreshB;
+  let callCount = 0;
+
+  const principalAItems = [
+    { id: 'user-a-1', shop_id: 's1', shop_name: 'Shop 1', author_name: 'A', rating: 5, content: 'A', created_at: '2026-10-07T00:00:00Z', updated_at: null, is_edited: false },
+  ];
+
+  const mockFetch = async (_token, limit, offset) => {
+    callCount += 1;
+    if (callCount === 1) {
+      // Principal A initial load
+      return { items: principalAItems, limit, offset, has_more: true };
+    }
+    // Principal B refresh
+    return new Promise((_, reject) => {
+      rejectRefreshB = reject;
+    });
+  };
+
+  const controller = new CommunityFeedController(mockFetch);
+
+  // 1. Principal A has existing feed items and pagination metadata
+  await controller.loadInitial('token-a', 'user-A');
+  assert.strictEqual(controller.getState().items.length, 1);
+  assert.strictEqual(controller.getState().items[0].id, 'user-a-1');
+  assert.strictEqual(controller.getState().hasMore, true);
+  assert.strictEqual(controller.getState().isLoading, false);
+
+  // 2. refresh() is called with Principal B
+  let immediatelyClearedOnRefresh = false;
+  let hasMoreImmediatelyReset = false;
+  let isRefreshingImmediatelyActive = false;
+
+  controller.subscribe((state) => {
+    if (state.isRefreshing && state.items.length === 0 && state.hasMore === false) {
+      immediatelyClearedOnRefresh = true;
+      hasMoreImmediatelyReset = true;
+      isRefreshingImmediatelyActive = true;
+    }
+  });
+
+  const refreshPromise = controller.refresh('token-b', 'user-B');
+
+  // 3. The old Principal A items are immediately cleared
+  assert.strictEqual(immediatelyClearedOnRefresh, true);
+  // 4. hasMore is immediately reset to false
+  assert.strictEqual(hasMoreImmediatelyReset, true);
+  // 5. The refresh is active for Principal B
+  assert.strictEqual(isRefreshingImmediatelyActive, true);
+  assert.strictEqual(controller.getState().isRefreshing, true);
+  assert.deepStrictEqual(controller.getState().items, []);
+  assert.strictEqual(controller.getState().hasMore, false);
+
+  // 6. If the Principal B refresh fails, the old Principal A items are not restored
+  rejectRefreshB(new Error('Principal B network failure'));
+  await refreshPromise;
+
+  assert.deepStrictEqual(controller.getState().items, []);
+  assert.strictEqual(controller.getState().hasMore, false);
+
+  // 7. The refresh exits with the correct loading/error state
+  assert.strictEqual(controller.getState().isRefreshing, false);
+  assert.strictEqual(controller.getState().isLoadingMore, false);
+  assert.strictEqual(controller.getState().errorMessage, 'Principal B network failure');
+});
+
 test('CommunityFeedController cancel() during initial load clears isLoading and drops active in-flight request', async () => {
   let resolveReq;
   const mockFetch = () =>
