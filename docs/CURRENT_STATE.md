@@ -6,29 +6,40 @@ This document provides a snapshot of the **current state of the `main` branch** 
 
 # Current Phase
 
-**Phase 2 — Core Application Features**
+**Phase 3 — MVP Polish & Validation**
 
-The project bootstrapping phase is complete. The mobile application foundation, FastAPI backend, Supabase integration, database schema, user authentication, maps/location integration, coffee shop CRUD API, nearby coffee shop discovery, independent business eligibility and curation, external review data layer, first-party LOKAL user reviews, mobile user authentication with secure session management, AI-generated review summaries, AI-generated "Must Try" recommendations, favorite coffee shops, the user favorites list / profile discovery flow, advanced shop search and filtering, personalized coffee shop recommendations, coffee shop owner claiming and dashboard, and community feed and social sharing are established.
+The project bootstrapping and core application feature phases are complete. The mobile application foundation, FastAPI backend, Supabase integration, database schema, user authentication, maps/location integration, coffee shop CRUD API, nearby coffee shop discovery, independent business eligibility and curation, external review data layer, first-party LOKAL user reviews, mobile user authentication with secure session management, AI-generated review summaries, AI-generated "Must Try" recommendations, favorite coffee shops, the user favorites list / profile discovery flow, advanced shop search and filtering, personalized coffee shop recommendations, coffee shop owner claiming and dashboard, and community feed and social sharing are established.
 
-The project is now building application-level features that expand LOKAL's core user experience and community discovery capabilities.
+The original LOKAL MVP objective is now functionally covered: **locate local independent coffee shops and help users quickly understand each shop through AI-generated review summaries**.
 
----
+The project is now focused on validating and polishing that MVP rather than expanding the feature surface by default. Current work should prioritize **UI/UX refinement**, **populating the database with realistic data**, and **end-to-end testing against that data** so the core discovery and AI-summary experience can be evaluated as a real product.
+
+Features such as coffee shop menus and photo galleries remain future exploration candidates and are not required for the current MVP definition.
+
+
 
 # Current Status
 
 🟢 **On Track**
 
-The core application stack is operational. The latest completed milestone, **Community Feed & Social Sharing (GitHub Issue #47)**, delivered a chronological community discovery experience sourcing first-party reviews for approved coffee shops, powered by a high-performance PostgreSQL RPC with deterministic ordering, bounded pagination, and native mobile social sharing.
+The core application stack is operational. **Community Feed & Social Sharing (GitHub Issue #47)** is the latest completed feature and marks the completion of the currently planned core application feature expansion.
 
-Users can browse a chronological community feed of first-party reviews (`source = 'lokal'`) from approved independent coffee shops via a dedicated `[👥 Community]` entry point on the map. The feed displays review cards with star ratings, author display names, relative timestamps, `(Edited)` indicators, review excerpts, and quick actions to inspect the coffee shop or share the review. Tapping "View Shop" navigates directly to the inline `ShopDetailCard` with a `< Back to Community` action that seamlessly preserves the user's feed scroll state. Users can share coffee shops and community reviews across external messaging and social platforms using native plain-text payloads featuring bounded review excerpts ($\le 180$ characters with ellipsis) and LOKAL branding, while strictly excluding sensitive internal UUIDs and user data. The feed is powered by PostgreSQL RPC `get_community_feed`, supported by chronological partial index `idx_reviews_community_feed`, using internal `limit + 1` query fetching for authoritative `has_more` derivation. Mobile state coordination is encapsulated in pure controller `CommunityFeedController`, enforcing monotonic request sequence tracking, duplicate ID suppression on infinite scroll, robust principal isolation across accounts during both initial load and pull-to-refresh, loading flag resets on cancellation, and race-free shop navigation via dedicated monotonic request refs (`shopRequestIdRef`).
+The original LOKAL MVP is centered on a simple product loop: **locate local independent coffee shops and quickly understand each shop through AI-generated review summaries**. The application already provides the underlying discovery, curation, review-data, shop-detail, and AI-summary capabilities needed for that loop.
 
-The implementation is verified through **404 passing backend tests**, **209 passing mobile tests**, **109 passing database pgTAP assertions**, and **0 TypeScript compilation errors**.
+The current phase is therefore focused on **MVP Polish & Validation** rather than automatically adding more product features. The immediate priorities are:
+* **UI/UX refinement** across the core discovery and shop-understanding experience.
+* **Realistic database population** with enough varied shop and review data to exercise the application meaningfully.
+* **End-to-end validation** of the MVP using that realistic data, including discovery, shop details, review data, and AI-generated summaries.
+
+The goal of this phase is to determine whether the existing MVP experience is polished, coherent, reliable, and useful with realistic data. **Coffee shop menus and photo galleries remain future exploration candidates and are not required to satisfy the current MVP definition.**
+
+The latest merged implementation is verified through **404 passing backend tests**, **209 passing mobile tests**, **109 passing database pgTAP assertions**, and **0 TypeScript compilation errors**.
 
 The engineering workflow remains formalized under the **AI-Assisted Engineering Workflow**.
 
-The next feature cycle should begin only after the current state is synchronized and the next GitHub Issue and implementation plan have been approved.
+The next work cycle should begin only after the current state is synchronized and the next GitHub Issue and implementation plan have been approved.
 
----
+
 
 # Latest Completed Feature
 
@@ -615,4 +626,4 @@ After implementation:
 
 ---
 
-**Last Updated:** Phase 2 — Core Application Features (after completion of GitHub Issue #47 and merge of PR #48)
+**Last Updated:** Phase 3 — MVP Polish & Validation (after completion of GitHub Issue #47 and merge of PR #48)
