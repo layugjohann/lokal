@@ -1,5 +1,5 @@
 from fastapi import APIRouter
-from .endpoints import auth, claims, curation, favorites, health, owner, recommendations, reviews, shops
+from .endpoints import auth, claims, community, curation, favorites, health, owner, recommendations, reviews, shops
 
 api_router = APIRouter()
 api_router.include_router(health.router)
@@ -13,6 +13,7 @@ api_router.include_router(favorites.router, prefix="/shops", tags=["Coffee Shop 
 api_router.include_router(claims.claims_router, prefix="/claims", tags=["Ownership Claims"])
 api_router.include_router(claims.shop_claims_router, prefix="/shops", tags=["Coffee Shop Claims"])
 api_router.include_router(owner.router, prefix="/owner/shops", tags=["Coffee Shop Owner Dashboard"])
+api_router.include_router(community.router, prefix="/community", tags=["Community"])
 
 
 

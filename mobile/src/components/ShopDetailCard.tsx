@@ -29,6 +29,7 @@ import {
   removeFavorite,
 } from '../services/favoriteService';
 import { useShopClaim } from '../hooks/useShopClaim';
+import { shareShop } from '../services/communityService';
 import ClaimShopModal from './ClaimShopModal';
 import OwnerDashboardModal from './OwnerDashboardModal';
 
@@ -60,6 +61,10 @@ export default function ShopDetailCard({
 
   const formattedDistance = formatDistance(currentShop.distance_meters);
   const formattedRating = formatRating(currentShop.rating);
+
+  const handleShareShop = useCallback(async () => {
+    await shareShop(currentShop);
+  }, [currentShop]);
 
   const [reviewsData, setReviewsData] = useState<ShopReviewsResponse | null>(null);
   const [myReview, setMyReview] = useState<UnifiedReview | null>(null);
@@ -460,6 +465,15 @@ export default function ShopDetailCard({
           {currentShop.name}
         </Text>
         <View style={styles.headerActions}>
+          <TouchableOpacity
+            style={styles.shareButton}
+            onPress={handleShareShop}
+            activeOpacity={0.7}
+            accessibilityRole="button"
+            accessibilityLabel="Share coffee shop details"
+          >
+            <Text style={styles.shareIcon}>🔗</Text>
+          </TouchableOpacity>
           <TouchableOpacity
             style={[
               styles.favoriteButton,
@@ -1142,6 +1156,20 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
+  },
+  shareButton: {
+    padding: 4,
+    borderRadius: 12,
+    backgroundColor: '#F3EFEA',
+    width: 28,
+    height: 28,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  shareIcon: {
+    fontSize: 14,
+    color: '#6B5E55',
+    lineHeight: 16,
   },
   favoriteButton: {
     padding: 4,
