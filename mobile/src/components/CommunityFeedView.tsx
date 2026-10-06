@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   StyleSheet,
   View,
@@ -32,6 +32,7 @@ export default function CommunityFeedView({
 }: CommunityFeedViewProps) {
   const [selectedShop, setSelectedShop] = useState<Shop | null>(null);
   const [loadingShopId, setLoadingShopId] = useState<string | null>(null);
+  const shopRequestIdRef = useRef(0);
 
   const {
     items,
@@ -48,6 +49,7 @@ export default function CommunityFeedView({
   // Invalidate in-flight operations and reset selected shop on modal dismiss
   useEffect(() => {
     if (!visible || !authToken) {
+      shopRequestIdRef.current += 1;
       cancel();
       setSelectedShop(null);
       setLoadingShopId(null);
@@ -56,11 +58,18 @@ export default function CommunityFeedView({
 
   const handleOpenShop = useCallback(
     async (feedItem: CommunityFeedItem) => {
+      const currentRequestId = ++shopRequestIdRef.current;
       setLoadingShopId(feedItem.shop_id);
       try {
         const fullShop = await fetchShopById(feedItem.shop_id, authToken);
+        if (shopRequestIdRef.current !== currentRequestId) {
+          return;
+        }
         setSelectedShop(fullShop);
       } catch {
+        if (shopRequestIdRef.current !== currentRequestId) {
+          return;
+        }
         // Fallback: construct minimum shop object to preserve offline / transient navigation
         const fallbackShop: Shop = {
           id: feedItem.shop_id,
@@ -76,7 +85,9 @@ export default function CommunityFeedView({
         };
         setSelectedShop(fallbackShop);
       } finally {
-        setLoadingShopId(null);
+        if (shopRequestIdRef.current === currentRequestId) {
+          setLoadingShopId(null);
+        }
       }
     },
     [authToken]

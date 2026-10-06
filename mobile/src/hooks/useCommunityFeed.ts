@@ -74,10 +74,19 @@ export class CommunityFeedController {
   }
 
   /**
-   * Invalidates any active in-flight requests by bumping the monotonic sequence counter.
+   * Invalidates any active in-flight requests by bumping the monotonic sequence counter
+   * and clearing active loading flags.
    */
   cancel(): void {
     this.requestId += 1;
+    if (this.state.isLoading || this.state.isLoadingMore || this.state.isRefreshing) {
+      this.setState({
+        ...this.state,
+        isLoading: false,
+        isLoadingMore: false,
+        isRefreshing: false,
+      });
+    }
   }
 
   /**
@@ -258,6 +267,7 @@ export class CommunityFeedController {
         err instanceof Error ? err.message : 'Unable to refresh community feed.';
       this.setState({
         ...this.state,
+        isLoadingMore: false,
         isRefreshing: false,
         errorMessage: message,
       });

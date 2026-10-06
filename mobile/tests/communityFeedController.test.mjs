@@ -206,7 +206,7 @@ test('CommunityFeedController principal switch immediately clears state and isol
   await userBPromise;
 });
 
-test('CommunityFeedController cancel() bumps sequence counter and drops active in-flight request', async () => {
+test('CommunityFeedController cancel() during initial load clears isLoading and drops active in-flight request', async () => {
   let resolveReq;
   const mockFetch = () =>
     new Promise((resolve) => {
@@ -215,9 +215,11 @@ test('CommunityFeedController cancel() bumps sequence counter and drops active i
 
   const controller = new CommunityFeedController(mockFetch);
   const loadPromise = controller.loadInitial('token-1', 'user-1');
+  assert.strictEqual(controller.getState().isLoading, true);
 
   // Cancel while in flight
   controller.cancel();
+  assert.strictEqual(controller.getState().isLoading, false);
 
   // Resolve late
   resolveReq({
@@ -228,8 +230,179 @@ test('CommunityFeedController cancel() bumps sequence counter and drops active i
   });
   await loadPromise;
 
-  // Items must remain empty
+  // Items must remain empty and isLoading false
   assert.deepStrictEqual(controller.getState().items, []);
+  assert.strictEqual(controller.getState().isLoading, false);
+});
+
+test('CommunityFeedController cancel() during loadMore clears isLoadingMore and preserves items/metadata', async () => {
+  const initialItems = [{ id: '1', shop_id: 's1' }];
+  let resolveLoadMore;
+  let callCount = 0;
+
+  const mockFetch = async (_token, limit, offset) => {
+    callCount += 1;
+    if (offset === 0) {
+      return { items: initialItems, limit, offset: 0, has_more: true };
+    }
+    return new Promise((resolve) => {
+      resolveLoadMore = resolve;
+    });
+  };
+
+  const controller = new CommunityFeedController(mockFetch);
+  await controller.loadInitial('token-1', 'user-1');
+  assert.strictEqual(controller.getState().items.length, 1);
+  assert.strictEqual(controller.getState().hasMore, true);
+
+  // Start loadMore
+  const loadMorePromise = controller.loadMore('token-1', 'user-1');
+  assert.strictEqual(controller.getState().isLoadingMore, true);
+
+  // Cancel while in-flight
+  controller.cancel();
+  assert.strictEqual(controller.getState().isLoadingMore, false);
+  assert.strictEqual(controller.getState().items.length, 1);
+  assert.strictEqual(controller.getState().hasMore, true);
+
+  // Resolve late
+  resolveLoadMore({
+    items: [{ id: '2', shop_id: 's2' }],
+    limit: 20,
+    offset: 1,
+    has_more: false,
+  });
+  await loadMorePromise;
+
+  // Stale append must be dropped; state remains unchanged
+  assert.strictEqual(controller.getState().items.length, 1);
+  assert.strictEqual(controller.getState().isLoadingMore, false);
+});
+
+test('CommunityFeedController cancel() during refresh clears isRefreshing and preserves items/metadata', async () => {
+  const initialItems = [{ id: '1', shop_id: 's1' }];
+  let resolveRefresh;
+  let callCount = 0;
+  const mockFetch = async (_token, limit, offset) => {
+    callCount += 1;
+    if (callCount === 1) {
+      return { items: initialItems, limit, offset: 0, has_more: true };
+    }
+    return new Promise((resolve) => {
+      resolveRefresh = resolve;
+    });
+  };
+
+  const controller = new CommunityFeedController(mockFetch);
+  await controller.loadInitial('token-1', 'user-1');
+  assert.strictEqual(controller.getState().items.length, 1);
+
+  // Start refresh
+  const refreshPromise = controller.refresh('token-1', 'user-1');
+  assert.strictEqual(controller.getState().isRefreshing, true);
+
+  // Cancel while in-flight
+  controller.cancel();
+  assert.strictEqual(controller.getState().isRefreshing, false);
+  assert.strictEqual(controller.getState().items.length, 1);
+
+  // Resolve refresh late with different items
+  resolveRefresh({
+    items: [{ id: 'fresh-1', shop_id: 's9' }],
+    limit: 20,
+    offset: 0,
+    has_more: false,
+  });
+  await refreshPromise;
+
+  // Stale refresh dropped
+  assert.strictEqual(controller.getState().items[0].id, '1');
+  assert.strictEqual(controller.getState().isRefreshing, false);
+});
+
+test('CommunityFeedController refresh failure clears isLoadingMore and unblocks subsequent loadMore', async () => {
+  let resolveLoadMore;
+  let rejectRefresh;
+  let resolveSecondLoadMore;
+  let callCount = 0;
+
+  const initialItems = [{ id: '1', shop_id: 's1' }];
+
+  const mockFetch = async (_token, limit, offset) => {
+    callCount += 1;
+    if (callCount === 1) {
+      // initial load
+      return { items: initialItems, limit, offset: 0, has_more: true };
+    }
+    if (callCount === 2) {
+      // first loadMore
+      return new Promise((resolve) => {
+        resolveLoadMore = resolve;
+      });
+    }
+    if (callCount === 3) {
+      // refresh
+      return new Promise((_, reject) => {
+        rejectRefresh = reject;
+      });
+    }
+    if (callCount === 4) {
+      // second loadMore
+      return new Promise((resolve) => {
+        resolveSecondLoadMore = resolve;
+      });
+    }
+    throw new Error('Unexpected call');
+  };
+
+  const controller = new CommunityFeedController(mockFetch);
+  await controller.loadInitial('token-1', 'user-1');
+  assert.strictEqual(controller.getState().items.length, 1);
+  assert.strictEqual(controller.getState().hasMore, true);
+
+  // 1. Start loadMore()
+  const loadMorePromise1 = controller.loadMore('token-1', 'user-1');
+  assert.strictEqual(controller.getState().isLoadingMore, true);
+
+  // 2. Start refresh() so loadMore becomes stale
+  const refreshPromise = controller.refresh('token-1', 'user-1');
+  assert.strictEqual(controller.getState().isRefreshing, true);
+  // isLoadingMore was set by loadMore
+  assert.strictEqual(controller.getState().isLoadingMore, true);
+
+  // 3. Make refresh fail
+  rejectRefresh(new Error('Refresh network error'));
+  await refreshPromise;
+
+  // 4. Verify isLoadingMore === false and error reported
+  assert.strictEqual(controller.getState().isLoadingMore, false);
+  assert.strictEqual(controller.getState().isRefreshing, false);
+  assert.strictEqual(controller.getState().errorMessage, 'Refresh network error');
+
+  // Finish stale loadMore promise to ensure no pending unhandled rejection
+  resolveLoadMore({ items: [{ id: 'stale-2' }], limit: 20, offset: 1, has_more: false });
+  await loadMorePromise1;
+
+  // Stale loadMore result was dropped
+  assert.strictEqual(controller.getState().items.length, 1);
+  assert.strictEqual(controller.getState().isLoadingMore, false);
+
+  // 5. Verify a later loadMore() can run normally
+  const loadMorePromise2 = controller.loadMore('token-1', 'user-1');
+  assert.strictEqual(controller.getState().isLoadingMore, true);
+
+  resolveSecondLoadMore({
+    items: [{ id: '2', shop_id: 's2' }],
+    limit: 20,
+    offset: 1,
+    has_more: false,
+  });
+  await loadMorePromise2;
+
+  assert.strictEqual(controller.getState().items.length, 2);
+  assert.strictEqual(controller.getState().items[1].id, '2');
+  assert.strictEqual(controller.getState().isLoadingMore, false);
+  assert.strictEqual(controller.getState().hasMore, false);
 });
 
 test('CommunityFeedController handles fetch error and updates errorMessage', async () => {
