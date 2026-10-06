@@ -13,6 +13,10 @@ from .claim import (
     ShopClaimResponse,
     ShopClaimStatus,
 )
+from .community import (
+    CommunityFeedItem,
+    CommunityFeedResponse,
+)
 from .curation import (
     CurationConfidence,
     CurationEvaluationResponse,
@@ -89,5 +93,7 @@ __all__ = [
     "ShopClaimDetailResponse",
     "OwnerShopUpdate",
     "OwnerDashboardResponse",
+    "CommunityFeedItem",
+    "CommunityFeedResponse",
 ]
 

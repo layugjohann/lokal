@@ -122,3 +122,40 @@ export async function fetchNearbyShops(
 
   return response.json();
 }
+
+/**
+ * Retrieves details for a specific coffee shop by UUID from FastAPI.
+ */
+export async function fetchShopById(
+  shopId: string,
+  authToken?: string | null
+): Promise<Shop> {
+  const baseUrl = getApiBaseUrl();
+  const url = `${baseUrl}/api/v1/shops/${encodeURIComponent(shopId)}`;
+  const headers: Record<string, string> = {
+    Accept: 'application/json',
+  };
+  if (authToken) {
+    headers['Authorization'] = `Bearer ${authToken}`;
+  }
+
+  const response = await fetch(url, {
+    method: 'GET',
+    headers,
+  });
+
+  if (!response.ok) {
+    let errorDetail = 'Failed to fetch coffee shop details.';
+    try {
+      const data = await response.json();
+      if (data && typeof data.detail === 'string') {
+        errorDetail = data.detail;
+      }
+    } catch {
+      // Ignore JSON parse errors on non-json error responses
+    }
+    throw new Error(errorDetail);
+  }
+
+  return response.json();
+}

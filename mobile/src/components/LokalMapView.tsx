@@ -13,6 +13,7 @@ import { useNearbyShops } from '../hooks/useNearbyShops';
 import { usePersonalizedRecommendations } from '../hooks/usePersonalizedRecommendations';
 import NearbyShopsSheet from './NearbyShopsSheet';
 import ProfileView from './ProfileView';
+import CommunityFeedView from './CommunityFeedView';
 import { getProfilePrincipalKey } from '../services/authService';
 import { formatDistance } from '../services/shopService';
 import { Shop } from '../types/shop';
@@ -32,6 +33,7 @@ export default function LokalMapView({ authToken }: LokalMapViewProps = {}) {
   const auth = useContext(AuthContext);
   const activeAuthToken = authToken !== undefined ? authToken : (auth?.token ?? null);
   const [isProfileOpen, setIsProfileOpen] = useState(false);
+  const [isCommunityOpen, setIsCommunityOpen] = useState(false);
 
   const {
     location,
@@ -190,16 +192,36 @@ export default function LokalMapView({ authToken }: LokalMapViewProps = {}) {
       )}
 
       {auth && auth.status === 'authenticated' && (
-        <TouchableOpacity
-          style={styles.profileButton}
-          onPress={() => setIsProfileOpen(true)}
-          accessibilityRole="button"
-          accessibilityLabel="Open user profile and saved coffee shops"
-          activeOpacity={0.8}
-        >
-          <Text style={styles.profileButtonText}>👤 Profile</Text>
-        </TouchableOpacity>
+        <>
+          <TouchableOpacity
+            style={styles.communityButton}
+            onPress={() => setIsCommunityOpen(true)}
+            accessibilityRole="button"
+            accessibilityLabel="Open community feed"
+            activeOpacity={0.8}
+          >
+            <Text style={styles.communityButtonText}>👥 Community</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.profileButton}
+            onPress={() => setIsProfileOpen(true)}
+            accessibilityRole="button"
+            accessibilityLabel="Open user profile and saved coffee shops"
+            activeOpacity={0.8}
+          >
+            <Text style={styles.profileButtonText}>👤 Profile</Text>
+          </TouchableOpacity>
+        </>
       )}
+
+      <CommunityFeedView
+        key={`community:${getProfilePrincipalKey(auth?.user, activeAuthToken)}`}
+        visible={isCommunityOpen && auth?.status === 'authenticated'}
+        authToken={activeAuthToken}
+        userId={activeUserId}
+        onClose={() => setIsCommunityOpen(false)}
+      />
 
       <ProfileView
         key={getProfilePrincipalKey(auth?.user, activeAuthToken)}
@@ -351,6 +373,25 @@ const styles = StyleSheet.create({
     color: '#4A2E18',
     fontSize: 14,
     fontWeight: '500',
+  },
+  communityButton: {
+    position: 'absolute',
+    top: 50,
+    left: 16,
+    backgroundColor: 'rgba(250, 248, 245, 0.95)',
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+    borderRadius: 20,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.15,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  communityButtonText: {
+    color: '#4A2E18',
+    fontSize: 13,
+    fontWeight: '600',
   },
   profileButton: {
     position: 'absolute',
