@@ -44,6 +44,7 @@ Responsible for:
 * Navigation
 * Interactive maps
 * Coffee shop discovery
+* Community feed and native social sharing
 * Displaying AI-generated recommendations
 * User authentication flow
 * Managing local application state
@@ -81,6 +82,7 @@ Responsibilities include:
 * User reviews
 * Favorites
 * Coffee shop claims & owner management
+* Community feed stored procedure and indexing
 * Application data
 * Secure authentication
 * Row Level Security (RLS) & least-privilege access control

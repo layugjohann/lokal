@@ -36,10 +36,11 @@ LOKAL aims to support local businesses by making discovery easier while helping 
 * 👤 User authentication and session management
 * ✨ Personalized coffee shop recommendations
 * 🏪 Coffee shop owner claiming and dashboard
+* 👥 Community feed and social sharing
 
 ### Planned Features
 
-* 👥 Community feed and social sharing (future exploration)
+* 📸 Coffee shop menus and photo gallery (future exploration)
 
 ---
 
