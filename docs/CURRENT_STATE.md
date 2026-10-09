@@ -499,7 +499,6 @@ Agy must follow Issue #49's planning gate: inspect the repository and relevant d
 **UI/UX work is a separate workstream.** The visual direction is approved and documented in [`docs/ui-design-spec.md`](ui-design-spec.md), but implementation has not started. Once the dataset work has proceeded through its own workflow, UI work should begin through a separate focused Issue, starting with authentication personalization. The existing map rendering and behavior remain explicitly protected.
 
 ---
----
 
 # Known Blockers
 
