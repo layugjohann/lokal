@@ -16,8 +16,6 @@ The project is now focused on validating and polishing that MVP rather than expa
 
 Features such as coffee shop menus and photo galleries remain future exploration candidates and are not required for the current MVP definition.
 
-
-
 # Current Status
 
 🟢 **On Track**
@@ -38,8 +36,6 @@ The latest merged implementation is verified through **404 passing backend tests
 The engineering workflow remains formalized under the **AI-Assisted Engineering Workflow**.
 
 The next work cycle should begin only after the current state is synchronized and the next GitHub Issue and implementation plan have been approved.
-
-
 
 # Latest Completed Feature
 
@@ -494,18 +490,15 @@ Independent-business eligibility and curation are maintained as a separate domai
 
 # Next Task
 
-The next feature should be defined through the next GitHub Issue after reviewing the completed community feed and social sharing architecture and current application state.
+**Immediate next task: [GitHub Issue #49 — Establish Realistic MVP Validation Dataset](https://github.com/layugjohann/lokal/issues/49).**
 
-With user authentication, unified reviews, AI review summarization, AI must-try recommendations, coffee shop favoriting, the user favorites list / profile view, advanced search and filtering, personalized coffee shop recommendations, coffee shop owner claiming and dashboard, and the community feed and social sharing active, the logical next capabilities include **Coffee Shop Menus & Photo Gallery** or another feature prioritized by the Product Owner.
+Issue #49 is limited to preparing a repeatable, development-safe dataset and validating the existing discovery, shop-detail, review, AI-summary, Must Try, and community-feed experience against realistic data. It does not authorize UI redesigns, new features, policy changes, or production-data operations.
 
-Before implementation:
+Agy must follow Issue #49's planning gate: inspect the repository and relevant data mechanisms, present a concrete plan, and wait for explicit Product Owner approval before creating a branch, modifying files, or writing database data.
 
-1. Review the current database schema, curation layer, review service, favorites service, AI services, owner claiming and dashboard services, community feed service, and mobile components.
-2. Define the product requirement and observable acceptance criteria for the next capability.
-3. Review dependencies, latency implications, and data modeling trade-offs.
-4. Create and approve the next GitHub Issue.
-5. Review the implementation plan before any branch is created or code is written.
+**UI/UX work is a separate workstream.** The visual direction is approved and documented in [`docs/ui-design-spec.md`](ui-design-spec.md), but implementation has not started. Once the dataset work has proceeded through its own workflow, UI work should begin through a separate focused Issue, starting with authentication personalization. The existing map rendering and behavior remain explicitly protected.
 
+---
 ---
 
 # Known Blockers
@@ -626,4 +619,4 @@ After implementation:
 
 ---
 
-**Last Updated:** Phase 3 — MVP Polish & Validation (after completion of GitHub Issue #47 and merge of PR #48)
+**Last Updated:** Phase 3 — MVP Polish & Validation (Issue #49 open; approved UI direction documented; UI personalization not yet implemented)
