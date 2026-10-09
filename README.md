@@ -103,11 +103,21 @@ The workflow combines:
 
 ---
 
+## Project Documentation
+
+* [System architecture](docs/architecture.md)
+* [Engineering workflow](docs/workflow.md)
+* [Current project state](docs/CURRENT_STATE.md)
+* [Approved UI design specification](docs/ui-design-spec.md)
+* [Reusable engineering prompts](docs/prompts/)
+
+---
+
 ## Project Status
 
-🚧 **Currently under active development**
+🚧 **Phase 3 — MVP Polish & Validation**
 
-The project is in its foundation phase, where the engineering workflow, architecture, and development standards are being established before feature implementation begins.
+The core MVP capabilities are implemented. Current work focuses on establishing a realistic, development-safe validation dataset, testing the discovery-to-AI-summary experience end-to-end, and refining the UI/UX using the approved design direction. See [the current project state](docs/CURRENT_STATE.md) for implementation details and [the LOKAL UI design specification](docs/ui-design-spec.md) for the approved visual rules.
 
 ---
 
