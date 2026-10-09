@@ -1,5 +1,3 @@
-# docs/workflow.md
-
 # AI-Assisted Engineering Workflow
 
 This document defines the standard engineering workflow for LOKAL.
@@ -25,7 +23,7 @@ Before starting any feature:
 13. Push feature branch to GitHub
 14. Open Pull Request for CodeRabbit review
 15. Evaluate and resolve CodeRabbit findings iteratively
-16. Product Owner performs final review and merges Pull Request
+16. Product Owner performs final review and approves the Pull Request
 17. Product Owner merges the Pull Request and manages branch deletion
 18. Agy updates `docs/CURRENT_STATE.md` using the documentation workflow
 19. Product Owner synchronizes local `main` and confirms the working tree is clean
@@ -192,6 +190,8 @@ Before coding, Agy reviews:
 * `docs/architecture.md`
 * `docs/workflow.md`
 * `docs/CURRENT_STATE.md`
+
+For UI/UX-related Issues, also review `docs/ui-design-spec.md`.
 
 This ensures implementation aligns with project standards and conventions.
 
@@ -394,24 +394,3 @@ Agy must not:
 * Re-evaluates Pull Requests when new commits are pushed.
 * Acts as review input; final decision authority remains with the Product Owner.
 
----
-
-# Clarify Responsibilities
-
-### Product Owner
-- Creates/manages GitHub Issues
-- Approves implementation plans
-- Performs final review
-- Merges Pull Requests
-- Deletes feature branches
-
-### Antigravity (Agy)
-- Creates feature branches (after PO approval)
-- Implements approved scope
-- Runs automated tests and verification
-- Commits and pushes branch
-- Opens Pull Requests
-- Resolves valid CodeRabbit review findings on the active PR
-- Never merges PRs
-- Never changes Git history
-- Never overrides Product Owner decisions
