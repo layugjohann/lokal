@@ -94,6 +94,8 @@ Before implementing any work, review:
 * docs/workflow.md
 * docs/CURRENT_STATE.md
 
+For UI/UX-related Issues, also review `docs/ui-design-spec.md`. It is the approved visual source of truth, but it does not authorize work beyond the assigned Issue.
+
 If documentation conflicts with implementation, documentation takes precedence until the Product Owner decides otherwise.
 
 ---
