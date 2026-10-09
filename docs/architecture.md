@@ -153,7 +153,14 @@ lokal/
 ├── docs/
 │   ├── architecture.md
 │   ├── workflow.md
-│   └── CURRENT_STATE.md
+│   ├── CURRENT_STATE.md
+│   ├── ui-design-spec.md
+│   └── prompts/
+│       ├── 01-project-review.md
+│       ├── 02-implementation.md
+│       ├── 03-coderabbit-review.md
+│       ├── 04-documentation.md
+│       └── final-review.md
 │
 ├── .github/
 │   └── workflows/
