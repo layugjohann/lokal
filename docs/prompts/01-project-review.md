@@ -19,6 +19,7 @@ Review the following:
 - `docs/architecture.md`
 - `docs/workflow.md`
 - `docs/CURRENT_STATE.md`
+- For UI/UX-related Issues, also review `docs/ui-design-spec.md`.
 
 Then inspect the existing implementation most relevant to the Issue, including:
 
