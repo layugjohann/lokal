@@ -9,6 +9,7 @@ Usage:
 """
 
 import argparse
+from datetime import datetime, timezone
 import logging
 import os
 import sys
@@ -92,15 +93,24 @@ def normalize_val(val: Any) -> Any:
     """Normalize database and fixture values for comparison."""
     if val is None:
         return None
+    if isinstance(val, bool):
+        return val
     if isinstance(val, UUID):
         return str(val)
     if isinstance(val, (int, float)):
         return round(float(val), 4)
+    if isinstance(val, datetime):
+        dt_utc = val.astimezone(timezone.utc)
+        return dt_utc.strftime("%Y-%m-%dT%H:%M:%SZ")
     if isinstance(val, str):
-        # Normalize ISO timestamps or strings
         clean = val.strip()
-        if clean.endswith("+00:00"):
-            clean = clean[:-6] + "Z"
+        try:
+            iso_str = clean.replace("Z", "+00:00")
+            dt = datetime.fromisoformat(iso_str)
+            dt_utc = dt.astimezone(timezone.utc)
+            return dt_utc.strftime("%Y-%m-%dT%H:%M:%SZ")
+        except (ValueError, TypeError):
+            pass
         return clean
     return val
 
@@ -116,6 +126,23 @@ def compare_fields(existing: dict[str, Any], expected: dict[str, Any], field_nam
     return diffs
 
 
+def fetch_all_auth_users(supabase: Any, page_size: int = 50) -> list[Any]:
+    """Fetch all auth users from Supabase GoTrue admin API across all pages.
+
+    Stops when the returned page contains fewer users than the requested page size.
+    """
+    all_users: list[Any] = []
+    page = 1
+    while True:
+        res = supabase.auth.admin.list_users(page=page, per_page=page_size)
+        page_users = getattr(res, "users", res) or []
+        all_users.extend(page_users)
+        if len(page_users) < page_size:
+            break
+        page += 1
+    return all_users
+
+
 # ---------------------------------------------------------------------------
 # Seeding Logic
 # ---------------------------------------------------------------------------
@@ -128,9 +155,8 @@ def seed_users(supabase: Any) -> None:
             "TEST_USER_PASSWORD must be configured in environment (.env) to provision test accounts."
         )
 
-    logger.info("Verifying controlled test authentication accounts...")
-    existing_users_res = supabase.auth.admin.list_users()
-    existing_users = getattr(existing_users_res, "users", existing_users_res) or []
+    logger.info("Verifying controlled test authentication accounts across all pages...")
+    existing_users = fetch_all_auth_users(supabase)
 
     by_id = {str(u.id): u for u in existing_users}
     by_email = {u.email.lower(): u for u in existing_users if u.email}
@@ -186,14 +212,15 @@ def seed_database_records(supabase: Any) -> None:
             "longitude": shop.longitude,
             "rating": shop.rating,
             "google_place_id": shop.google_place_id,
+            "created_at": shop.created_at,
+            "updated_at": shop.updated_at,
         }
         if res.data:
             diffs = compare_fields(res.data[0], expected, list(expected.keys()))
             if diffs:
                 raise FixturePayloadConflictError(f"Shop {shop.id} conflict: {', '.join(diffs)}")
         else:
-            payload = {**expected, "created_at": shop.created_at, "updated_at": shop.updated_at}
-            supabase.table("shops").insert(payload).execute()
+            supabase.table("shops").insert(expected).execute()
 
     logger.info("Seeding shop curation records...")
     for shop in FIXTURE_SHOPS:
@@ -205,21 +232,18 @@ def seed_database_records(supabase: Any) -> None:
             "evidence_source": shop.evidence_source,
             "confidence": shop.confidence,
             "is_manual_override": False,
+            "curator_id": str(CURATOR_USER_ID),
             "curator_notes": shop.curator_notes,
+            "evaluated_at": shop.created_at,
+            "created_at": shop.created_at,
+            "updated_at": shop.updated_at,
         }
         if res.data:
             diffs = compare_fields(res.data[0], expected, list(expected.keys()))
             if diffs:
                 raise FixturePayloadConflictError(f"Shop curation {shop.id} conflict: {', '.join(diffs)}")
         else:
-            payload = {
-                **expected,
-                "curator_id": str(CURATOR_USER_ID),
-                "evaluated_at": shop.created_at,
-                "created_at": shop.created_at,
-                "updated_at": shop.updated_at,
-            }
-            supabase.table("shop_curation").insert(payload).execute()
+            supabase.table("shop_curation").insert(expected).execute()
 
     logger.info("Seeding shop curation audit logs...")
     for audit in FIXTURE_CURATION_AUDITS:
@@ -227,19 +251,21 @@ def seed_database_records(supabase: Any) -> None:
         expected = {
             "id": str(audit.id),
             "shop_id": str(audit.shop_id),
+            "old_status": audit.old_status,
             "new_status": audit.new_status,
+            "old_location_count": audit.old_location_count,
             "new_location_count": audit.new_location_count,
+            "changed_by": str(audit.changed_by),
             "change_source": audit.change_source,
             "reason": audit.reason,
-            "changed_by": str(audit.changed_by),
+            "created_at": audit.created_at,
         }
         if res.data:
             diffs = compare_fields(res.data[0], expected, list(expected.keys()))
             if diffs:
                 raise FixturePayloadConflictError(f"Curation audit {audit.id} conflict: {', '.join(diffs)}")
         else:
-            payload = {**expected, "created_at": audit.created_at}
-            supabase.table("shop_curation_audit").insert(payload).execute()
+            supabase.table("shop_curation_audit").insert(expected).execute()
 
     logger.info("Seeding synthetic reviews...")
     for rev in FIXTURE_REVIEWS:
@@ -269,14 +295,14 @@ def seed_database_records(supabase: Any) -> None:
             "id": str(fav.id),
             "user_id": str(fav.user_id),
             "shop_id": str(fav.shop_id),
+            "created_at": fav.created_at,
         }
         if res.data:
             diffs = compare_fields(res.data[0], expected, list(expected.keys()))
             if diffs:
                 raise FixturePayloadConflictError(f"Favorite {fav.id} conflict: {', '.join(diffs)}")
         else:
-            payload = {**expected, "created_at": fav.created_at}
-            supabase.table("favorites").insert(payload).execute()
+            supabase.table("favorites").insert(expected).execute()
 
     logger.info("Seeding claims...")
     for claim in FIXTURE_CLAIMS:
@@ -292,27 +318,29 @@ def seed_database_records(supabase: Any) -> None:
             "business_proof": claim.business_proof,
             "curator_id": str(claim.curator_id),
             "review_notes": claim.review_notes,
+            "reviewed_at": claim.reviewed_at,
+            "created_at": claim.created_at,
+            "updated_at": claim.updated_at,
         }
         if res.data:
             diffs = compare_fields(res.data[0], expected, list(expected.keys()))
             if diffs:
                 raise FixturePayloadConflictError(f"Claim {claim.id} conflict: {', '.join(diffs)}")
         else:
-            payload = {
-                **expected,
-                "reviewed_at": claim.reviewed_at,
-                "created_at": claim.created_at,
-                "updated_at": claim.updated_at,
-            }
-            supabase.table("shop_claims").insert(payload).execute()
+            supabase.table("shop_claims").insert(expected).execute()
 
 
 # ---------------------------------------------------------------------------
 # Verification Logic
 # ---------------------------------------------------------------------------
 
-def verify_dataset(supabase: Any) -> None:
-    """Verify that all fixture entities are present in the database."""
+
+def verify_dataset(supabase: Any) -> bool:
+    """Verify that all fixture entities are present in the database.
+
+    Returns:
+        True if all records are verified, False otherwise.
+    """
     logger.info("Verifying database entities against fixture definitions...")
 
     shop_ids = [str(s.id) for s in FIXTURE_SHOPS]
@@ -337,17 +365,21 @@ def verify_dataset(supabase: Any) -> None:
     print(f"Claims:              {len(claims_res.data):2d} / {len(FIXTURE_CLAIMS):2d}")
     print("==================================================================")
 
-    if (
+    is_complete = (
         len(shops_res.data) == len(FIXTURE_SHOPS)
         and len(curation_res.data) == len(FIXTURE_SHOPS)
         and len(audits_res.data) == len(FIXTURE_CURATION_AUDITS)
         and len(reviews_res.data) == len(FIXTURE_REVIEWS)
         and len(favorites_res.data) == len(FIXTURE_FAVORITES)
         and len(claims_res.data) == len(FIXTURE_CLAIMS)
-    ):
+    )
+
+    if is_complete:
         print("Status: ALL FIXTURE RECORDS VERIFIED SUCCESSFULLY.")
+        return True
     else:
         print("Status: INCOMPLETE DATASET DETECTED.")
+        return False
 
 
 # ---------------------------------------------------------------------------
@@ -418,10 +450,9 @@ def clean_dataset(supabase: Any, hostname: str, dry_run: bool = False) -> None:
     if found["shops"]:
         supabase.table("shops").delete().in_("id", found["shops"]).execute()
 
-    # Two-factor verification for user accounts
-    logger.info("Cleaning up controlled test user accounts...")
-    existing_users_res = supabase.auth.admin.list_users()
-    existing_users = getattr(existing_users_res, "users", existing_users_res) or []
+    # Two-factor verification for user accounts across all pages
+    logger.info("Cleaning up controlled test user accounts across all pages...")
+    existing_users = fetch_all_auth_users(supabase)
     by_id = {str(u.id): u for u in existing_users}
 
     for u_fix in FIXTURE_USERS:
@@ -447,10 +478,24 @@ def clean_dataset(supabase: Any, hostname: str, dry_run: bool = False) -> None:
 # ---------------------------------------------------------------------------
 
 def export_sql(output_path: str) -> None:
-    """Programmatically export raw SQL from the authoritative Python fixture module."""
+    """Programmatically export raw SQL from the authoritative Python fixture module.
+
+    Excludes Auth-dependent entities (reviews, favorites, claims) so the SQL
+    safely executes in environments without synthetic auth.users records.
+    Removes ON CONFLICT DO UPDATE / DO NOTHING so execution fails closed on unexpected existing data.
+    """
     lines = [
-        "-- Programmatically generated seed SQL for LOKAL validation dataset.",
+        "-- Programmatically generated seed SQL for LOKAL validation dataset (Issue #49).",
         "-- Derived directly from backend/app/fixtures/validation_dataset.py",
+        "--",
+        "-- NOTE: This file seeds baseline coffee shops, curation eligibility records,",
+        "-- and curation audit entries. Auth-dependent entities (synthetic reviews,",
+        "-- user favorites, shop claims, and controlled user accounts) are strictly",
+        "-- excluded because they require Supabase Auth GoTrue provisioning.",
+        "--",
+        "-- To provision the complete dataset including Auth accounts, reviews, favorites,",
+        "-- and claims, run the Python management command:",
+        "--     python -m backend.scripts.seed_validation_data seed",
         "",
         "BEGIN;",
         "",
@@ -464,8 +509,7 @@ def export_sql(output_path: str) -> None:
         addr_esc = s.address.replace("'", "''")
         lines.append(
             f"INSERT INTO shops (id, name, address, latitude, longitude, rating, google_place_id, created_at, updated_at) "
-            f"VALUES ('{s.id}', '{name_esc}', '{addr_esc}', {s.latitude}, {s.longitude}, {rating_sql}, '{s.google_place_id}', '{s.created_at}', '{s.updated_at}') "
-            f"ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, address = EXCLUDED.address, latitude = EXCLUDED.latitude, longitude = EXCLUDED.longitude, rating = EXCLUDED.rating, google_place_id = EXCLUDED.google_place_id;"
+            f"VALUES ('{s.id}', '{name_esc}', '{addr_esc}', {s.latitude}, {s.longitude}, {rating_sql}, '{s.google_place_id}', '{s.created_at}', '{s.updated_at}');"
         )
 
     # Shop Curation
@@ -475,8 +519,7 @@ def export_sql(output_path: str) -> None:
         notes_esc = s.curator_notes.replace("'", "''")
         lines.append(
             f"INSERT INTO shop_curation (shop_id, status, location_count, evidence_source, confidence, is_manual_override, curator_id, curator_notes, evaluated_at, created_at, updated_at) "
-            f"VALUES ('{s.id}', '{s.curation_status}', {count_sql}, '{s.evidence_source}', '{s.confidence}', FALSE, '{CURATOR_USER_ID}', '{notes_esc}', '{s.created_at}', '{s.created_at}', '{s.updated_at}') "
-            f"ON CONFLICT (shop_id) DO UPDATE SET status = EXCLUDED.status, location_count = EXCLUDED.location_count, evidence_source = EXCLUDED.evidence_source, confidence = EXCLUDED.confidence, curator_notes = EXCLUDED.curator_notes;"
+            f"VALUES ('{s.id}', '{s.curation_status}', {count_sql}, '{s.evidence_source}', '{s.confidence}', FALSE, '{CURATOR_USER_ID}', '{notes_esc}', '{s.created_at}', '{s.created_at}', '{s.updated_at}');"
         )
 
     # Curation Audit
@@ -486,41 +529,7 @@ def export_sql(output_path: str) -> None:
         reason_esc = a.reason.replace("'", "''")
         lines.append(
             f"INSERT INTO shop_curation_audit (id, shop_id, new_status, new_location_count, changed_by, change_source, reason, created_at) "
-            f"VALUES ('{a.id}', '{a.shop_id}', '{a.new_status}', {count_sql}, '{a.changed_by}', '{a.change_source}', '{reason_esc}', '{a.created_at}') "
-            f"ON CONFLICT (id) DO NOTHING;"
-        )
-
-    # Synthetic Reviews
-    lines.append("\n-- 4. Reviews")
-    for r in FIXTURE_REVIEWS:
-        content_esc = r.content.replace("'", "''")
-        author_esc = r.author_name.replace("'", "''")
-        lines.append(
-            f"INSERT INTO reviews (id, shop_id, user_id, author_name, rating, content, source, created_at, updated_at) "
-            f"VALUES ('{r.id}', '{r.shop_id}', '{r.user_id}', '{author_esc}', {r.rating}, '{content_esc}', '{r.source}', '{r.created_at}', '{r.updated_at}') "
-            f"ON CONFLICT (id) DO UPDATE SET author_name = EXCLUDED.author_name, rating = EXCLUDED.rating, content = EXCLUDED.content;"
-        )
-
-    # Favorites
-    lines.append("\n-- 5. Favorites")
-    for f in FIXTURE_FAVORITES:
-        lines.append(
-            f"INSERT INTO favorites (id, user_id, shop_id, created_at) "
-            f"VALUES ('{f.id}', '{f.user_id}', '{f.shop_id}', '{f.created_at}') "
-            f"ON CONFLICT (user_id, shop_id) DO NOTHING;"
-        )
-
-    # Claims
-    lines.append("\n-- 6. Shop Claims")
-    for c in FIXTURE_CLAIMS:
-        name_esc = c.claimant_name.replace("'", "''")
-        role_esc = c.claimant_role.replace("'", "''")
-        proof_esc = c.business_proof.replace("'", "''")
-        notes_esc = c.review_notes.replace("'", "''")
-        lines.append(
-            f"INSERT INTO shop_claims (id, shop_id, user_id, status, claimant_name, claimant_phone, claimant_role, business_proof, curator_id, review_notes, reviewed_at, created_at, updated_at) "
-            f"VALUES ('{c.id}', '{c.shop_id}', '{c.user_id}', '{c.status}', '{name_esc}', '{c.claimant_phone}', '{role_esc}', '{proof_esc}', '{c.curator_id}', '{notes_esc}', '{c.reviewed_at}', '{c.created_at}', '{c.updated_at}') "
-            f"ON CONFLICT (id) DO UPDATE SET status = EXCLUDED.status, review_notes = EXCLUDED.review_notes;"
+            f"VALUES ('{a.id}', '{a.shop_id}', '{a.new_status}', {count_sql}, '{a.changed_by}', '{a.change_source}', '{reason_esc}', '{a.created_at}');"
         )
 
     lines.append("\nCOMMIT;\n")
@@ -564,9 +573,15 @@ def main() -> None:
         seed_users(supabase)
         seed_database_records(supabase)
         logger.info("Validation dataset seeded successfully.")
-        verify_dataset(supabase)
+        success = verify_dataset(supabase)
+        if not success:
+            logger.error("Verification failed after seeding: incomplete dataset detected.")
+            sys.exit(1)
     elif args.command == "verify":
-        verify_dataset(supabase)
+        success = verify_dataset(supabase)
+        if not success:
+            logger.error("Verification failed: incomplete dataset detected.")
+            sys.exit(1)
     elif args.command == "clean":
         clean_dataset(supabase, target_host, dry_run=args.dry_run)
 

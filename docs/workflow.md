@@ -232,11 +232,11 @@ The single source of truth resides in `backend/app/fixtures/validation_dataset.p
 * **Synthetic Test Fixtures**: 23 synthetic reviews, calibrated ratings, and test menu items exist exclusively on clearly marked `[Test]` synthetic shops.
 * **10 Controlled Test Personas**: Predictable auth users under `@lokal.dev` (`scout.juan` through `scout.hannah`, `owner.roberto`, `curator.admin`).
 
-### CLI Management Commands
+### CLI Management Commands & SQL Export
 Managed via `backend/scripts/seed_validation_data.py`:
 
 ```bash
-# Seed or idempotently verify remote development / local database
+# Seed or idempotently verify remote development / local database (complete dataset)
 python -m backend.scripts.seed_validation_data seed
 
 # Verify record counts across all 6 tables against fixture definitions
@@ -248,20 +248,33 @@ python -m backend.scripts.seed_validation_data clean --dry-run
 # Scoped deletion of fixture-owned records with confirmation prompt
 python -m backend.scripts.seed_validation_data clean
 
-# Export authoritative fixtures into raw SQL seed file
+# Export authoritative fixtures into raw SQL seed file (baseline tables only)
 python -m backend.scripts.seed_validation_data export-sql --output supabase/seed.sql
 ```
 
+> [!NOTE]
+> **SQL Export vs. Python Seed Command**: `supabase/seed.sql` safely provisions baseline tables (`shops`, `shop_curation`, `shop_curation_audit`) without foreign-key failures in local Postgres instances. Auth-dependent entities (`reviews`, `favorites`, `shop_claims`, and controlled test accounts) are strictly excluded from the SQL export because they require Supabase GoTrue Auth provisioning. To provision the complete validation dataset, run the Python `seed` command.
+
+### Required Environment Configuration
+Database-connected validation and seeding commands require the following development configuration in `.env`:
+* `ENVIRONMENT`: Must be set to `development` (fails closed otherwise).
+* `SUPABASE_URL`: Target URL (must match `ALLOWED_TARGET_HOSTS`).
+* `SUPABASE_ANON_KEY`: Client access key.
+* `SUPABASE_SERVICE_ROLE_KEY`: Service role secret required for administrative table mutations and GoTrue Admin user provisioning.
+* `TEST_USER_PASSWORD`: Test password used when creating controlled `@lokal.dev` accounts.
+* `GOOGLE_PLACES_API_KEY` & `GEMINI_API_KEY`: Optional; required only for Tier 4 live integration tests.
+
 ### Safety & Idempotency Safeguards
 1. **Target Allowlist (Fail-Closed)**: Only explicitly allowlisted hosts (`thustdjwwtkhlhbnuvin.supabase.co`, `127.0.0.1`, `localhost`) under `ENVIRONMENT=development` are permitted. Execution fails closed immediately for any other host or environment without bypass flags.
-2. **Read-Before-Write Idempotency**: Existing records are verified against expected fixture payloads. Identical records are left untouched to prevent PostgreSQL `BEFORE UPDATE` triggers from modifying `updated_at` timestamps. Unexpected differences raise an explicit `FixturePayloadConflictError`.
-3. **Safe Auth Identity Handling**: User provisioning checks both UUID and email. Existing matching accounts are left untouched without resetting passwords. Identity mismatches raise `IdentityCollisionError`.
+2. **Read-Before-Write Idempotency**: Existing records are verified against expected fixture payloads across all managed fields (including IDs, foreign keys, and timestamps). Identical records are left untouched to prevent PostgreSQL `BEFORE UPDATE` triggers from modifying `updated_at` timestamps. Unexpected differences raise an explicit `FixturePayloadConflictError`.
+3. **Safe Auth Identity Handling**: User provisioning checks both UUID and email across all paginated user records. Existing matching accounts are left untouched without resetting passwords. Identity mismatches raise `IdentityCollisionError`.
 4. **Scoped Cleanup**: Deletion targets only exact fixture-owned IDs in strict reverse foreign-key order. User accounts are verified for matching UUID and email before deletion.
+5. **Non-Zero Exit Status**: Verification returns a boolean result, and CLI commands (`seed`, `verify`) exit non-zero (`sys.exit(1)`) on an incomplete or inconsistent dataset.
 
 ### 4-Tier Validation Matrix
 1. **Tier 1: Offline Unit & Fixture Tests**
-   * Command: `python -m unittest backend/tests/test_validation_dataset.py`
-   * Tests coordinates, null ratings for real shops, review isolation, user accounts, claims schema, and exact Haversine distance assertions. Requires no database or network.
+   * Commands: `python -m unittest backend/tests/test_validation_dataset.py` and `python -m unittest backend/tests/test_seed_validation_data.py`
+   * Tests coordinates, null ratings for real shops, review isolation, user accounts, claims schema, exact Haversine distance assertions, multi-page auth pagination, non-zero verification exits, and conflict rejection. Requires no database or network.
 2. **Tier 2: Core Regression Tests & Type Checks**
    * Commands:
      * Backend: `python -m unittest discover -s backend/tests`
@@ -269,7 +282,7 @@ python -m backend.scripts.seed_validation_data export-sql --output supabase/seed
      * Mobile TypeScript: `tsc --noEmit --project mobile/tsconfig.json`
 3. **Tier 3: Database-Backed Validation**
    * Commands: `python -m backend.scripts.seed_validation_data seed && python -m backend.scripts.seed_validation_data verify`
-   * Validates database triggers, foreign keys, RLS policies, and counts on the development Supabase project. Requires `SUPABASE_SERVICE_ROLE_KEY`.
+   * Validates database triggers, foreign keys, RLS policies, and counts on the development Supabase project. Requires `SUPABASE_SERVICE_ROLE_KEY` and `TEST_USER_PASSWORD`.
 4. **Tier 4: Provider & AI Integration Checks**
    * Default: Mocked provider tests run as part of Tier 2.
    * Opt-in Live: Live Gemini summarization or Google Places verification when API keys are configured.
