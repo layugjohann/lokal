@@ -336,12 +336,13 @@ def seed_database_records(supabase: Any) -> None:
 
 
 def verify_dataset(supabase: Any) -> bool:
-    """Verify that all fixture entities are present in the database.
+    """Verify that all fixture entities and controlled Auth identities are present and match expected values.
 
     Returns:
-        True if all records are verified, False otherwise.
+        True if all records and auth accounts are verified with matching values, False otherwise.
     """
-    logger.info("Verifying database entities against fixture definitions...")
+    logger.info("Verifying database entities and auth identities against fixture definitions...")
+    errors: list[str] = []
 
     shop_ids = [str(s.id) for s in FIXTURE_SHOPS]
     rev_ids = [str(r.id) for r in FIXTURE_REVIEWS]
@@ -349,37 +350,200 @@ def verify_dataset(supabase: Any) -> bool:
     claim_ids = [str(c.id) for c in FIXTURE_CLAIMS]
     audit_ids = [str(a.id) for a in FIXTURE_CURATION_AUDITS]
 
-    shops_res = supabase.table("shops").select("id").in_("id", shop_ids).execute()
-    curation_res = supabase.table("shop_curation").select("shop_id").in_("shop_id", shop_ids).execute()
-    audits_res = supabase.table("shop_curation_audit").select("id").in_("id", audit_ids).execute()
-    reviews_res = supabase.table("reviews").select("id").in_("id", rev_ids).execute()
-    favorites_res = supabase.table("favorites").select("id").in_("id", fav_ids).execute()
-    claims_res = supabase.table("shop_claims").select("id").in_("id", claim_ids).execute()
+    shops_res = supabase.table("shops").select("*").in_("id", shop_ids).execute()
+    curation_res = supabase.table("shop_curation").select("*").in_("shop_id", shop_ids).execute()
+    audits_res = supabase.table("shop_curation_audit").select("*").in_("id", audit_ids).execute()
+    reviews_res = supabase.table("reviews").select("*").in_("id", rev_ids).execute()
+    favorites_res = supabase.table("favorites").select("*").in_("id", fav_ids).execute()
+    claims_res = supabase.table("shop_claims").select("*").in_("id", claim_ids).execute()
+
+    shops_by_id = {row["id"]: row for row in shops_res.data or []}
+    curation_by_id = {row["shop_id"]: row for row in curation_res.data or []}
+    audits_by_id = {row["id"]: row for row in audits_res.data or []}
+    reviews_by_id = {row["id"]: row for row in reviews_res.data or []}
+    favorites_by_id = {row["id"]: row for row in favorites_res.data or []}
+    claims_by_id = {row["id"]: row for row in claims_res.data or []}
+
+    # 1. Verify Shops
+    for s in FIXTURE_SHOPS:
+        sid = str(s.id)
+        if sid not in shops_by_id:
+            errors.append(f"Shop missing: {sid} ({s.name})")
+        else:
+            expected = {
+                "id": sid,
+                "name": s.name,
+                "address": s.address,
+                "latitude": s.latitude,
+                "longitude": s.longitude,
+                "rating": s.rating,
+                "google_place_id": s.google_place_id,
+                "created_at": s.created_at,
+                "updated_at": s.updated_at,
+            }
+            diffs = compare_fields(shops_by_id[sid], expected, list(expected.keys()))
+            if diffs:
+                errors.append(f"Shop {sid} value mismatch: {', '.join(diffs)}")
+
+    # 2. Verify Shop Curation
+    for s in FIXTURE_SHOPS:
+        sid = str(s.id)
+        if sid not in curation_by_id:
+            errors.append(f"Shop curation missing: {sid}")
+        else:
+            expected = {
+                "shop_id": sid,
+                "status": s.curation_status,
+                "location_count": s.branch_count,
+                "evidence_source": s.evidence_source,
+                "confidence": s.confidence,
+                "is_manual_override": False,
+                "curator_id": str(CURATOR_USER_ID),
+                "curator_notes": s.curator_notes,
+                "evaluated_at": s.created_at,
+                "created_at": s.created_at,
+                "updated_at": s.updated_at,
+            }
+            diffs = compare_fields(curation_by_id[sid], expected, list(expected.keys()))
+            if diffs:
+                errors.append(f"Shop curation {sid} value mismatch: {', '.join(diffs)}")
+
+    # 3. Verify Curation Audits
+    for a in FIXTURE_CURATION_AUDITS:
+        aid = str(a.id)
+        if aid not in audits_by_id:
+            errors.append(f"Curation audit missing: {aid}")
+        else:
+            expected = {
+                "id": aid,
+                "shop_id": str(a.shop_id),
+                "old_status": a.old_status,
+                "new_status": a.new_status,
+                "old_location_count": a.old_location_count,
+                "new_location_count": a.new_location_count,
+                "changed_by": str(a.changed_by),
+                "change_source": a.change_source,
+                "reason": a.reason,
+                "created_at": a.created_at,
+            }
+            diffs = compare_fields(audits_by_id[aid], expected, list(expected.keys()))
+            if diffs:
+                errors.append(f"Curation audit {aid} value mismatch: {', '.join(diffs)}")
+
+    # 4. Verify Reviews
+    for r in FIXTURE_REVIEWS:
+        rid = str(r.id)
+        if rid not in reviews_by_id:
+            errors.append(f"Review missing: {rid}")
+        else:
+            expected = {
+                "id": rid,
+                "shop_id": str(r.shop_id),
+                "user_id": str(r.user_id),
+                "author_name": r.author_name,
+                "rating": r.rating,
+                "content": r.content,
+                "source": r.source,
+                "created_at": r.created_at,
+                "updated_at": r.updated_at,
+            }
+            diffs = compare_fields(reviews_by_id[rid], expected, list(expected.keys()))
+            if diffs:
+                errors.append(f"Review {rid} value mismatch: {', '.join(diffs)}")
+
+    # 5. Verify Favorites
+    for f in FIXTURE_FAVORITES:
+        fid = str(f.id)
+        if fid not in favorites_by_id:
+            errors.append(f"Favorite missing: {fid}")
+        else:
+            expected = {
+                "id": fid,
+                "user_id": str(f.user_id),
+                "shop_id": str(f.shop_id),
+                "created_at": f.created_at,
+            }
+            diffs = compare_fields(favorites_by_id[fid], expected, list(expected.keys()))
+            if diffs:
+                errors.append(f"Favorite {fid} value mismatch: {', '.join(diffs)}")
+
+    # 6. Verify Claims
+    for c in FIXTURE_CLAIMS:
+        cid = str(c.id)
+        if cid not in claims_by_id:
+            errors.append(f"Claim missing: {cid}")
+        else:
+            expected = {
+                "id": cid,
+                "shop_id": str(c.shop_id),
+                "user_id": str(c.user_id),
+                "status": c.status,
+                "claimant_name": c.claimant_name,
+                "claimant_phone": c.claimant_phone,
+                "claimant_role": c.claimant_role,
+                "business_proof": c.business_proof,
+                "curator_id": str(c.curator_id),
+                "review_notes": c.review_notes,
+                "reviewed_at": c.reviewed_at,
+                "created_at": c.created_at,
+                "updated_at": c.updated_at,
+            }
+            diffs = compare_fields(claims_by_id[cid], expected, list(expected.keys()))
+            if diffs:
+                errors.append(f"Claim {cid} value mismatch: {', '.join(diffs)}")
+
+    # 7. Verify Controlled Auth Accounts across all pages
+    existing_users = fetch_all_auth_users(supabase)
+    by_id = {str(u.id): u for u in existing_users}
+    by_email = {u.email.lower(): u for u in existing_users if getattr(u, "email", None)}
+
+    auth_verified_count = 0
+    for u_fix in FIXTURE_USERS:
+        uid_str = str(u_fix.id)
+        email_str = u_fix.email.lower()
+
+        u_by_id = by_id.get(uid_str)
+        u_by_email = by_email.get(email_str)
+
+        if not u_by_id:
+            if u_by_email:
+                errors.append(
+                    f"Auth user ID mismatch: email '{email_str}' has ID {u_by_email.id}, expected '{uid_str}'"
+                )
+            else:
+                errors.append(f"Missing Auth user: {email_str} ({uid_str})")
+        else:
+            if u_by_id.email.lower() != email_str:
+                errors.append(
+                    f"Auth user email mismatch for ID {uid_str}: found '{u_by_id.email}', expected '{email_str}'"
+                )
+            elif u_by_email and str(u_by_email.id) != uid_str:
+                errors.append(
+                    f"Auth user email collision for '{email_str}': multiple records or ID mismatch"
+                )
+            else:
+                auth_verified_count += 1
 
     print("\n================== VALIDATION DATASET INTEGRITY ==================")
-    print(f"Shops:               {len(shops_res.data):2d} / {len(FIXTURE_SHOPS):2d}")
-    print(f"Shop Curation:       {len(curation_res.data):2d} / {len(FIXTURE_SHOPS):2d}")
-    print(f"Curation Audits:     {len(audits_res.data):2d} / {len(FIXTURE_CURATION_AUDITS):2d}")
-    print(f"Reviews:             {len(reviews_res.data):2d} / {len(FIXTURE_REVIEWS):2d}")
-    print(f"Favorites:           {len(favorites_res.data):2d} / {len(FIXTURE_FAVORITES):2d}")
-    print(f"Claims:              {len(claims_res.data):2d} / {len(FIXTURE_CLAIMS):2d}")
+    print(f"Shops:               {len(shops_by_id):2d} / {len(FIXTURE_SHOPS):2d}")
+    print(f"Shop Curation:       {len(curation_by_id):2d} / {len(FIXTURE_SHOPS):2d}")
+    print(f"Curation Audits:     {len(audits_by_id):2d} / {len(FIXTURE_CURATION_AUDITS):2d}")
+    print(f"Reviews:             {len(reviews_by_id):2d} / {len(FIXTURE_REVIEWS):2d}")
+    print(f"Favorites:           {len(favorites_by_id):2d} / {len(FIXTURE_FAVORITES):2d}")
+    print(f"Claims:              {len(claims_by_id):2d} / {len(FIXTURE_CLAIMS):2d}")
+    print(f"Auth Users:          {auth_verified_count:2d} / {len(FIXTURE_USERS):2d}")
     print("==================================================================")
 
-    is_complete = (
-        len(shops_res.data) == len(FIXTURE_SHOPS)
-        and len(curation_res.data) == len(FIXTURE_SHOPS)
-        and len(audits_res.data) == len(FIXTURE_CURATION_AUDITS)
-        and len(reviews_res.data) == len(FIXTURE_REVIEWS)
-        and len(favorites_res.data) == len(FIXTURE_FAVORITES)
-        and len(claims_res.data) == len(FIXTURE_CLAIMS)
-    )
-
-    if is_complete:
-        print("Status: ALL FIXTURE RECORDS VERIFIED SUCCESSFULLY.")
-        return True
-    else:
-        print("Status: INCOMPLETE DATASET DETECTED.")
+    if errors:
+        for err in errors[:10]:
+            logger.warning(f"Integrity issue: {err}")
+        if len(errors) > 10:
+            logger.warning(f"... and {len(errors) - 10} more integrity issues.")
+        print(f"Status: FIXTURE INTEGRITY VERIFICATION FAILED ({len(errors)} issues detected).")
         return False
+
+    print("Status: ALL FIXTURE RECORDS AND AUTH IDENTITIES VERIFIED SUCCESSFULLY.")
+    return True
 
 
 # ---------------------------------------------------------------------------
@@ -412,7 +576,40 @@ def inspect_fixture_records(supabase: Any) -> dict[str, list[str]]:
 
 
 def clean_dataset(supabase: Any, hostname: str, dry_run: bool = False) -> None:
-    """Safely delete fixture-owned records using exact IDs and two-factor user checks."""
+    """Safely delete fixture-owned records using exact IDs and two-factor user checks.
+
+    Validates all controlled Auth identities before performing any destructive operation.
+    """
+    logger.info("Validating controlled Auth test accounts before any destructive operations...")
+    existing_users = fetch_all_auth_users(supabase)
+    by_id = {str(u.id): u for u in existing_users}
+    by_email = {u.email.lower(): u for u in existing_users if getattr(u, "email", None)}
+
+    users_to_delete: list[Any] = []
+    for u_fix in FIXTURE_USERS:
+        uid_str = str(u_fix.id)
+        email_str = u_fix.email.lower()
+
+        u_by_id = by_id.get(uid_str)
+        u_by_email = by_email.get(email_str)
+
+        # Check UUID-to-email collision
+        if u_by_id and u_by_id.email.lower() != email_str:
+            raise IdentityCollisionError(
+                f"Safety abort: Account {uid_str} has email '{u_by_id.email}', "
+                f"expected '{email_str}'. Deletion halted with zero records modified."
+            )
+
+        # Check email-to-UUID collision
+        if u_by_email and str(u_by_email.id) != uid_str:
+            raise IdentityCollisionError(
+                f"Safety abort: Account with email '{email_str}' has ID {u_by_email.id}, "
+                f"expected '{uid_str}'. Deletion halted with zero records modified."
+            )
+
+        if u_by_id:
+            users_to_delete.append(u_by_id)
+
     found = inspect_fixture_records(supabase)
 
     print(f"\n================ DRY-RUN CLEANUP PREVIEW [Target: {hostname}] ================")
@@ -422,6 +619,7 @@ def clean_dataset(supabase: Any, hostname: str, dry_run: bool = False) -> None:
     print(f"Curation Audits to delete:      {len(found['shop_curation_audit'])}")
     print(f"Curation entries to delete:     {len(found['shop_curation'])}")
     print(f"Shops to delete:                {len(found['shops'])}")
+    print(f"Auth test accounts to delete:   {len(users_to_delete)}")
     print("==============================================================================")
 
     if dry_run:
@@ -450,23 +648,7 @@ def clean_dataset(supabase: Any, hostname: str, dry_run: bool = False) -> None:
     if found["shops"]:
         supabase.table("shops").delete().in_("id", found["shops"]).execute()
 
-    # Two-factor verification for user accounts across all pages
-    logger.info("Cleaning up controlled test user accounts across all pages...")
-    existing_users = fetch_all_auth_users(supabase)
-    by_id = {str(u.id): u for u in existing_users}
-
-    for u_fix in FIXTURE_USERS:
-        u_obj = by_id.get(str(u_fix.id))
-        if not u_obj:
-            continue
-
-        # Two-factor check: both UUID and email must match expected fixture persona
-        if u_obj.email.lower() != u_fix.email.lower():
-            raise IdentityCollisionError(
-                f"Safety abort: Account {u_obj.id} has email '{u_obj.email}', "
-                f"expected '{u_fix.email}'. Deletion halted."
-            )
-
+    for u_obj in users_to_delete:
         logger.info(f"Deleting test user account {u_obj.email} ({u_obj.id})...")
         supabase.auth.admin.delete_user(str(u_obj.id))
 

@@ -282,7 +282,7 @@ Database-connected validation and seeding commands require the following develop
      * Mobile TypeScript: `tsc --noEmit --project mobile/tsconfig.json`
 3. **Tier 3: Database-Backed Validation**
    * Commands: `python -m backend.scripts.seed_validation_data seed && python -m backend.scripts.seed_validation_data verify`
-   * Validates database triggers, foreign keys, RLS policies, and counts on the development Supabase project. Requires `SUPABASE_SERVICE_ROLE_KEY` and `TEST_USER_PASSWORD`.
+   * Validates database triggers, foreign key constraints, table constraints, GoTrue auth user provisioning, and full fixture data integrity on the development Supabase project. Requires `SUPABASE_SERVICE_ROLE_KEY` and `TEST_USER_PASSWORD`.
 4. **Tier 4: Provider & AI Integration Checks**
    * Default: Mocked provider tests run as part of Tier 2.
    * Opt-in Live: Live Gemini summarization or Google Places verification when API keys are configured.
