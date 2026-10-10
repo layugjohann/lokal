@@ -37,6 +37,7 @@ LOKAL aims to support local businesses by making discovery easier while helping 
 * ✨ Personalized coffee shop recommendations
 * 🏪 Coffee shop owner claiming and dashboard
 * 👥 Community feed and social sharing
+* 🧪 Realistic MVP validation dataset and idempotent seeding tooling
 
 ### Planned Features
 
@@ -117,7 +118,7 @@ The workflow combines:
 
 🚧 **Phase 3 — MVP Polish & Validation**
 
-The core MVP capabilities are implemented. Current work focuses on establishing a realistic, development-safe validation dataset, testing the discovery-to-AI-summary experience end-to-end, and refining the UI/UX using the approved design direction. See [the current project state](docs/CURRENT_STATE.md) for implementation details and [the LOKAL UI design specification](docs/ui-design-spec.md) for the approved visual rules.
+The core MVP capabilities are implemented, and a realistic, development-safe validation dataset is established. Current work focuses on testing the discovery-to-AI-summary experience end-to-end and refining the UI/UX using the approved design direction. See [the current project state](docs/CURRENT_STATE.md) for implementation details and [the LOKAL UI design specification](docs/ui-design-spec.md) for the approved visual rules.
 
 ---
 

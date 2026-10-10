@@ -8,11 +8,11 @@ This document provides a snapshot of the **current state of the `main` branch** 
 
 **Phase 3 — MVP Polish & Validation**
 
-The project bootstrapping and core application feature phases are complete. The mobile application foundation, FastAPI backend, Supabase integration, database schema, user authentication, maps/location integration, coffee shop CRUD API, nearby coffee shop discovery, independent business eligibility and curation, external review data layer, first-party LOKAL user reviews, mobile user authentication with secure session management, AI-generated review summaries, AI-generated "Must Try" recommendations, favorite coffee shops, the user favorites list / profile discovery flow, advanced shop search and filtering, personalized coffee shop recommendations, coffee shop owner claiming and dashboard, and community feed and social sharing are established.
+The project bootstrapping and core application feature phases are complete. The mobile application foundation, FastAPI backend, Supabase integration, database schema, user authentication, maps/location integration, coffee shop CRUD API, nearby coffee shop discovery, independent business eligibility and curation, external review data layer, first-party LOKAL user reviews, mobile user authentication with secure session management, AI-generated review summaries, AI-generated "Must Try" recommendations, favorite coffee shops, the user favorites list / profile discovery flow, advanced shop search and filtering, personalized coffee shop recommendations, coffee shop owner claiming and dashboard, community feed and social sharing, and realistic MVP validation dataset with idempotent development tooling are established.
 
 The original LOKAL MVP objective is now functionally covered: **locate local independent coffee shops and help users quickly understand each shop through AI-generated review summaries**.
 
-The project is now focused on validating and polishing that MVP rather than expanding the feature surface by default. Current work should prioritize **UI/UX refinement**, **populating the database with realistic data**, and **end-to-end testing against that data** so the core discovery and AI-summary experience can be evaluated as a real product.
+The project is now focused on validating and polishing that MVP rather than expanding the feature surface by default. Current work should prioritize **UI/UX refinement** and **end-to-end testing against the realistic validation dataset** so the core discovery and AI-summary experience can be evaluated as a real product.
 
 Features such as coffee shop menus and photo galleries remain future exploration candidates and are not required for the current MVP definition.
 
@@ -20,18 +20,17 @@ Features such as coffee shop menus and photo galleries remain future exploration
 
 🟢 **On Track**
 
-The core application stack is operational. **Community Feed & Social Sharing (GitHub Issue #47)** is the latest completed feature and marks the completion of the currently planned core application feature expansion.
+The core application stack is operational. **Establish Realistic MVP Validation Dataset (GitHub Issue #49)** is the latest completed feature, establishing a canonical 23-shop dataset, controlled test personas, and safe idempotent seeding, verification, and cleanup tooling.
 
-The original LOKAL MVP is centered on a simple product loop: **locate local independent coffee shops and quickly understand each shop through AI-generated review summaries**. The application already provides the underlying discovery, curation, review-data, shop-detail, and AI-summary capabilities needed for that loop.
+The original LOKAL MVP is centered on a simple product loop: **locate local independent coffee shops and quickly understand each shop through AI-generated review summaries**. The application already provides the underlying discovery, curation, review-data, shop-detail, AI-summary capabilities, and realistic validation data needed for that loop.
 
 The current phase is therefore focused on **MVP Polish & Validation** rather than automatically adding more product features. The immediate priorities are:
-* **UI/UX refinement** across the core discovery and shop-understanding experience.
-* **Realistic database population** with enough varied shop and review data to exercise the application meaningfully.
-* **End-to-end validation** of the MVP using that realistic data, including discovery, shop details, review data, and AI-generated summaries.
+* **UI/UX refinement** across the core discovery and shop-understanding experience according to `docs/ui-design-spec.md`.
+* **End-to-end validation** of the MVP using the established realistic dataset, including discovery, shop details, review data, and AI-generated summaries.
 
 The goal of this phase is to determine whether the existing MVP experience is polished, coherent, reliable, and useful with realistic data. **Coffee shop menus and photo galleries remain future exploration candidates and are not required to satisfy the current MVP definition.**
 
-The latest merged implementation is verified through **404 passing backend tests**, **209 passing mobile tests**, **109 passing database pgTAP assertions**, and **0 TypeScript compilation errors**.
+The latest merged implementation is verified through **427 passing backend tests**, **209 passing mobile tests**, **109 passing database pgTAP assertions**, and **0 TypeScript compilation errors**.
 
 The engineering workflow remains formalized under the **AI-Assisted Engineering Workflow**.
 
@@ -39,63 +38,47 @@ The next work cycle should begin only after the current state is synchronized an
 
 # Latest Completed Feature
 
-## GitHub Issue #47 — Community Feed and Social Sharing
+## GitHub Issue #49 — Establish Realistic MVP Validation Dataset
 
 **Status:** ✅ Completed
 
 ### Completed Work
 
-* **Database Schema, Migrations, & Stored Procedures (`supabase/migrations/20261007000000_community_feed.sql`)**:
-  * Created partial chronological index `idx_reviews_community_feed ON reviews (created_at DESC, id DESC) WHERE source = 'lokal'` optimizing community feed lookups.
-  * Implemented community feed stored procedure `get_community_feed(p_limit, p_offset)`:
-    * Declared `SECURITY DEFINER STABLE` with `SET search_path = public, pg_temp`.
-    * Enforces inner joins on `shops` and `shop_curation` strictly requiring `status = 'APPROVED'`.
-    * Guarantees deterministic chronological ordering: `ORDER BY r.created_at DESC, r.id DESC`.
-    * Projects privacy-safe review and shop fields: `id`, `shop_id`, `shop_name`, `shop_address`, `rating`, `content`, `author_name`, `created_at`, `updated_at`. Permitted IDs (`review.id` and `shop_id`) allow client-side keying and navigation, while strictly excluding sensitive user identifiers (`user_id`, emails, claim info, and curator notes).
-    * Implemented bounded pagination: clamps limit between 1 and 50 (default 20), fetches `limit + 1` rows internally, and returns at most `limit + 1` rows to enable authoritative backend derivation of `has_more`.
-    * Revoked execution permissions from `PUBLIC` and `anon`; granted strictly to `authenticated` and `service_role`.
-  * Created comprehensive pgTAP test suite `supabase/tests/04_community_feed.sql` containing **12 assertions** covering execution permissions, deterministic ordering, limit + 1 extra row behavior, offset paging, curation filtering, source isolation (`source = 'lokal'`), dynamic curation demotion, review updates and deletions, and privacy projection.
-* **Backend Community Service & Endpoints (FastAPI)**:
-  * Implemented `GET /api/v1/community/feed` endpoint in `backend/app/api/v1/endpoints/community.py`:
-    * Protected by `get_current_user` and `get_authenticated_supabase`.
-    * Query parameters: `limit` (default 20, `ge=1, le=50`) and `offset` (default 0, `ge=0`).
-    * Mounted on API v1 router under `/community` with tag `["Community"]`.
-  * Implemented `CommunityService` in `backend/app/services/community.py`:
-    * Enforces bounded limit clamping (`1 <= limit <= 50`).
-    * Invokes `get_community_feed` RPC via authenticated Supabase client.
-    * Derives authoritative `has_more = len(raw_items) > limit`.
-    * Slices items to `raw_items[:limit]`, returning at most the requested limit.
-    * Sanitizes database exceptions into HTTP 500 without leaking internal database errors.
-  * Defined Pydantic schemas in `backend/app/schemas/community.py`:
-    * `CommunityFeedItem`: permitted navigation IDs (`id`, `shop_id`), shop metadata, rating, content, author display name, timestamps, and computed `is_edited` field (`bool(updated_at and updated_at != created_at)`).
-    * `CommunityFeedResponse`: `items: list[CommunityFeedItem]` and `has_more: bool`.
-  * Added 9 comprehensive backend regression tests in `backend/tests/test_community_feed.py`, bringing the total backend suite to **404 passing tests**.
-* **Mobile Community Feed Experience & Social Sharing (React Native + Expo)**:
-  * Added top-left `👥 Community` button on `LokalMapView` (`top: 50, left: 16`), mirroring the top-right `Profile` button.
-  * Implemented modal feed view `CommunityFeedView.tsx` with `presentationStyle="pageSheet"`:
-    * Displays chronological cards with star ratings, author display names, relative timestamps, and review excerpts.
-    * Full asynchronous lifecycle handling: loading indicator, empty state, localized error banner with retry action, pull-to-refresh spinner, and infinite scroll footer spinner.
-    * Inline navigation: "View Shop" opens `ShopDetailCard` with a `< Back to Community` action, seamlessly preserving underlying feed state.
-    * Monotonic request guard: `shopRequestIdRef = useRef(0)` invalidating in-flight shop fetches on rapid re-selection and incremented on modal dismissal (`!visible || !authToken`) to prevent late responses from repopulating state after close.
-  * Implemented pure request coordinator `CommunityFeedController` in `mobile/src/hooks/useCommunityFeed.ts`:
-    * Monotonic request sequence tracking (`requestId`) discarding out-of-order responses.
-    * Infinite scroll `loadMore` with existing ID deduplication and pagination bounds.
-    * Strict principal isolation: immediately clears `items` and resets `hasMore` to `false` when principal changes in `loadInitial` and `refresh`, ensuring failed requests never restore previous principal data.
-    * Prevents pagination deadlocks: clears `isLoadingMore = false` in `refresh()` catch block.
-    * Active cancellation: `cancel()` increments `requestId` and immediately clears `isLoading`, `isLoadingMore`, and `isRefreshing`.
-  * Implemented native social sharing utilities in `mobile/src/services/communityService.ts`:
-    * `shareCommunityReview`: formats clean plain-text share message with LOKAL branding, shop name, star rating, author attribution, and bounded review excerpt ($\le 180$ characters with ellipsis). Contains zero internal IDs.
-    * `shareShop`: formats clean plain-text share message with shop name, address, and rating.
-    * Integrated native `Share` action button in `ShopDetailCard` header.
-    * Graceful error and cancellation handling avoiding UI crashes across platforms.
-  * Added mobile unit tests in `mobile/tests/communityService.test.mjs` (10 tests), `mobile/tests/communityFeedController.test.mjs` (15 tests), and `mobile/tests/communityFeedShopSelection.test.mjs` (5 tests), bringing the mobile test suite to **209 passing tests**.
+* **Canonical Dataset Fixture Layer (`backend/app/fixtures/validation_dataset.py`)**:
+  * Established a single source of truth for the 23-shop validation dataset:
+    * **18 Real Metro Manila Independent Cafes (Category A):** Distinct coordinates, real Google Place IDs, `rating = None` preserving external provenance, and rich synthetic first-party reviews covering brew craft, specialty items, and ambience.
+    * **3 Synthetic Edge/Boundary Shops (Category B):** Explicit test cases including sparse reviews (`< 3` usable reviews to exercise `insufficient_reviews` UI states in AI summaries and recommendations), a 5-star boundary shop, and a 1-star boundary shop.
+    * **2 Excluded Non-Independent Chain Competitors (Category C):** Commercial chain entities (`EXCLUDED` status) ensuring curation filtering excludes non-independent businesses from public discovery, community feed, and favorites.
+  * **23 Curation Records:** Seeded across `APPROVED` (20), `EXCLUDED` (2), and `PENDING_REVIEW` (1) with realistic curator notes, confidence scores, and evidence metadata.
+  * **23 Curation Audit Log Entries:** Append-only transition events with deterministic UUIDs, timestamps, and curator transition justifications.
+  * **23 Synthetic LOKAL Reviews:** Spanning ratings 1–5, grounded text for "Must Try" item extraction, author names snapshotting, and realistic timestamps.
+  * **8 User Favorites:** Diverse preference distributions linking test personas to approved cafes.
+  * **1 Coffee Shop Ownership Claim:** Verified claim for Roberto Santos on Chapter Coffee Roastery & Cafe (`claimant_role = "Owner"`), testing owner dashboard metrics.
+  * **10 Controlled Supabase Auth Test Personas:** 8 user scouts, 1 verified shop owner (`owner.roberto@lokal.dev`), and 1 curator admin (`curator.admin@lokal.dev`) with deterministic UUIDs (`00000000-0000-4000-b000-000000000001` through `0010`).
+  * **Secure Credential Strategy:** Zero hardcoded passwords; passwords read securely from `TEST_USER_PASSWORD` in local environment configuration and never logged.
+* **Idempotent CLI Seeding & Management Tooling (`backend/scripts/seed_validation_data.py`)**:
+  * Implemented unified CLI utility supporting `seed`, `verify`, `clean`, and `export-sql` commands:
+    * `python -m backend.scripts.seed_validation_data seed`: Seeds controlled auth users and database records idempotently.
+    * `python -m backend.scripts.seed_validation_data verify`: Read-only verification comparing database records and auth accounts against fixture definitions; exits non-zero (`sys.exit(1)`) on discrepancies.
+    * `python -m backend.scripts.seed_validation_data clean [--force]`: Interactive or forced cleanup previewing and deleting only fixture-owned records in strict reverse foreign-key order.
+    * `python -m backend.scripts.seed_validation_data export-sql [output_path]`: Generates raw offline SQL seed script for non-Auth entities.
+  * **Fail-Closed Development Host Protection:** Validates target Supabase host against `SUPABASE_ALLOWED_SEED_HOSTS` (`localhost`, `127.0.0.1`, and explicit dev project hosts); immediately halts execution on non-allowed or production hosts.
+  * **Read-Before-Write Timestamp-Safe Idempotency:** Queries existing records by primary key, normalizes types, and compares all fixture-managed fields. Identical records are left untouched to prevent firing PostgreSQL `updated_at` triggers; unexpected field discrepancies raise explicit conflicts (`SeedConflictError`).
+  * **Paginated GoTrue User Discovery & Preservation:** Iterates all pages of Supabase Auth `list_users` (50 per page) to detect collisions across both UUID and email. Existing matching accounts are preserved untouched without resetting passwords.
+  * **Pre-Deletion Auth Safety Precondition:** `clean_dataset` executes full UUID-to-email and email-to-UUID identity validation across all Auth users before displaying dry-run counts, prompting confirmation, or executing any deletions, raising `IdentityCollisionError` on any mismatch and leaving all data intact.
+  * **Strict Reverse FK Cleanup Order:** Purges only fixture-owned IDs across `shop_claims` $\to$ `favorites` $\to$ `reviews` $\to$ `shop_curation_audit` $\to$ `shop_curation` $\to$ `shops` $\to$ `auth.users`, preserving unrelated application data.
+* **Offline Raw SQL Seeding Contract (`supabase/seed.sql`)**:
+  * Exported 90 lines of clean, standards-compliant SQL inserting 23 shops, 23 curation records, and 23 audit log records.
+  * Explicitly excludes Auth-dependent entities (`reviews`, `favorites`, `shop_claims`) to ensure migration scripts and local databases can run offline without foreign key constraint failures.
+  * Omits `ON CONFLICT` clauses, failing closed on unexpected key collisions.
 * **Automated Verification**:
-  * Database pgTAP test suite: **109 / 109 assertions passed** across 4 suites (`supabase test db`).
-  * Backend regression suite: **404 / 404 tests passed** (`./backend/.venv/bin/python -m unittest discover -s backend/tests -v`).
-  * Mobile test suite: **209 / 209 tests passed** (`npm test --prefix mobile`).
-  * Mobile TypeScript compiler: **0 errors** (`./mobile/node_modules/.bin/tsc --noEmit --project mobile/tsconfig.json`).
+  * Fixture Invariant Tests (`backend/tests/test_validation_dataset.py`): **9 / 9 tests passed** verifying UUID determinism, Manila geospatial bounds, rating ranges, review lengths, and curation states.
+  * Seeding Script Unit Tests (`backend/tests/test_seed_validation_data.py`): **14 / 14 tests passed** verifying multi-page auth pagination, matching account preservation, pre-deletion safety aborts, field-by-field verification, zero writes on identical records, and SQL export contracts.
+  * Backend Regression Suite: **427 / 427 tests passed** (`./backend/.venv/bin/python -m unittest discover -s backend/tests -v`).
+  * Mobile Test Suite: **209 / 209 tests passed** (`npm test --prefix mobile`).
+  * Mobile TypeScript Compiler: **0 errors** (`./mobile/node_modules/.bin/tsc --noEmit --project mobile/tsconfig.json`).
 * **Pull Request**:
-  * Pull Request #48 reviewed by CodeRabbit, all actionable findings resolved (monotonic shop-selection race protection, refresh error pagination unblocking, cancel loading flag reset, and principal-switch refresh isolation), approved, and merged into `main` by the Product Owner (merge commit `c474dbaf`).
+  * Pull Request #50 reviewed, all CodeRabbit and Product Owner findings resolved (GoTrue pagination, non-zero verify exit status, SQL export auth decoupling, field-level verification, pre-deletion auth preconditions, and idempotency write assertions), approved, and merged into `main` by the Product Owner (merge commit `a5aeadcb`).
 
 ---
 
@@ -126,6 +109,7 @@ The next work cycle should begin only after the current state is synchronized an
 | Issue #43 — Personalized Coffee Shop Recommendations         | ✅ Complete |
 | Issue #45 — Coffee Shop Owner Claiming and Dashboard         | ✅ Complete |
 | Issue #47 — Community Feed and Social Sharing                | ✅ Complete |
+| Issue #49 — Realistic MVP Validation Dataset                 | ✅ Complete |
 
 ---
 
@@ -370,8 +354,16 @@ The FastAPI backend currently provides:
   * `verify_active_owner`: Enforces active approved claim (`status = 'APPROVED'`) and validates shop curation remains `APPROVED`. Fails closed with `HTTP 403 Forbidden` if ownership is unapproved or shop curation is demoted.
   * `GET /api/v1/owner/shops/{shop_id}/dashboard`: Returns `OwnerDashboardResponse` containing full shop details, active claim info, PostgreSQL-computed `lokal_reviews_count` and `lokal_rating`, and bounded `recent_reviews` (top 5, stripping sensitive user UUIDs and emails).
   * `PATCH /api/v1/owner/shops/{shop_id}`: Allows owners to update `name` and `address` via `OwnerShopUpdate`. Strictly forbids protected/system fields (`rating`, `google_place_id`, `latitude`, `longitude`, `curation status`, etc.) using Pydantic `extra = "forbid"` (returning `HTTP 422 Unprocessable Entity`), while supporting explicit address clearing (`{"address": null}`).
+* **Validation Dataset Fixture Layer & Management Tooling**:
+  * Canonical Python dataset fixtures (`backend/app/fixtures/validation_dataset.py`) defining 23 shops, 23 curation records, 23 audit log events, 23 reviews, 8 favorites, 1 ownership claim, and 10 controlled Auth test accounts.
+  * Idempotent management CLI (`backend/scripts/seed_validation_data.py`) providing `seed`, `verify`, `clean`, and `export-sql` commands.
+  * Fail-closed host allowlisting (`SUPABASE_ALLOWED_SEED_HOSTS`) preventing execution against production environments.
+  * Read-before-write comparison logic leaving matching database records untouched so PostgreSQL `updated_at` triggers do not modify timestamps.
+  * Multi-page GoTrue Auth pagination (`list_users`) for robust UUID/email collision detection.
+  * Strict pre-deletion identity preconditions halting before dry-run preview, prompt, or deletion on any test account collision.
+  * Clean offline SQL export (`supabase/seed.sql`) containing non-Auth entities without foreign key conflicts or `ON CONFLICT` clauses.
 * Robust error handling distinguishing client input errors (`400`/`422`), missing records (`404`), unique constraint conflicts (`409`), external provider failures (`502`), service unavailability (`503`), and sanitized generic server failures (`500`).
-* Automated backend regression testing with **404 passing tests**, covering auth, shops, curation, nearby discovery with advanced search and filtering, external reviews, first-party user reviews, AI review summaries, AI must-try recommendations, favorite coffee shops (including the favorites list endpoint), personalized coffee shop recommendations (including taste profiling, caching, and explanation synthesis), coffee shop ownership claiming and curator verification lifecycle, owner dashboard metrics and profile editing with protected-field validation, community feed pagination and privacy filtering, curator authorization, and service-role fail-closed behavior.
+* Automated backend regression testing with **427 passing tests**, covering auth, shops, curation, nearby discovery with advanced search and filtering, external reviews, first-party user reviews, AI review summaries, AI must-try recommendations, favorite coffee shops (including the favorites list endpoint), personalized coffee shop recommendations (including taste profiling, caching, and explanation synthesis), coffee shop ownership claiming and curator verification lifecycle, owner dashboard metrics and profile editing with protected-field validation, community feed pagination and privacy filtering, curator authorization, validation dataset invariants, idempotent seeding safeguards, and service-role fail-closed behavior.
 
 ---
 
@@ -490,13 +482,13 @@ Independent-business eligibility and curation are maintained as a separate domai
 
 # Next Task
 
-**Immediate next task: [GitHub Issue #49 — Establish Realistic MVP Validation Dataset](https://github.com/layugjohann/lokal/issues/49).**
+**Immediate next focus: Phase 3 — MVP Polish & Validation (UI/UX Refinement & End-to-End Validation)**
 
-Issue #49 is limited to preparing a repeatable, development-safe dataset and validating the existing discovery, shop-detail, review, AI-summary, Must Try, and community-feed experience against realistic data. It does not authorize UI redesigns, new features, policy changes, or production-data operations.
+With Issue #49 merged, the realistic validation dataset and idempotent database tooling are in place. The next priorities for Phase 3 are:
+1. **UI/UX Refinement**: Implement the approved visual identity and interaction design documented in [`docs/ui-design-spec.md`](ui-design-spec.md), starting with authentication personalization and continuing through the core discovery and detail experience. The existing map rendering and behavior remain explicitly protected.
+2. **End-to-End MVP Validation**: Validate the complete loop (nearby discovery $\to$ shop detail $\to$ review reading $\to$ AI summaries $\to$ "Must Try" recommendations $\to$ favoriting $\to$ owner claiming $\to$ community feed) against the populated 23-shop dataset.
 
-Agy must follow Issue #49's planning gate: inspect the repository and relevant data mechanisms, present a concrete plan, and wait for explicit Product Owner approval before creating a branch, modifying files, or writing database data.
-
-**UI/UX work is a separate workstream.** The visual direction is approved and documented in [`docs/ui-design-spec.md`](ui-design-spec.md), but implementation has not started. Once the dataset work has proceeded through its own workflow, UI work should begin through a separate focused Issue, starting with authentication personalization. The existing map rendering and behavior remain explicitly protected.
+The next work cycle will begin when the Product Owner assigns the next GitHub Issue.
 
 ---
 
@@ -504,13 +496,20 @@ Agy must follow Issue #49's planning gate: inspect the repository and relevant d
 
 **None.**
 
-The unified review domain, AI review summarization, AI-generated "Must Try" recommendations, coffee shop favoriting, user favorites list / profile discovery, advanced search and filtering, personalized coffee shop recommendations, coffee shop owner claiming and dashboard, and community feed and social sharing are operational. External reviews remain transient and compliant with provider policies, while first-party reviews, user favorites, and shop claims are securely persisted in Supabase with RLS, triggers, and security-definer RPC protection. In-memory caching with generation versioning is active for summaries, must-try recommendations, and personalized recommendations. Mobile user authentication, review mutations, non-blocking summary cards, non-blocking recommendations cards, interactive favorite toggles, the saved coffee shops profile view, advanced search/filter chips coordinated through `NearbyShopsController`, the For You personalized recommendations tab coordinated through `PersonalizedRecommendationsController`, owner claim submissions via `ClaimShopModal` coordinated through `ShopClaimController`, the My Claims profile tab, `OwnerDashboardModal`, and the community feed coordinated through `CommunityFeedController` and `CommunityFeedView` with native social sharing are operational and verified through 404 backend tests, 209 mobile tests, 109 database pgTAP assertions, and 0 TypeScript errors.
+The unified review domain, AI review summarization, AI-generated "Must Try" recommendations, coffee shop favoriting, user favorites list / profile discovery, advanced search and filtering, personalized coffee shop recommendations, coffee shop owner claiming and dashboard, community feed and social sharing, and realistic MVP validation dataset with idempotent tooling are operational. External reviews remain transient and compliant with provider policies, while first-party reviews, user favorites, and shop claims are securely persisted in Supabase with RLS, triggers, and security-definer RPC protection. In-memory caching with generation versioning is active for summaries, must-try recommendations, and personalized recommendations. Mobile user authentication, review mutations, non-blocking summary cards, non-blocking recommendations cards, interactive favorite toggles, the saved coffee shops profile view, advanced search/filter chips coordinated through `NearbyShopsController`, the For You personalized recommendations tab coordinated through `PersonalizedRecommendationsController`, owner claim submissions via `ClaimShopModal` coordinated through `ShopClaimController`, the My Claims profile tab, `OwnerDashboardModal`, the community feed coordinated through `CommunityFeedController` and `CommunityFeedView` with native social sharing, and the idempotent validation dataset CLI (`seed_validation_data.py`) are operational and verified through 427 backend tests, 209 mobile tests, 109 database pgTAP assertions, and 0 TypeScript errors.
 
 ---
 
 # Session Learnings
 
 The recent development cycles established the following engineering practices:
+
+* **Read-Before-Write Idempotency to Protect Timestamp Triggers**: Direct upsert statements (`INSERT ... ON CONFLICT DO UPDATE`) fire PostgreSQL `BEFORE UPDATE` triggers on `shops`, `reviews`, and `shop_curation`, mutating `updated_at` timestamps even when all incoming row values match the existing record. Reading existing records, normalizing types (booleans, floats, ISO datetimes), comparing every fixture-managed field, and executing writes only on genuine discrepancies preserves true idempotency and prevents spurious timestamp modifications.
+* **Fail-Closed Development Host Allowlisting**: Privileged administrative CLI scripts operating with `service_role` credentials must enforce an explicit allowlist of development database hosts (`SUPABASE_ALLOWED_SEED_HOSTS = ["localhost", "127.0.0.1", ...]`). Fails closed immediately before executing queries or auth mutations if the target host is not explicitly permitted, protecting production and staging databases against accidental data alteration.
+* **Paginated GoTrue User Account Discovery**: When performing administrative identity checks or collision detection in Supabase Auth, querying only the default single page of `auth.admin.list_users()` misses accounts on subsequent pages. Paginating until `len(page) < per_page` guarantees collision detection catches account conflicts across the entire directory before provisioning users.
+* **Pre-Deletion Identity Preconditions for Destructive Workflows**: In CLI cleanup routines that purge test accounts, verifying that every fixture identity matches both UUID and email across the entire directory must be an absolute precondition before dry-run output, user confirmation prompts, or database deletions. Raising `IdentityCollisionError` early prevents partial or accidental deletions if credentials or identities differ from expected fixture definitions.
+* **Pure SQL Decoupling from Auth Foreign Keys**: Exported SQL seed files intended for offline migrations or local database initialization must omit tables that have foreign keys referencing `auth.users` (`reviews`, `favorites`, `shop_claims`) unless the corresponding Auth records are also created by the script. Exporting strictly non-Auth entities (`shops`, `shop_curation`, `shop_curation_audit`) guarantees reliable, constraint-compliant offline execution.
+* **Service-Role Privileges vs RLS Enforcement**: Supabase service-role administrative clients bypass PostgreSQL Row Level Security (RLS) entirely by design. Data management and seeding scripts executing under `service_role` test triggers, foreign keys, table constraints, and data integrity, but do not validate RLS policies. RLS policies must be validated via authenticated user JWTs in dedicated API or pgTAP test suites.
 
 * **Limit + 1 Authoritative Pagination in Stored Procedures**: Rather than returning exact limit rows and guessing whether more data exists via `has_more = len(items) == limit` (which produces false positives when the total dataset is exactly a multiple of the limit), querying for `limit + 1` rows directly inside PostgreSQL allows the backend to authoritatively determine `has_more = len(raw_items) > limit` and slice the result to the requested limit before serialization.
 * **Monotonic Request Refs for Modal Child Entity Navigation**: In modal navigation flows where selecting feed items fetches full child entities (e.g. `fetchShopById` from `CommunityFeedView`), race conditions can occur if multiple items are tapped in rapid succession or if the modal is dismissed while a fetch is in flight. Guarding async fetches with a component-level monotonic ref (`shopRequestIdRef = useRef(0)`) and incrementing it on modal dismissal guarantees older or post-dismissal responses are dropped before updating state.
@@ -618,4 +617,4 @@ After implementation:
 
 ---
 
-**Last Updated:** Phase 3 — MVP Polish & Validation (Issue #49 open; approved UI direction documented; UI personalization not yet implemented)
+**Last Updated:** Phase 3 — MVP Polish & Validation (Issue #49 merged; realistic MVP validation dataset established; UI design spec approved)
