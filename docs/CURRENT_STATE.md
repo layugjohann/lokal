@@ -20,7 +20,7 @@ Features such as coffee shop menus and photo galleries remain future exploration
 
 🟢 **On Track**
 
-The core application stack is operational. **Establish Realistic MVP Validation Dataset (GitHub Issue #49)** is the latest completed feature, establishing a canonical 23-shop dataset, controlled test personas, and safe idempotent seeding, verification, and cleanup tooling.
+The core application stack is operational. **Visual Tokens and Authentication Personalization Pilot (GitHub Issue #51)** is the latest completed feature, establishing the foundational zero-dependency visual design token architecture (`mobile/src/theme/tokens.ts`, `mobile/src/theme/index.ts`), personalizing the authentication experience (`AuthScreen.tsx`), styling the session restoration and connection recovery shells (`App.tsx`), and adding dynamic WCAG 2.1 contrast and layout verification tests (`mobile/tests/theme.test.mjs`).
 
 The original LOKAL MVP is centered on a simple product loop: **locate local independent coffee shops and quickly understand each shop through AI-generated review summaries**. The application already provides the underlying discovery, curation, review-data, shop-detail, AI-summary capabilities, and realistic validation data needed for that loop.
 
@@ -30,7 +30,7 @@ The current phase is therefore focused on **MVP Polish & Validation** rather tha
 
 The goal of this phase is to determine whether the existing MVP experience is polished, coherent, reliable, and useful with realistic data. **Coffee shop menus and photo galleries remain future exploration candidates and are not required to satisfy the current MVP definition.**
 
-The latest merged implementation is verified through **427 passing backend tests**, **209 passing mobile tests**, **109 passing database pgTAP assertions**, and **0 TypeScript compilation errors**.
+The latest merged implementation is verified through **427 passing backend tests**, **218 passing mobile tests**, **109 passing database pgTAP assertions**, and **0 TypeScript compilation errors**.
 
 The engineering workflow remains formalized under the **AI-Assisted Engineering Workflow**.
 
@@ -38,47 +38,50 @@ The next work cycle should begin only after the current state is synchronized an
 
 # Latest Completed Feature
 
-## GitHub Issue #49 — Establish Realistic MVP Validation Dataset
+## GitHub Issue #51 — Visual Tokens and Authentication Personalization Pilot
 
 **Status:** ✅ Completed
 
 ### Completed Work
 
-* **Canonical Dataset Fixture Layer (`backend/app/fixtures/validation_dataset.py`)**:
-  * Established a single source of truth for the 23-shop validation dataset:
-    * **18 Real Metro Manila Independent Cafes (Category A):** Distinct coordinates, real Google Place IDs, `rating = None` preserving external provenance, and rich synthetic first-party reviews covering brew craft, specialty items, and ambience.
-    * **3 Synthetic Edge/Boundary Shops (Category B):** Explicit test cases including sparse reviews (`< 3` usable reviews to exercise `insufficient_reviews` UI states in AI summaries and recommendations), a 5-star boundary shop, and a 1-star boundary shop.
-    * **2 Excluded Non-Independent Chain Competitors (Category C):** Commercial chain entities (`EXCLUDED` status) ensuring curation filtering excludes non-independent businesses from public discovery, community feed, and favorites.
-  * **23 Curation Records:** Seeded across `APPROVED` (20), `EXCLUDED` (2), and `PENDING_REVIEW` (1) with realistic curator notes, confidence scores, and evidence metadata.
-  * **23 Curation Audit Log Entries:** Append-only transition events with deterministic UUIDs, timestamps, and curator transition justifications.
-  * **23 Synthetic LOKAL Reviews:** Spanning ratings 1–5, grounded text for "Must Try" item extraction, author names snapshotting, and realistic timestamps.
-  * **8 User Favorites:** Diverse preference distributions linking test personas to approved cafes.
-  * **1 Coffee Shop Ownership Claim:** Verified claim for Roberto Santos on Chapter Coffee Roastery & Cafe (`claimant_role = "Owner"`), testing owner dashboard metrics.
-  * **10 Controlled Supabase Auth Test Personas:** 8 user scouts, 1 verified shop owner (`owner.roberto@lokal.dev`), and 1 curator admin (`curator.admin@lokal.dev`) with deterministic UUIDs (`00000000-0000-4000-b000-000000000001` through `0010`).
-  * **Secure Credential Strategy:** Zero hardcoded passwords; passwords read securely from `TEST_USER_PASSWORD` in local environment configuration and never logged.
-* **Idempotent CLI Seeding & Management Tooling (`backend/scripts/seed_validation_data.py`)**:
-  * Implemented unified CLI utility supporting `seed`, `verify`, `clean`, and `export-sql` commands:
-    * `python -m backend.scripts.seed_validation_data seed`: Seeds controlled auth users and database records idempotently.
-    * `python -m backend.scripts.seed_validation_data verify`: Read-only verification comparing database records and auth accounts against fixture definitions; exits non-zero (`sys.exit(1)`) on discrepancies.
-    * `python -m backend.scripts.seed_validation_data clean [--force]`: Interactive or forced cleanup previewing and deleting only fixture-owned records in strict reverse foreign-key order.
-    * `python -m backend.scripts.seed_validation_data export-sql [output_path]`: Generates raw offline SQL seed script for non-Auth entities.
-  * **Fail-Closed Development Host Protection:** Validates target Supabase host against `SUPABASE_ALLOWED_SEED_HOSTS` (`localhost`, `127.0.0.1`, and explicit dev project hosts); immediately halts execution on non-allowed or production hosts.
-  * **Read-Before-Write Timestamp-Safe Idempotency:** Queries existing records by primary key, normalizes types, and compares all fixture-managed fields. Identical records are left untouched to prevent firing PostgreSQL `updated_at` triggers; unexpected field discrepancies raise explicit conflicts (`SeedConflictError`).
-  * **Paginated GoTrue User Discovery & Preservation:** Iterates all pages of Supabase Auth `list_users` (50 per page) to detect collisions across both UUID and email. Existing matching accounts are preserved untouched without resetting passwords.
-  * **Pre-Deletion Auth Safety Precondition:** `clean_dataset` executes full UUID-to-email and email-to-UUID identity validation across all Auth users before displaying dry-run counts, prompting confirmation, or executing any deletions, raising `IdentityCollisionError` on any mismatch and leaving all data intact.
-  * **Strict Reverse FK Cleanup Order:** Purges only fixture-owned IDs across `shop_claims` $\to$ `favorites` $\to$ `reviews` $\to$ `shop_curation_audit` $\to$ `shop_curation` $\to$ `shops` $\to$ `auth.users`, preserving unrelated application data.
-* **Offline Raw SQL Seeding Contract (`supabase/seed.sql`)**:
-  * Exported 90 lines of clean, standards-compliant SQL inserting 23 shops, 23 curation records, and 23 audit log records.
-  * Explicitly excludes Auth-dependent entities (`reviews`, `favorites`, `shop_claims`) to ensure migration scripts and local databases can run offline without foreign key constraint failures.
-  * Omits `ON CONFLICT` clauses, failing closed on unexpected key collisions.
+* **Zero-Dependency Visual Token System (`mobile/src/theme/tokens.ts`, `mobile/src/theme/index.ts`)**:
+  * Established readonly TypeScript design tokens using `as const` across five foundational subsystems: `colors`, `spacing`, `radii`, `typography`, and `shadows`.
+  * **Color Tokens:** Implemented the approved warm-neutral palette:
+    * Brand Accents: Deep Caramel (`#9A6330`, primary fill) and Warm Caramel (`#C9955A`, restrained highlight).
+    * Surfaces & Canvas: Soft Neutral (`#F5F6F8`, app background/quiet surfaces) and Surface White (`#FFFFFF`, elevated cards/forms).
+    * Content & Typography: Charcoal (`#242424`, high-priority text) and Muted Gray (`#686868`, supporting text/inactive controls).
+    * Borders & Dividers: Neutral Border (`#E8E2D9`, card dividers), Input Border (`#D4C8BE`, resting outlines), and Focus Border (`#9A6330`, active focus ring).
+    * Semantic Feedback: Error text (`#C62828`), error background (`#FDECEA`), error border (`#F5C6CB`), success text (`#2E7D32`), success background (`#E8F5E9`), and success border (`#C8E6C9`).
+  * **Spacing Scale:** Monotonically increasing 4-point scale (`xs: 4`, `sm: 8`, `md: 12`, `base: 16`, `lg: 20`, `xl: 24`, `xxl: 32`, `xxxl: 48`).
+  * **Border Radii:** Consistent corner geometry (`sm: 6`, `control: 8`, `button: 10`, `pill: 10`, `card: 16`).
+  * **Typography Presets:** System sans-serif hierarchy definitions (`title`, `headline`, `subhead`, `body`, `label`, `button`, `caption`) with explicit font sizes, weights, line heights, and letter spacing.
+  * **Elevation Shadows:** Platform-adapted shadow definitions for elevated cards (`shadows.card`) and active tabs (`shadows.tabActive`).
+* **Personalized Authentication Experience (`mobile/src/components/AuthScreen.tsx`)**:
+  * **Responsive Container Layout:** Centered content container constrained to `maxWidth: 420` pt, ensuring clean presentation across standard phones, tablets, and landscape viewports.
+  * **Standardized 48-Unit Touch Targets:** Guaranteed `minHeight: 48` logical units across all primary interactive elements: Log In / Sign Up segmented tabs, text input fields (Email and Password), and the primary submit button.
+  * **Presentation-Only Focus State:** Tracks `focusedField` (`email` | `password` | `null`) on `onFocus` and `onBlur`, applying active focus styling (`borderColor: colors.borderFocus`, `borderWidth: 1.5`) strictly at the presentation layer without altering form validation, submission lifecycle, or authentication state.
+  * **Accessible High-Contrast Feedback Banners:** Rendered semantic error banner (`#C62828` on `#FDECEA`, 4.92:1 contrast) and registration confirmation banner (`#2E7D32` on `#E8F5E9`, 4.56:1 contrast) with rounded container styling.
+  * **Screen-Reader Speech Announcements:** Calls `AccessibilityInfo.announceForAccessibility` when `errorMessage` or `infoMessage` updates, ensuring speech dispatch occurs cleanly across platforms without relying on conditionally mounted live regions on Android. Banners retain structural accessibility roles (`accessibilityRole="alert"` on error, `accessibilityRole="text"` on info).
+* **Session Restoration & Connection Shell Personalization (`mobile/App.tsx`)**:
+  * Aligned session restoration loading indicator (`deepCaramel`), loading text (`charcoal`), canvas background (`softNeutral`), and connection issue card with design tokens.
+  * Standardized connection error recovery action buttons (`Sign Out` and `Retry`) to 48 logical units minimum height, clear hierarchy, and accessible color tokens.
+* **Dynamic Role-Specific Theme Tests (`mobile/tests/theme.test.mjs`)**:
+  * Dynamically computes relative luminance and contrast ratios directly from hex token values per WCAG 2.1 formulas without hardcoded expected ratios.
+  * Asserts normal text pairs meet or exceed 4.5:1 (including Charcoal on Warm Caramel Accent `#242424` on `#C9955A` at 5.86:1, Charcoal on White at 15.52:1, Charcoal on Soft Neutral at 14.36:1, Muted Gray on Soft Neutral at 5.15:1, and Error/Success banners).
+  * Asserts large text pairs meet or exceed 3.0:1 (Brand Title on Canvas `#9A6330` on `#F5F6F8` at 4.62:1).
+  * Asserts non-text UI indicators meet or exceed 3.0:1 (Focus Outline `#9A6330` on White at 5.00:1).
+  * Enforces the architectural guardrail: White text on Warm Caramel fails 4.5:1 (computed 2.65:1), ensuring warm caramel is used exclusively with dark text.
+  * Asserts 48-unit touch target floor and 420 pt container maxWidth constraint.
+  * Added mathematical JSDoc documentation for color calculation utilities.
 * **Automated Verification**:
-  * Fixture Invariant Tests (`backend/tests/test_validation_dataset.py`): **9 / 9 tests passed** verifying UUID determinism, Manila geospatial bounds, rating ranges, review lengths, and curation states.
-  * Seeding Script Unit Tests (`backend/tests/test_seed_validation_data.py`): **14 / 14 tests passed** verifying multi-page auth pagination, matching account preservation, pre-deletion safety aborts, field-by-field verification, zero writes on identical records, and SQL export contracts.
+  * Theme Suite (`mobile/tests/theme.test.mjs`): **9 / 9 tests passed**.
+  * Full Mobile Suite (`npm test --prefix mobile`): **218 / 218 tests passed**.
   * Backend Regression Suite: **427 / 427 tests passed** (`./backend/.venv/bin/python -m unittest discover -s backend/tests -v`).
-  * Mobile Test Suite: **209 / 209 tests passed** (`npm test --prefix mobile`).
   * Mobile TypeScript Compiler: **0 errors** (`./mobile/node_modules/.bin/tsc --noEmit --project mobile/tsconfig.json`).
+  * Metro Bundler Export: **0 errors** for iOS and Android (`npx expo export --platform ios`, `npx expo export --platform android`).
+  * Running UI Visual Inspection: Verified on booted iPhone 17 Pro simulator (iOS 26.0) across resting login, email input focus (1.5 border), validation error, sign-up tab with confirmation banner, and session restoration failure states.
 * **Pull Request**:
-  * Pull Request #50 reviewed, all CodeRabbit and Product Owner findings resolved (GoTrue pagination, non-zero verify exit status, SQL export auth decoupling, field-level verification, pre-deletion auth preconditions, and idempotency write assertions), approved, and merged into `main` by the Product Owner (merge commit `a5aeadcb`).
+  * Pull Request #52 reviewed, CodeRabbit findings addressed (Android TalkBack initial-mount announcement handling, normal text contrast assertion for charcoal on warm caramel, JSDoc documentation), approved, and merged into `main` by the Product Owner (merge commit `750c41c9`).
 
 ---
 
@@ -110,6 +113,7 @@ The next work cycle should begin only after the current state is synchronized an
 | Issue #45 — Coffee Shop Owner Claiming and Dashboard         | ✅ Complete |
 | Issue #47 — Community Feed and Social Sharing                | ✅ Complete |
 | Issue #49 — Realistic MVP Validation Dataset                 | ✅ Complete |
+| Issue #51 — Visual Tokens and Authentication Pilot           | ✅ Complete |
 
 ---
 
@@ -159,8 +163,16 @@ The React Native (Expo) mobile application currently provides:
     * Key performance indicators: LOKAL Community Rating, Total Reviews Count, and Claim Status.
     * Quick-edit form for shop Name and Address with client validation, dirty state tracking, and explicit address clearing (`null`).
     * Bounded customer reviews feed showing top 5 reviews with star ratings, author display names, and relative timestamps, omitting sensitive user UUIDs and emails.
+* **Visual Design Tokens & Personalized Authentication Experience**:
+  * Centralized zero-dependency design token architecture (`mobile/src/theme/tokens.ts`, `mobile/src/theme/index.ts`) establishing readonly `as const` tokens for `colors`, `spacing`, `radii`, `typography`, and `shadows`.
+  * Warm-neutral palette with high-contrast text pairings, Deep Caramel (`#9A6330`) primary brand accent, Warm Caramel (`#C9955A`) secondary accent, Soft Neutral (`#F5F6F8`) canvas, and Surface White (`#FFFFFF`) card surfaces.
+  * Centered responsive authentication container (`maxWidth: 420` pt) with 48 logical units minimum touch targets for tabs, text inputs, and submit button.
+  * Presentation-only focus ring (`#9A6330`, 1.5 logical units width) cleanly separated from authentication logic and form validation.
+  * High-contrast semantic banners with dynamic `AccessibilityInfo.announceForAccessibility` speech dispatch across iOS and Android.
+  * Token-aligned session restoration loading indicator and connection error recovery shell in `mobile/App.tsx` with standardized 48-unit `Sign Out` and `Retry` buttons.
+  * Dynamic WCAG 2.1 contrast calculation test suite (`mobile/tests/theme.test.mjs`) enforcing contrast thresholds and layout constraints.
 * **Authentication & Session Lifecycle Management**:
-  * User registration and login screens (`RegisterView`, `LoginView`) with input validation, password matching, inline error presentation, and loading states.
+  * Unified user registration and login screen (`AuthScreen`) with segmented tab switcher, input validation, inline error presentation, confirmation messaging, and loading states.
   * Hardware-backed credential persistence via `expo-secure-store` with fail-fast security preventing silent in-memory downgrades in native or production runtimes.
   * Automatic session restoration on application launch with backend profile validation against `/api/v1/auth/me`.
   * Distinct error handling for invalid sessions (automatic token purging on `401 Unauthorized`) versus transient network/server failures (credential preservation with recovery UI).
@@ -482,11 +494,11 @@ Independent-business eligibility and curation are maintained as a separate domai
 
 # Next Task
 
-**Immediate next focus: Phase 3 — MVP Polish & Validation (UI/UX Refinement & End-to-End Validation)**
+**Immediate next focus: Phase 3 — MVP Polish & Validation (Discovery Overlays, Search/Filter Controls, and Nearby Shop Cards)**
 
-With Issue #49 merged, the realistic validation dataset and idempotent database tooling are in place. The next priorities for Phase 3 are:
-1. **UI/UX Refinement**: Implement the approved visual identity and interaction design documented in [`docs/ui-design-spec.md`](ui-design-spec.md), starting with authentication personalization and continuing through the core discovery and detail experience. The existing map rendering and behavior remain explicitly protected.
-2. **End-to-End MVP Validation**: Validate the complete loop (nearby discovery $\to$ shop detail $\to$ review reading $\to$ AI summaries $\to$ "Must Try" recommendations $\to$ favoriting $\to$ owner claiming $\to$ community feed) against the populated 23-shop dataset.
+With Issue #51 merged, the foundational visual design token architecture and personalized authentication experience are in place. The next priority according to the approved UI design sequence ([`docs/ui-design-spec.md`](ui-design-spec.md)) is:
+1. **Discovery Overlays, Search/Filter Controls, and Nearby Shop Cards**: Personalize the map discovery bottom sheet, search and filter chips, and coffee shop preview cards using the approved design tokens, keeping underlying map behavior, search endpoints, and discovery logic intact.
+2. **End-to-End MVP Validation**: Validate the complete loop (nearby discovery $\to$ shop detail $\to$ review reading $\to$ AI summaries $\to$ "Must Try" recommendations $\to$ favoriting $\to$ owner claiming $\to$ community feed) against the populated 23-shop validation dataset.
 
 The next work cycle will begin when the Product Owner assigns the next GitHub Issue.
 
@@ -496,7 +508,7 @@ The next work cycle will begin when the Product Owner assigns the next GitHub Is
 
 **None.**
 
-The unified review domain, AI review summarization, AI-generated "Must Try" recommendations, coffee shop favoriting, user favorites list / profile discovery, advanced search and filtering, personalized coffee shop recommendations, coffee shop owner claiming and dashboard, community feed and social sharing, and realistic MVP validation dataset with idempotent tooling are operational. External reviews remain transient and compliant with provider policies, while first-party reviews, user favorites, and shop claims are securely persisted in Supabase with RLS, triggers, and security-definer RPC protection. In-memory caching with generation versioning is active for summaries, must-try recommendations, and personalized recommendations. Mobile user authentication, review mutations, non-blocking summary cards, non-blocking recommendations cards, interactive favorite toggles, the saved coffee shops profile view, advanced search/filter chips coordinated through `NearbyShopsController`, the For You personalized recommendations tab coordinated through `PersonalizedRecommendationsController`, owner claim submissions via `ClaimShopModal` coordinated through `ShopClaimController`, the My Claims profile tab, `OwnerDashboardModal`, the community feed coordinated through `CommunityFeedController` and `CommunityFeedView` with native social sharing, and the idempotent validation dataset CLI (`seed_validation_data.py`) are operational and verified through 427 backend tests, 209 mobile tests, 109 database pgTAP assertions, and 0 TypeScript errors.
+The unified review domain, AI review summarization, AI-generated "Must Try" recommendations, coffee shop favoriting, user favorites list / profile discovery, advanced search and filtering, personalized coffee shop recommendations, coffee shop owner claiming and dashboard, community feed and social sharing, realistic MVP validation dataset with idempotent tooling, and visual design token architecture with personalized authentication are operational. External reviews remain transient and compliant with provider policies, while first-party reviews, user favorites, and shop claims are securely persisted in Supabase with RLS, triggers, and security-definer RPC protection. In-memory caching with generation versioning is active for summaries, must-try recommendations, and personalized recommendations. Mobile user authentication, review mutations, non-blocking summary cards, non-blocking recommendations cards, interactive favorite toggles, the saved coffee shops profile view, advanced search/filter chips coordinated through `NearbyShopsController`, the For You personalized recommendations tab coordinated through `PersonalizedRecommendationsController`, owner claim submissions via `ClaimShopModal` coordinated through `ShopClaimController`, the My Claims profile tab, `OwnerDashboardModal`, the community feed coordinated through `CommunityFeedController` and `CommunityFeedView` with native social sharing, the idempotent validation dataset CLI (`seed_validation_data.py`), and the design-token-backed `AuthScreen` and session restoration shell are operational and verified through 427 backend tests, 218 mobile tests, 109 database pgTAP assertions, and 0 TypeScript errors.
 
 ---
 
@@ -504,6 +516,11 @@ The unified review domain, AI review summarization, AI-generated "Must Try" reco
 
 The recent development cycles established the following engineering practices:
 
+* **Zero-Dependency Token Architecture with `as const`**: Defining visual design tokens as readonly TypeScript data structures (`as const`) provides compile-time type safety and developer ergonomics across colors, spacing, radii, typography, and shadows without introducing external styling framework dependencies or runtime overhead in React Native.
+* **Mathematical WCAG Contrast Testing**: Dynamically calculating relative luminance and contrast ratios directly from hex token values in unit tests prevents visual regressions, verifies normal text ($\ge 4.5:1$) and non-text control ($\ge 3.0:1$) thresholds objectively, and avoids brittle tests tied to hardcoded ratio numbers.
+* **Cross-Platform Screen-Reader Mount Semantics**: Conditionally mounted Views with `accessibilityLiveRegion="polite"` on Android TalkBack may fail to announce text that is already present when the container mounts. Calling `AccessibilityInfo.announceForAccessibility` explicitly on message updates ensures speech dispatch across platforms without relying on conditionally mounted live regions, while retaining structural roles (`accessibilityRole="alert"` and `accessibilityRole="text"`).
+* **Decoupling Presentation Focus from Form State**: Managing input outline focus states through presentation-only tracking (`focusedField`) bound strictly to `onFocus`/`onBlur` guarantees visual clarity (`1.5` width `#9A6330` border) without mutating form validation, submission lifecycle, or authentication credentials.
+* **Standardized Touch-Target Floor**: Enforcing a minimum height of 48 logical units (`minHeight: 48`) across all interactive touchpoints (tabs, text inputs, primary buttons, secondary recovery buttons) satisfies mobile accessibility standards and provides consistent hit areas on compact and large mobile screens.
 * **Read-Before-Write Idempotency to Protect Timestamp Triggers**: Direct upsert statements (`INSERT ... ON CONFLICT DO UPDATE`) fire PostgreSQL `BEFORE UPDATE` triggers on `shops`, `reviews`, and `shop_curation`, mutating `updated_at` timestamps even when all incoming row values match the existing record. Reading existing records, normalizing types (booleans, floats, ISO datetimes), comparing every fixture-managed field, and executing writes only on genuine discrepancies preserves true idempotency and prevents spurious timestamp modifications.
 * **Fail-Closed Development Host Allowlisting**: Privileged administrative CLI scripts operating with `service_role` credentials must enforce an explicit allowlist of development database hosts (`SUPABASE_ALLOWED_SEED_HOSTS = ["localhost", "127.0.0.1", ...]`). Fails closed immediately before executing queries or auth mutations if the target host is not explicitly permitted, protecting production and staging databases against accidental data alteration.
 * **Paginated GoTrue User Account Discovery**: When performing administrative identity checks or collision detection in Supabase Auth, querying only the default single page of `auth.admin.list_users()` misses accounts on subsequent pages. Paginating until `len(page) < per_page` guarantees collision detection catches account conflicts across the entire directory before provisioning users.
@@ -617,4 +634,4 @@ After implementation:
 
 ---
 
-**Last Updated:** Phase 3 — MVP Polish & Validation (Issue #49 merged; realistic MVP validation dataset established; UI design spec approved)
+**Last Updated:** Phase 3 — MVP Polish & Validation (Issue #51 merged; visual tokens and authentication personalization pilot established)

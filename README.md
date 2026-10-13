@@ -38,6 +38,7 @@ LOKAL aims to support local businesses by making discovery easier while helping 
 * 🏪 Coffee shop owner claiming and dashboard
 * 👥 Community feed and social sharing
 * 🧪 Realistic MVP validation dataset and idempotent seeding tooling
+* 🎨 Visual design tokens and personalized authentication pilot
 
 ### Planned Features
 
