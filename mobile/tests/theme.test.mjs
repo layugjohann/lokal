@@ -8,7 +8,11 @@ import {
   shadows,
 } from '../src/theme/tokens.ts';
 
-// Dynamic WCAG 2.1 relative luminance and contrast calculations
+/**
+ * Calculates the relative luminance of a six-digit hexadecimal color string per WCAG 2.1 specifications.
+ * @param {string} hex - Color string formatted as '#RRGGBB'
+ * @returns {number} Relative luminance in [0, 1]
+ */
 function getRelativeLuminance(hex) {
   const clean = hex.replace('#', '');
   const r = parseInt(clean.substring(0, 2), 16) / 255;
@@ -18,6 +22,12 @@ function getRelativeLuminance(hex) {
   return 0.2126 * toLinear(r) + 0.7152 * toLinear(g) + 0.0722 * toLinear(b);
 }
 
+/**
+ * Calculates the WCAG 2.1 contrast ratio between two six-digit hex colors.
+ * @param {string} hex1 - First color
+ * @param {string} hex2 - Second color
+ * @returns {number} Contrast ratio in [1, 21]
+ */
 function getContrastRatio(hex1, hex2) {
   const l1 = getRelativeLuminance(hex1);
   const l2 = getRelativeLuminance(hex2);
@@ -79,6 +89,11 @@ test('normal text pairings meet or exceed WCAG 2.1 AA 4.5:1 threshold', () => {
       fg: colors.successText,
       bg: colors.successBg,
     },
+    {
+      name: 'Charcoal Text on Warm Caramel Accent (charcoal on warm caramel)',
+      fg: colors.charcoal,
+      bg: colors.warmCaramel,
+    },
   ];
 
   for (const pair of normalTextPairs) {
@@ -119,11 +134,6 @@ test('non-text UI indicator pairings meet or exceed WCAG 2.1 AA 3.0:1 threshold'
       name: 'Primary Button Boundary on Canvas (deep caramel on soft neutral)',
       fg: colors.deepCaramel,
       bg: colors.softNeutral,
-    },
-    {
-      name: 'Warm Caramel Accent with Dark Text (charcoal on warm caramel)',
-      fg: colors.charcoal,
-      bg: colors.warmCaramel,
     },
   ];
 

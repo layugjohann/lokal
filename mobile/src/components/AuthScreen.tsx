@@ -27,18 +27,18 @@ export default function AuthScreen() {
   const [infoMessage, setInfoMessage] = useState<string | null>(null);
   const [focusedField, setFocusedField] = useState<'email' | 'password' | null>(null);
 
-  // Platform-specific screen-reader announcements
-  // On iOS, VoiceOver does not support accessibilityLiveRegion, so announce explicitly.
-  // On Android, accessibilityLiveRegion="polite" announces dynamic text updates automatically,
-  // so we avoid calling announceForAccessibility on Android to prevent duplicate announcements.
+  // Cross-platform screen-reader announcements
+  // Explicitly dispatches AccessibilityInfo.announceForAccessibility across both platforms.
+  // This guarantees that TalkBack on Android announces messages reliably even when
+  // the banner mounts with initial text, without relying on conditionally mounted live regions.
   useEffect(() => {
-    if (errorMessage && Platform.OS === 'ios') {
+    if (errorMessage) {
       AccessibilityInfo.announceForAccessibility(errorMessage);
     }
   }, [errorMessage]);
 
   useEffect(() => {
-    if (infoMessage && Platform.OS === 'ios') {
+    if (infoMessage) {
       AccessibilityInfo.announceForAccessibility(infoMessage);
     }
   }, [infoMessage]);
@@ -152,7 +152,6 @@ export default function AuthScreen() {
               <View
                 style={styles.errorBanner}
                 accessibilityRole="alert"
-                accessibilityLiveRegion="polite"
               >
                 <Text style={styles.errorText}>{errorMessage}</Text>
               </View>
@@ -162,7 +161,6 @@ export default function AuthScreen() {
               <View
                 style={styles.infoBanner}
                 accessibilityRole="text"
-                accessibilityLiveRegion="polite"
               >
                 <Text style={styles.infoText}>{infoMessage}</Text>
               </View>
