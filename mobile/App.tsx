@@ -11,6 +11,7 @@ import { AuthProvider } from './src/context/AuthContext';
 import { useAuth } from './src/hooks/useAuth';
 import AuthScreen from './src/components/AuthScreen';
 import LokalMapView from './src/components/LokalMapView';
+import { colors, spacing, radii, typography, shadows } from './src/theme/tokens';
 
 function MainAppContent(props?: { authToken?: string | null }) {
   const { status, restorationError, retryRestoration, token, logout } = useAuth();
@@ -46,7 +47,7 @@ function MainAppContent(props?: { authToken?: string | null }) {
           </View>
         ) : (
           <View style={styles.restoringBox}>
-            <ActivityIndicator size="large" color="#4A2E18" />
+            <ActivityIndicator size="large" color={colors.deepCaramel} />
             <Text style={styles.restoringText}>Loading LOKAL...</Text>
           </View>
         )}
@@ -75,77 +76,83 @@ export default function App(props?: { authToken?: string | null } & Record<strin
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#FAF8F5',
+    backgroundColor: colors.softNeutral,
   },
   centerContainer: {
     flex: 1,
-    backgroundColor: '#FAF8F5',
+    backgroundColor: colors.softNeutral,
     justifyContent: 'center',
     alignItems: 'center',
-    padding: 24,
+    padding: spacing.xl,
   },
   restoringBox: {
     alignItems: 'center',
-    gap: 16,
+    gap: spacing.base,
   },
   restoringText: {
-    color: '#4A2E18',
-    fontSize: 16,
+    color: colors.charcoal,
+    fontSize: typography.body.fontSize,
     fontWeight: '500',
   },
   errorBox: {
-    backgroundColor: '#FFF',
-    borderRadius: 16,
-    padding: 24,
+    backgroundColor: colors.surfaceWhite,
+    borderRadius: radii.card,
+    borderColor: colors.borderNeutral,
+    borderWidth: 1,
+    padding: spacing.xl,
     width: '100%',
-    maxWidth: 340,
+    maxWidth: 360,
     alignItems: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 6,
-    elevation: 3,
+    ...shadows.card,
   },
   errorTitle: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: '#4A2E18',
-    marginBottom: 8,
+    fontSize: typography.headline.fontSize,
+    fontWeight: typography.headline.fontWeight,
+    color: colors.charcoal,
+    marginBottom: spacing.sm,
   },
   errorDescription: {
-    fontSize: 14,
-    color: '#6B5E55',
+    fontSize: typography.caption.fontSize,
+    color: colors.mutedGray,
     textAlign: 'center',
-    marginBottom: 20,
-    lineHeight: 20,
+    marginBottom: spacing.lg,
+    lineHeight: typography.body.lineHeight,
   },
   errorButtonGroup: {
     flexDirection: 'row',
-    gap: 12,
+    gap: spacing.md,
     justifyContent: 'center',
     alignItems: 'center',
   },
   signOutButton: {
+    minHeight: 48,
+    minWidth: 100,
     backgroundColor: 'transparent',
-    paddingVertical: 10,
-    paddingHorizontal: 20,
-    borderRadius: 8,
+    paddingVertical: spacing.md,
+    paddingHorizontal: spacing.lg,
+    borderRadius: radii.control,
     borderWidth: 1,
-    borderColor: '#D4C8BE',
+    borderColor: colors.borderInput,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   signOutButtonText: {
-    color: '#4A2E18',
+    color: colors.charcoal,
     fontSize: 14,
     fontWeight: '600',
   },
   retryButton: {
-    backgroundColor: '#4A2E18',
-    paddingVertical: 10,
-    paddingHorizontal: 24,
-    borderRadius: 8,
+    minHeight: 48,
+    minWidth: 100,
+    backgroundColor: colors.deepCaramel,
+    paddingVertical: spacing.md,
+    paddingHorizontal: spacing.xl,
+    borderRadius: radii.control,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   retryButtonText: {
-    color: '#FFF',
+    color: colors.surfaceWhite,
     fontSize: 14,
     fontWeight: '600',
   },
