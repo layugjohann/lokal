@@ -1,5 +1,6 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
+  AccessibilityInfo,
   ActivityIndicator,
   KeyboardAvoidingView,
   Platform,
@@ -11,6 +12,7 @@ import {
   View,
 } from 'react-native';
 import { useAuth } from '../hooks/useAuth';
+import { colors, spacing, radii, typography, shadows } from '../theme/tokens';
 
 type AuthMode = 'login' | 'register';
 
@@ -23,6 +25,23 @@ export default function AuthScreen() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [infoMessage, setInfoMessage] = useState<string | null>(null);
+  const [focusedField, setFocusedField] = useState<'email' | 'password' | null>(null);
+
+  // Platform-specific screen-reader announcements
+  // On iOS, VoiceOver does not support accessibilityLiveRegion, so announce explicitly.
+  // On Android, accessibilityLiveRegion="polite" announces dynamic text updates automatically,
+  // so we avoid calling announceForAccessibility on Android to prevent duplicate announcements.
+  useEffect(() => {
+    if (errorMessage && Platform.OS === 'ios') {
+      AccessibilityInfo.announceForAccessibility(errorMessage);
+    }
+  }, [errorMessage]);
+
+  useEffect(() => {
+    if (infoMessage && Platform.OS === 'ios') {
+      AccessibilityInfo.announceForAccessibility(infoMessage);
+    }
+  }, [infoMessage]);
 
   const resetFormState = (newMode: AuthMode) => {
     setMode(newMode);
@@ -84,116 +103,144 @@ export default function AuthScreen() {
         contentContainerStyle={styles.scrollContent}
         keyboardShouldPersistTaps="handled"
       >
-        <View style={styles.header}>
-          <Text style={styles.appTitle}>☕ LOKAL</Text>
-          <Text style={styles.appSubtitle}>
-            Discover local coffee shops. Support independent cafés.
-          </Text>
-        </View>
-
-        <View style={styles.tabContainer}>
-          <TouchableOpacity
-            style={[styles.tab, mode === 'login' && styles.activeTab]}
-            onPress={() => resetFormState('login')}
-            accessibilityRole="button"
-            accessibilityState={{ selected: mode === 'login' }}
-            disabled={isSubmitting}
-          >
-            <Text
-              style={[styles.tabText, mode === 'login' && styles.activeTabText]}
-            >
-              Log In
+        <View style={styles.contentContainer}>
+          <View style={styles.header}>
+            <Text style={styles.appTitle}>☕ LOKAL</Text>
+            <Text style={styles.appSubtitle}>
+              Discover local coffee shops. Support independent cafés.
             </Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[styles.tab, mode === 'register' && styles.activeTab]}
-            onPress={() => resetFormState('register')}
-            accessibilityRole="button"
-            accessibilityState={{ selected: mode === 'register' }}
-            disabled={isSubmitting}
-          >
-            <Text
-              style={[
-                styles.tabText,
-                mode === 'register' && styles.activeTabText,
-              ]}
-            >
-              Sign Up
-            </Text>
-          </TouchableOpacity>
-        </View>
-
-        <View style={styles.card}>
-          {errorMessage && (
-            <View style={styles.errorBanner}>
-              <Text style={styles.errorText}>{errorMessage}</Text>
-            </View>
-          )}
-
-          {infoMessage && (
-            <View style={styles.infoBanner}>
-              <Text style={styles.infoText}>{infoMessage}</Text>
-            </View>
-          )}
-
-          <View style={styles.inputGroup}>
-            <Text style={styles.inputLabel}>Email Address</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="you@example.com"
-              placeholderTextColor="#A89F91"
-              value={email}
-              onChangeText={(text) => {
-                setEmail(text);
-                if (errorMessage) setErrorMessage(null);
-              }}
-              autoCapitalize="none"
-              autoCorrect={false}
-              keyboardType="email-address"
-              editable={!isSubmitting}
-              accessibilityLabel="Email Address"
-            />
           </View>
 
-          <View style={styles.inputGroup}>
-            <Text style={styles.inputLabel}>Password</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="Minimum 6 characters"
-              placeholderTextColor="#A89F91"
-              value={password}
-              onChangeText={(text) => {
-                setPassword(text);
-                if (errorMessage) setErrorMessage(null);
-              }}
-              secureTextEntry
-              autoCapitalize="none"
-              editable={!isSubmitting}
-              accessibilityLabel="Password"
-            />
-          </View>
-
-          <TouchableOpacity
-            style={[
-              styles.submitButton,
-              isSubmitting && styles.submitButtonDisabled,
-            ]}
-            onPress={handleSubmit}
-            disabled={isSubmitting}
-            activeOpacity={0.8}
-            accessibilityRole="button"
-            accessibilityLabel={
-              mode === 'login' ? 'Log in to LOKAL' : 'Create a LOKAL account'
-            }
-          >
-            {isSubmitting ? (
-              <ActivityIndicator size="small" color="#FFF" />
-            ) : (
-              <Text style={styles.submitButtonText}>
-                {mode === 'login' ? 'Log In' : 'Create Account'}
+          <View style={styles.tabContainer}>
+            <TouchableOpacity
+              style={[styles.tab, mode === 'login' && styles.activeTab]}
+              onPress={() => resetFormState('login')}
+              accessibilityRole="button"
+              accessibilityLabel="Log In"
+              accessibilityState={{ selected: mode === 'login' }}
+              disabled={isSubmitting}
+              activeOpacity={0.8}
+            >
+              <Text
+                style={[styles.tabText, mode === 'login' && styles.activeTabText]}
+              >
+                Log In
               </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.tab, mode === 'register' && styles.activeTab]}
+              onPress={() => resetFormState('register')}
+              accessibilityRole="button"
+              accessibilityLabel="Sign Up"
+              accessibilityState={{ selected: mode === 'register' }}
+              disabled={isSubmitting}
+              activeOpacity={0.8}
+            >
+              <Text
+                style={[
+                  styles.tabText,
+                  mode === 'register' && styles.activeTabText,
+                ]}
+              >
+                Sign Up
+              </Text>
+            </TouchableOpacity>
+          </View>
+
+          <View style={styles.card}>
+            {errorMessage && (
+              <View
+                style={styles.errorBanner}
+                accessibilityRole="alert"
+                accessibilityLiveRegion="polite"
+              >
+                <Text style={styles.errorText}>{errorMessage}</Text>
+              </View>
             )}
-          </TouchableOpacity>
+
+            {infoMessage && (
+              <View
+                style={styles.infoBanner}
+                accessibilityRole="text"
+                accessibilityLiveRegion="polite"
+              >
+                <Text style={styles.infoText}>{infoMessage}</Text>
+              </View>
+            )}
+
+            <View style={styles.inputGroup}>
+              <Text style={styles.inputLabel}>Email Address</Text>
+              <TextInput
+                style={[
+                  styles.input,
+                  focusedField === 'email' && styles.inputFocused,
+                ]}
+                placeholder="you@example.com"
+                placeholderTextColor={colors.mutedGray}
+                value={email}
+                onChangeText={(text) => {
+                  setEmail(text);
+                  if (errorMessage) setErrorMessage(null);
+                }}
+                onFocus={() => setFocusedField('email')}
+                onBlur={() =>
+                  setFocusedField((prev) => (prev === 'email' ? null : prev))
+                }
+                autoCapitalize="none"
+                autoCorrect={false}
+                keyboardType="email-address"
+                editable={!isSubmitting}
+                accessibilityLabel="Email Address"
+              />
+            </View>
+
+            <View style={styles.inputGroup}>
+              <Text style={styles.inputLabel}>Password</Text>
+              <TextInput
+                style={[
+                  styles.input,
+                  focusedField === 'password' && styles.inputFocused,
+                ]}
+                placeholder="Minimum 6 characters"
+                placeholderTextColor={colors.mutedGray}
+                value={password}
+                onChangeText={(text) => {
+                  setPassword(text);
+                  if (errorMessage) setErrorMessage(null);
+                }}
+                onFocus={() => setFocusedField('password')}
+                onBlur={() =>
+                  setFocusedField((prev) => (prev === 'password' ? null : prev))
+                }
+                secureTextEntry
+                autoCapitalize="none"
+                editable={!isSubmitting}
+                accessibilityLabel="Password"
+              />
+            </View>
+
+            <TouchableOpacity
+              style={[
+                styles.submitButton,
+                isSubmitting && styles.submitButtonDisabled,
+              ]}
+              onPress={handleSubmit}
+              disabled={isSubmitting}
+              activeOpacity={0.8}
+              accessibilityRole="button"
+              accessibilityLabel={
+                mode === 'login' ? 'Log in to LOKAL' : 'Create a LOKAL account'
+              }
+            >
+              {isSubmitting ? (
+                <ActivityIndicator size="small" color={colors.surfaceWhite} />
+              ) : (
+                <Text style={styles.submitButtonText}>
+                  {mode === 'login' ? 'Log In' : 'Create Account'}
+                </Text>
+              )}
+            </TouchableOpacity>
+          </View>
         </View>
       </ScrollView>
     </KeyboardAvoidingView>
@@ -203,130 +250,142 @@ export default function AuthScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#FAF8F5',
+    backgroundColor: colors.softNeutral,
   },
   scrollContent: {
     flexGrow: 1,
     justifyContent: 'center',
-    paddingHorizontal: 24,
-    paddingVertical: 48,
+    paddingHorizontal: spacing.xl,
+    paddingVertical: spacing.xxxl,
+  },
+  contentContainer: {
+    width: '100%',
+    maxWidth: 420,
+    alignSelf: 'center',
   },
   header: {
     alignItems: 'center',
-    marginBottom: 32,
+    marginBottom: spacing.xxl,
   },
   appTitle: {
-    fontSize: 32,
-    fontWeight: '700',
-    color: '#4A2E18',
-    letterSpacing: 1,
-    marginBottom: 8,
+    fontSize: typography.title.fontSize,
+    fontWeight: typography.title.fontWeight,
+    color: colors.deepCaramel,
+    letterSpacing: typography.title.letterSpacing,
+    marginBottom: spacing.sm,
   },
   appSubtitle: {
-    fontSize: 15,
-    color: '#6B5E55',
+    fontSize: typography.subhead.fontSize,
+    color: colors.mutedGray,
     textAlign: 'center',
-    maxWidth: 280,
-    lineHeight: 20,
+    maxWidth: 290,
+    lineHeight: typography.subhead.lineHeight,
   },
   tabContainer: {
     flexDirection: 'row',
-    backgroundColor: '#EBE3DA',
-    borderRadius: 10,
-    padding: 4,
-    marginBottom: 20,
+    backgroundColor: colors.softNeutral,
+    borderColor: colors.borderNeutral,
+    borderWidth: 1,
+    borderRadius: radii.pill,
+    padding: spacing.xs,
+    marginBottom: spacing.lg,
   },
   tab: {
     flex: 1,
-    paddingVertical: 10,
+    minHeight: 48,
     alignItems: 'center',
-    borderRadius: 8,
+    justifyContent: 'center',
+    borderRadius: radii.control,
   },
   activeTab: {
-    backgroundColor: '#FFF',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.1,
-    shadowRadius: 2,
-    elevation: 2,
+    backgroundColor: colors.surfaceWhite,
+    ...shadows.tabActive,
   },
   tabText: {
     fontSize: 14,
     fontWeight: '500',
-    color: '#6B5E55',
+    color: colors.mutedGray,
   },
   activeTabText: {
     fontWeight: '600',
-    color: '#4A2E18',
+    color: colors.charcoal,
   },
   card: {
-    backgroundColor: '#FFF',
-    borderRadius: 16,
-    padding: 24,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.08,
-    shadowRadius: 8,
-    elevation: 3,
+    backgroundColor: colors.surfaceWhite,
+    borderRadius: radii.card,
+    borderColor: colors.borderNeutral,
+    borderWidth: 1,
+    padding: spacing.xl,
+    ...shadows.card,
   },
   errorBanner: {
-    backgroundColor: '#FDECEA',
-    borderColor: '#F5C6CB',
+    backgroundColor: colors.errorBg,
+    borderColor: colors.errorBorder,
     borderWidth: 1,
-    borderRadius: 8,
-    padding: 12,
-    marginBottom: 16,
+    borderRadius: radii.control,
+    padding: spacing.md,
+    marginBottom: spacing.base,
   },
   errorText: {
-    color: '#D32F2F',
-    fontSize: 13,
-    lineHeight: 18,
+    color: colors.errorText,
+    fontSize: typography.caption.fontSize,
+    lineHeight: typography.caption.lineHeight,
+    fontWeight: '500',
   },
   infoBanner: {
-    backgroundColor: '#E8F5E9',
-    borderColor: '#C8E6C9',
+    backgroundColor: colors.successBg,
+    borderColor: colors.successBorder,
     borderWidth: 1,
-    borderRadius: 8,
-    padding: 12,
-    marginBottom: 16,
+    borderRadius: radii.control,
+    padding: spacing.md,
+    marginBottom: spacing.base,
   },
   infoText: {
-    color: '#2E7D32',
-    fontSize: 13,
-    lineHeight: 18,
+    color: colors.successText,
+    fontSize: typography.caption.fontSize,
+    lineHeight: typography.caption.lineHeight,
+    fontWeight: '500',
   },
   inputGroup: {
-    marginBottom: 16,
+    marginBottom: spacing.base,
   },
   inputLabel: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#4A2E18',
-    marginBottom: 6,
+    fontSize: typography.label.fontSize,
+    fontWeight: typography.label.fontWeight,
+    color: colors.charcoal,
+    marginBottom: spacing.xs + 2,
   },
   input: {
-    backgroundColor: '#FAF8F5',
+    minHeight: 48,
+    backgroundColor: colors.surfaceWhite,
     borderWidth: 1,
-    borderColor: '#D4C8BE',
-    borderRadius: 8,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    fontSize: 15,
-    color: '#333',
+    borderColor: colors.borderInput,
+    borderRadius: radii.control,
+    paddingHorizontal: spacing.base - 2,
+    paddingVertical: spacing.md,
+    fontSize: typography.body.fontSize,
+    color: colors.charcoal,
+    justifyContent: 'center',
+  },
+  inputFocused: {
+    borderColor: colors.borderFocus,
+    borderWidth: 1.5,
   },
   submitButton: {
-    backgroundColor: '#4A2E18',
-    borderRadius: 8,
-    paddingVertical: 14,
+    minHeight: 48,
+    backgroundColor: colors.deepCaramel,
+    borderRadius: radii.button,
+    paddingVertical: spacing.base - 2,
     alignItems: 'center',
-    marginTop: 8,
+    justifyContent: 'center',
+    marginTop: spacing.sm,
   },
   submitButtonDisabled: {
-    opacity: 0.7,
+    opacity: 0.65,
   },
   submitButtonText: {
-    color: '#FFF',
-    fontSize: 16,
-    fontWeight: '600',
+    color: colors.surfaceWhite,
+    fontSize: typography.button.fontSize,
+    fontWeight: typography.button.fontWeight,
   },
 });
