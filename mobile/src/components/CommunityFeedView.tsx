@@ -16,6 +16,8 @@ import { useCommunityFeed } from '../hooks/useCommunityFeed';
 import { shareCommunityReview } from '../services/communityService';
 import { fetchShopById } from '../services/shopService';
 import ShopDetailCard from './ShopDetailCard';
+import LokalIcon from './common/LokalIcon';
+import { colors } from '../theme/tokens';
 
 export interface CommunityFeedViewProps {
   visible: boolean;
@@ -143,8 +145,11 @@ export default function CommunityFeedView({
             <>
               {/* Feed Header */}
               <View style={styles.header}>
-                <View style={styles.headerTitleRow}>
-                  <Text style={styles.headerTitle}>👥 Community Feed</Text>
+                <View style={styles.headerTitleContainer}>
+                  <View style={styles.headerTitleRow}>
+                    <LokalIcon name="community" size={20} color="#4A2E18" />
+                    <Text style={styles.headerTitle}>Community Feed</Text>
+                  </View>
                   <Text style={styles.headerSubtitle}>
                     Recent first-party reviews from the LOKAL community
                   </Text>
@@ -156,7 +161,7 @@ export default function CommunityFeedView({
                   accessibilityLabel="Close Community Feed"
                   activeOpacity={0.8}
                 >
-                  <Text style={styles.closeButtonText}>✕</Text>
+                  <LokalIcon name="close" size={20} color={colors.charcoal} />
                 </TouchableOpacity>
               </View>
 
@@ -187,7 +192,9 @@ export default function CommunityFeedView({
               {/* Empty State */}
               {!isLoading && !errorMessage && items.length === 0 && (
                 <View style={styles.emptyContainer}>
-                  <Text style={styles.emptyIcon}>☕</Text>
+                  <View style={styles.emptyIconContainer}>
+                    <LokalIcon name="community" size={44} color={colors.mutedGray} />
+                  </View>
                   <Text style={styles.emptyTitle}>No community reviews yet</Text>
                   <Text style={styles.emptySubtitle}>
                     Be the first to share your thoughts on a local coffee shop!
@@ -222,13 +229,19 @@ export default function CommunityFeedView({
                           accessibilityRole="button"
                           accessibilityLabel={`View shop ${item.shop_name}`}
                         >
-                          <Text style={styles.shopName} numberOfLines={1}>
-                            ☕ {item.shop_name}
-                          </Text>
-                          {item.shop_address ? (
-                            <Text style={styles.shopAddress} numberOfLines={1}>
-                              📍 {item.shop_address}
+                          <View style={styles.shopNameRow}>
+                            <LokalIcon name="coffee" size={14} color="#4A2E18" />
+                            <Text style={styles.shopName} numberOfLines={1}>
+                              {item.shop_name}
                             </Text>
+                          </View>
+                          {item.shop_address ? (
+                            <View style={styles.shopAddressRow}>
+                              <LokalIcon name="location" size={12} color="#8C7D73" />
+                              <Text style={styles.shopAddress} numberOfLines={1}>
+                                {item.shop_address}
+                              </Text>
+                            </View>
                           ) : null}
                         </TouchableOpacity>
                         <View style={styles.ratingBadge}>
@@ -238,7 +251,10 @@ export default function CommunityFeedView({
 
                       {/* Author & Timestamp Row */}
                       <View style={styles.authorRow}>
-                        <Text style={styles.authorName}>👤 {item.author_name}</Text>
+                        <View style={styles.authorNameRow}>
+                          <LokalIcon name="profile" size={13} color="#8C7D73" />
+                          <Text style={styles.authorName}>{item.author_name}</Text>
+                        </View>
                         <Text style={styles.timestampDot}>•</Text>
                         <Text style={styles.timestampText}>{formatDate(item.created_at)}</Text>
                         {item.is_edited ? (
@@ -277,7 +293,10 @@ export default function CommunityFeedView({
                           accessibilityRole="button"
                           accessibilityLabel={`Share review for ${item.shop_name}`}
                         >
-                          <Text style={styles.shareButtonText}>🔗 Share</Text>
+                          <View style={styles.shareButtonContent}>
+                            <LokalIcon name="share" size={14} color="#6B5E55" />
+                            <Text style={styles.shareButtonText}>Share</Text>
+                          </View>
                         </TouchableOpacity>
                       </View>
                     </View>
@@ -342,8 +361,13 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: '#EFEAE2',
   },
-  headerTitleRow: {
+  headerTitleContainer: {
     flex: 1,
+  },
+  headerTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
   },
   headerTitle: {
     fontSize: 20,
@@ -356,18 +380,15 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
   closeButton: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
+    width: 48,
+    height: 48,
+    minWidth: 48,
+    minHeight: 48,
+    borderRadius: 24,
     backgroundColor: '#F3EFEA',
     justifyContent: 'center',
     alignItems: 'center',
     marginLeft: 12,
-  },
-  closeButtonText: {
-    fontSize: 16,
-    color: '#4A2E18',
-    fontWeight: '600',
   },
   stateContainer: {
     flex: 1,
@@ -405,9 +426,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     padding: 32,
   },
-  emptyIcon: {
-    fontSize: 48,
+  emptyIconContainer: {
     marginBottom: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   emptyTitle: {
     fontSize: 18,
@@ -448,11 +470,22 @@ const styles = StyleSheet.create({
     flex: 1,
     marginRight: 10,
   },
+  shopNameRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
   shopName: {
     fontSize: 16,
     fontWeight: '700',
     color: '#4A2E18',
     marginBottom: 2,
+  },
+  shopAddressRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    marginTop: 2,
   },
   shopAddress: {
     fontSize: 12,
@@ -477,6 +510,11 @@ const styles = StyleSheet.create({
     marginBottom: 10,
     flexWrap: 'wrap',
     gap: 6,
+  },
+  authorNameRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
   },
   authorName: {
     fontSize: 13,
@@ -535,6 +573,11 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#D4C8BE',
     backgroundColor: 'transparent',
+  },
+  shareButtonContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
   },
   shareButtonText: {
     fontSize: 12,

@@ -32,6 +32,8 @@ import { useShopClaim } from '../hooks/useShopClaim';
 import { shareShop } from '../services/communityService';
 import ClaimShopModal from './ClaimShopModal';
 import OwnerDashboardModal from './OwnerDashboardModal';
+import LokalIcon from './common/LokalIcon';
+import { colors } from '../theme/tokens';
 
 interface ShopDetailCardProps {
   shop: Shop;
@@ -472,7 +474,7 @@ export default function ShopDetailCard({
             accessibilityRole="button"
             accessibilityLabel="Share coffee shop details"
           >
-            <Text style={styles.shareIcon}>🔗</Text>
+            <LokalIcon name="share" size={20} color={colors.charcoal} />
           </TouchableOpacity>
           <TouchableOpacity
             style={[
@@ -493,11 +495,14 @@ export default function ShopDetailCard({
             }
           >
             {isMutatingFavorite ? (
-              <ActivityIndicator size="small" color={isFavorite ? '#D9534F' : '#8C7D73'} />
+              <ActivityIndicator size="small" color={isFavorite ? colors.deepCaramel : colors.mutedGray} />
             ) : (
-              <Text style={[styles.favoriteIcon, isFavorite && styles.favoriteIconActive]}>
-                {isFavorite ? '♥' : '♡'}
-              </Text>
+              <LokalIcon
+                name="heart"
+                size={22}
+                color={isFavorite ? colors.deepCaramel : colors.mutedGray}
+                fill={isFavorite ? colors.deepCaramel : 'none'}
+              />
             )}
           </TouchableOpacity>
           <TouchableOpacity
@@ -507,7 +512,7 @@ export default function ShopDetailCard({
             accessibilityRole="button"
             accessibilityLabel="Close shop details"
           >
-            <Text style={styles.closeText}>✕</Text>
+            <LokalIcon name="close" size={20} color={colors.charcoal} />
           </TouchableOpacity>
         </View>
       </View>
@@ -533,7 +538,7 @@ export default function ShopDetailCard({
               accessibilityRole="button"
               accessibilityLabel="Dismiss favorite error"
             >
-              <Text style={styles.favoriteErrorDismissText}>✕</Text>
+              <LokalIcon name="close" size={16} color="#9C3434" />
             </TouchableOpacity>
           </View>
         </View>
@@ -542,8 +547,9 @@ export default function ShopDetailCard({
       <View style={styles.badgeRow}>
         {reviewsData?.lokal_reviews_count ? (
           <View style={styles.lokalRatingBadge}>
+            <LokalIcon name="coffee" size={13} color="#4A2E18" />
             <Text style={styles.lokalRatingText}>
-              ☕ LOKAL {reviewsData.lokal_average_rating?.toFixed(1) ?? '—'} ★ ({reviewsData.lokal_reviews_count})
+              LOKAL {reviewsData.lokal_average_rating?.toFixed(1) ?? '—'} ★ ({reviewsData.lokal_reviews_count})
             </Text>
           </View>
         ) : null}
@@ -570,7 +576,10 @@ export default function ShopDetailCard({
         {claim?.status === 'APPROVED' ? (
           <View style={styles.approvedOwnerBanner}>
             <View style={styles.ownerTextGroup}>
-              <Text style={styles.ownerTitle}>👑 You manage this coffee shop</Text>
+              <View style={styles.bannerTitleRow}>
+                <LokalIcon name="verified" size={16} color={colors.successText} />
+                <Text style={styles.ownerTitle}>You manage this coffee shop</Text>
+              </View>
               <Text style={styles.ownerSubtitle}>Verified owner listing</Text>
             </View>
             <TouchableOpacity
@@ -585,7 +594,10 @@ export default function ShopDetailCard({
           </View>
         ) : claim?.status === 'PENDING' ? (
           <View style={styles.pendingClaimBanner}>
-            <Text style={styles.pendingClaimTitle}>⏳ Claim Under Review</Text>
+            <View style={styles.bannerTitleRow}>
+              <LokalIcon name="pending" size={16} color={colors.warningText} />
+              <Text style={styles.pendingClaimTitle}>Claim Under Review</Text>
+            </View>
             <Text style={styles.pendingClaimSubtitle}>
               Your ownership claim is currently being evaluated by our curators.
             </Text>
@@ -593,7 +605,10 @@ export default function ShopDetailCard({
         ) : claim?.status === 'REJECTED' ? (
           <View style={styles.rejectedClaimBanner}>
             <View style={styles.rejectedTextGroup}>
-              <Text style={styles.rejectedClaimTitle}>✕ Claim Not Approved</Text>
+              <View style={styles.bannerTitleRow}>
+                <LokalIcon name="rejected" size={16} color={colors.errorText} />
+                <Text style={styles.rejectedClaimTitle}>Claim Not Approved</Text>
+              </View>
               {claim.rejection_reason ? (
                 <Text style={styles.rejectedClaimSubtitle}>{claim.rejection_reason}</Text>
               ) : null}
@@ -697,16 +712,22 @@ export default function ShopDetailCard({
 
             {!isLoadingSummary && !summaryError && summaryData?.status === 'insufficient_reviews' && (
               <View style={styles.aiSummaryInsufficient}>
-                <Text style={styles.aiSummaryInsufficientText}>
-                  ✨ Not enough customer reviews yet to generate an AI summary.
-                </Text>
+                <View style={styles.aiInsufficientRow}>
+                  <LokalIcon name="sparkles" size={14} color="#8C7D73" />
+                  <Text style={styles.aiSummaryInsufficientText}>
+                    Not enough customer reviews yet to generate an AI summary.
+                  </Text>
+                </View>
               </View>
             )}
 
             {!isLoadingSummary && !summaryError && summaryData?.status === 'available' && summaryData.summary && (
               <View style={styles.aiSummaryCard}>
                 <View style={styles.aiSummaryHeader}>
-                  <Text style={styles.aiSummaryBadge}>✨ AI Review Summary</Text>
+                  <View style={styles.aiSummaryBadge}>
+                    <LokalIcon name="sparkles" size={13} color="#C9955A" />
+                    <Text style={styles.aiSummaryBadgeText}>AI Review Summary</Text>
+                  </View>
                   {summaryData.review_count_analyzed > 0 ? (
                     <Text style={styles.aiSummaryCountText}>
                       Based on {summaryData.review_count_analyzed} reviews
@@ -778,9 +799,12 @@ export default function ShopDetailCard({
               recommendationsData &&
               recommendationsData.status === 'insufficient_reviews' && (
                 <View style={styles.aiRecommendationsInsufficient}>
-                  <Text style={styles.aiRecommendationsInsufficientText}>
-                    ✨ Not enough customer reviews yet to generate recommendations.
-                  </Text>
+                  <View style={styles.aiInsufficientRow}>
+                    <LokalIcon name="sparkles" size={14} color="#8C7D73" />
+                    <Text style={styles.aiRecommendationsInsufficientText}>
+                      Not enough customer reviews yet to generate recommendations.
+                    </Text>
+                  </View>
                 </View>
               )}
 
@@ -790,9 +814,12 @@ export default function ShopDetailCard({
               recommendationsData.status === 'available' &&
               recommendationsData.items.length === 0 && (
                 <View style={styles.aiRecommendationsEmpty}>
-                  <Text style={styles.aiRecommendationsEmptyText}>
-                    ✨ No specific menu recommendations found in the available reviews.
-                  </Text>
+                  <View style={styles.aiInsufficientRow}>
+                    <LokalIcon name="sparkles" size={14} color="#8C7D73" />
+                    <Text style={styles.aiRecommendationsEmptyText}>
+                      No specific menu recommendations found in the available reviews.
+                    </Text>
+                  </View>
                 </View>
               )}
 
@@ -803,7 +830,10 @@ export default function ShopDetailCard({
               recommendationsData.items.length > 0 && (
                 <View style={styles.aiRecommendationsCard}>
                   <View style={styles.aiRecommendationsHeader}>
-                    <Text style={styles.aiRecommendationsBadge}>☕ Must Try</Text>
+                    <View style={styles.aiRecommendationsBadge}>
+                      <LokalIcon name="coffee" size={13} color={colors.deepCaramel} />
+                      <Text style={styles.aiRecommendationsBadgeText}>Must Try</Text>
+                    </View>
                     {recommendationsData.review_count_analyzed > 0 ? (
                       <Text style={styles.aiRecommendationsCountText}>
                         Based on {recommendationsData.review_count_analyzed} reviews
@@ -881,7 +911,10 @@ export default function ShopDetailCard({
                 accessibilityRole="button"
                 accessibilityLabel="Write a review"
               >
-                <Text style={styles.writeReviewButtonText}>✍️ Write a Review</Text>
+                <View style={styles.writeReviewButtonContent}>
+                  <LokalIcon name="edit" size={16} color="#4A2E18" />
+                  <Text style={styles.writeReviewButtonText}>Write a Review</Text>
+                </View>
               </TouchableOpacity>
             )}
 
@@ -901,10 +934,15 @@ export default function ShopDetailCard({
                       style={styles.starTouchTarget}
                       accessibilityRole="button"
                       accessibilityLabel={`Rate ${star} star${star > 1 ? 's' : ''}`}
+                      accessibilityState={{ selected: star <= formRating }}
+                      disabled={isSubmitting}
                     >
-                      <Text style={styles.starPickerText}>
-                        {star <= formRating ? '★' : '☆'}
-                      </Text>
+                      <LokalIcon
+                        name="star"
+                        size={24}
+                        color={star <= formRating ? colors.deepCaramel : colors.mutedGray}
+                        fill={star <= formRating ? colors.deepCaramel : 'none'}
+                      />
                     </TouchableOpacity>
                   ))}
                 </View>
@@ -1158,41 +1196,30 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   shareButton: {
-    padding: 4,
-    borderRadius: 12,
+    borderRadius: 24,
     backgroundColor: '#F3EFEA',
-    width: 28,
-    height: 28,
+    width: 48,
+    height: 48,
+    minWidth: 48,
+    minHeight: 48,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  shareIcon: {
-    fontSize: 14,
-    color: '#6B5E55',
-    lineHeight: 16,
-  },
   favoriteButton: {
-    padding: 4,
-    borderRadius: 12,
+    borderRadius: 24,
     backgroundColor: '#F3EFEA',
-    width: 28,
-    height: 28,
+    width: 48,
+    height: 48,
+    minWidth: 48,
+    minHeight: 48,
     alignItems: 'center',
     justifyContent: 'center',
   },
   favoriteButtonActive: {
-    backgroundColor: '#FDF2F2',
+    backgroundColor: '#FDF7F2',
   },
   favoriteButtonDisabled: {
     opacity: 0.5,
-  },
-  favoriteIcon: {
-    fontSize: 16,
-    color: '#8C7D73',
-    lineHeight: 18,
-  },
-  favoriteIconActive: {
-    color: '#D9534F',
   },
   favoriteErrorBanner: {
     flexDirection: 'row',
@@ -1229,26 +1256,22 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
   },
   favoriteErrorDismiss: {
-    padding: 2,
-  },
-  favoriteErrorDismissText: {
-    fontSize: 12,
-    color: '#9C3434',
-    fontWeight: '600',
-  },
-  closeButton: {
-    padding: 4,
-    borderRadius: 12,
-    backgroundColor: '#F3EFEA',
-    width: 28,
-    height: 28,
+    width: 48,
+    height: 48,
+    minWidth: 48,
+    minHeight: 48,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  closeText: {
-    fontSize: 14,
-    color: '#6B5E55',
-    fontWeight: '600',
+  closeButton: {
+    borderRadius: 24,
+    backgroundColor: '#F3EFEA',
+    width: 48,
+    height: 48,
+    minWidth: 48,
+    minHeight: 48,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   badgeRow: {
     flexDirection: 'row',
@@ -1258,6 +1281,9 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   lokalRatingBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
     backgroundColor: '#FAF2EB',
     paddingVertical: 4,
     paddingHorizontal: 8,
@@ -1355,10 +1381,17 @@ const styles = StyleSheet.create({
   writeReviewButton: {
     backgroundColor: '#F3EFEA',
     borderRadius: 8,
-    paddingVertical: 10,
+    minHeight: 48,
+    justifyContent: 'center',
     alignItems: 'center',
     borderWidth: 1,
     borderColor: '#E8E1D9',
+  },
+  writeReviewButtonContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    justifyContent: 'center',
   },
   writeReviewButtonText: {
     fontSize: 13,
@@ -1425,15 +1458,16 @@ const styles = StyleSheet.create({
   },
   starPickerRow: {
     flexDirection: 'row',
-    gap: 6,
+    gap: 2,
     marginBottom: 10,
   },
   starTouchTarget: {
-    padding: 4,
-  },
-  starPickerText: {
-    fontSize: 26,
-    color: '#A06D00',
+    width: 48,
+    height: 48,
+    minWidth: 48,
+    minHeight: 48,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   reviewTextInput: {
     backgroundColor: '#FFFFFF',
@@ -1692,6 +1726,12 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#FFFFFF',
   },
+  aiInsufficientRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+  },
   aiSummaryInsufficient: {
     padding: 10,
     backgroundColor: '#FAF8F5',
@@ -1719,15 +1759,20 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   aiSummaryBadge: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: '#4A2E18',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
     backgroundColor: '#FAF2EB',
     paddingVertical: 2,
     paddingHorizontal: 8,
     borderRadius: 6,
     borderWidth: 1,
     borderColor: '#D4A373',
+  },
+  aiSummaryBadgeText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#4A2E18',
   },
   aiSummaryCountText: {
     fontSize: 11,
@@ -1865,15 +1910,20 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   aiRecommendationsBadge: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: '#4A2E18',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
     backgroundColor: '#FAF2EB',
     paddingVertical: 2,
     paddingHorizontal: 8,
     borderRadius: 6,
     borderWidth: 1,
     borderColor: '#D4A373',
+  },
+  aiRecommendationsBadgeText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#4A2E18',
   },
   aiRecommendationsCountText: {
     fontSize: 11,
@@ -1939,10 +1989,16 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#FFFFFF',
   },
+  bannerTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: 2,
+  },
   pendingClaimBanner: {
-    backgroundColor: '#FFF8E7',
+    backgroundColor: colors.warningBg,
     borderWidth: 1,
-    borderColor: '#F3D292',
+    borderColor: colors.warningBorder,
     borderRadius: 10,
     paddingVertical: 8,
     paddingHorizontal: 12,
@@ -1950,7 +2006,7 @@ const styles = StyleSheet.create({
   pendingClaimTitle: {
     fontSize: 13,
     fontWeight: '700',
-    color: '#8A5D00',
+    color: colors.warningText,
   },
   pendingClaimSubtitle: {
     fontSize: 11,

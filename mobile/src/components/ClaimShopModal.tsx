@@ -15,6 +15,8 @@ import {
 import { Shop } from '../types/shop';
 import { ShopClaim } from '../types/claim';
 import { submitShopClaim } from '../services/claimService';
+import LokalIcon from './common/LokalIcon';
+import { colors } from '../theme/tokens';
 
 export interface ClaimShopModalProps {
   visible: boolean;
@@ -110,13 +112,14 @@ export default function ClaimShopModal({
         >
           <View style={styles.header}>
             <TouchableOpacity
+              style={styles.closeButton}
               onPress={handleClose}
               disabled={isSubmitting}
               accessibilityRole="button"
               accessibilityLabel="Cancel claim"
-              hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+              activeOpacity={0.8}
             >
-              <Text style={styles.cancelText}>Cancel</Text>
+              <LokalIcon name="close" size={20} color={colors.charcoal} />
             </TouchableOpacity>
             <Text style={styles.headerTitle}>Claim Coffee Shop</Text>
             <View style={styles.headerPlaceholder} />
@@ -183,7 +186,10 @@ export default function ClaimShopModal({
             </View>
 
             <View style={styles.inputGroup}>
-              <Text style={styles.inputLabel}>Verification Details / Proof (Optional)</Text>
+              <View style={styles.inputLabelRow}>
+                <LokalIcon name="document" size={14} color="#4A2E18" />
+                <Text style={styles.inputLabel}>Verification Details / Proof (Optional)</Text>
+              </View>
               <TextInput
                 style={[styles.textInput, styles.multilineInput]}
                 placeholder="Add any information that helps verify your affiliation (e.g. DTI permit, official Instagram or Facebook handle, store email)."
@@ -236,10 +242,15 @@ const styles = StyleSheet.create({
     borderBottomColor: '#E8E2D9',
     backgroundColor: '#FAF8F5',
   },
-  cancelText: {
-    fontSize: 15,
-    color: '#8B4513',
-    fontWeight: '600',
+  closeButton: {
+    width: 48,
+    height: 48,
+    minWidth: 48,
+    minHeight: 48,
+    borderRadius: 24,
+    backgroundColor: '#F3EFEA',
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   headerTitle: {
     fontSize: 17,
@@ -248,6 +259,7 @@ const styles = StyleSheet.create({
   },
   headerPlaceholder: {
     width: 48,
+    height: 48,
   },
   scrollContent: {
     padding: 20,
@@ -292,6 +304,12 @@ const styles = StyleSheet.create({
   },
   inputGroup: {
     marginBottom: 18,
+  },
+  inputLabelRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: 6,
   },
   inputLabel: {
     fontSize: 13,

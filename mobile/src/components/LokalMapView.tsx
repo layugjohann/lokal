@@ -17,6 +17,7 @@ import CommunityFeedView from './CommunityFeedView';
 import { getProfilePrincipalKey } from '../services/authService';
 import { formatDistance } from '../services/shopService';
 import { Shop } from '../types/shop';
+import LokalIcon from './common/LokalIcon';
 
 const DEFAULT_REGION: Region = {
   latitude: 14.5995,
@@ -200,7 +201,8 @@ export default function LokalMapView({ authToken }: LokalMapViewProps = {}) {
             accessibilityLabel="Open community feed"
             activeOpacity={0.8}
           >
-            <Text style={styles.communityButtonText}>👥 Community</Text>
+            <LokalIcon name="community" size={16} color="#4A2E18" />
+            <Text style={styles.communityButtonText}>Community</Text>
           </TouchableOpacity>
 
           <TouchableOpacity
@@ -210,7 +212,8 @@ export default function LokalMapView({ authToken }: LokalMapViewProps = {}) {
             accessibilityLabel="Open user profile and saved coffee shops"
             activeOpacity={0.8}
           >
-            <Text style={styles.profileButtonText}>👤 Profile</Text>
+            <LokalIcon name="profile" size={16} color="#4A2E18" />
+            <Text style={styles.profileButtonText}>Profile</Text>
           </TouchableOpacity>
         </>
       )}
@@ -378,10 +381,16 @@ const styles = StyleSheet.create({
     position: 'absolute',
     top: 50,
     left: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    minHeight: 48,
+    minWidth: 48,
     backgroundColor: 'rgba(250, 248, 245, 0.95)',
     paddingVertical: 8,
     paddingHorizontal: 14,
-    borderRadius: 20,
+    borderRadius: 24,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.15,
@@ -397,10 +406,16 @@ const styles = StyleSheet.create({
     position: 'absolute',
     top: 50,
     right: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    minHeight: 48,
+    minWidth: 48,
     backgroundColor: 'rgba(250, 248, 245, 0.95)',
     paddingVertical: 8,
     paddingHorizontal: 14,
-    borderRadius: 20,
+    borderRadius: 24,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.15,

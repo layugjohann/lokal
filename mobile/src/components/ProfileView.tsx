@@ -24,6 +24,8 @@ import {
 } from '../services/shopService';
 import ShopDetailCard from './ShopDetailCard';
 import OwnerDashboardModal from './OwnerDashboardModal';
+import LokalIcon from './common/LokalIcon';
+import { colors } from '../theme/tokens';
 
 export { getUserDisplayName };
 
@@ -173,7 +175,7 @@ export default function ProfileView({
               accessibilityLabel="Close profile"
               activeOpacity={0.7}
             >
-              <Text style={styles.closeButtonText}>✕</Text>
+              <LokalIcon name="close" size={20} color={colors.charcoal} />
             </TouchableOpacity>
           </View>
 
@@ -342,7 +344,9 @@ export default function ProfileView({
                   {/* Empty State */}
                   {!isLoading && !errorMessage && favorites.length === 0 && (
                     <View style={styles.emptyContainer}>
-                      <Text style={styles.emptyIcon}>☕</Text>
+                      <View style={styles.emptyIconContainer}>
+                        <LokalIcon name="heart" size={44} color={colors.mutedGray} />
+                      </View>
                       <Text style={styles.emptyTitle}>No saved coffee shops yet</Text>
                       <Text style={styles.emptySubtitle}>
                         Tap the heart icon on any coffee shop to save it to your favorites.
@@ -381,7 +385,12 @@ export default function ProfileView({
                               <Text style={styles.cardShopName} numberOfLines={1}>
                                 {item.name}
                               </Text>
-                              <Text style={styles.heartIcon}>♥</Text>
+                              <LokalIcon
+                                name="heart"
+                                size={18}
+                                color={colors.deepCaramel}
+                                fill={colors.deepCaramel}
+                              />
                             </View>
                             <View style={styles.metaRow}>
                               <Text style={styles.ratingText}>{ratingText}</Text>
@@ -444,7 +453,9 @@ export default function ProfileView({
                   {/* Claims Empty State */}
                   {!isClaimsLoading && !claimsErrorMessage && claims.length === 0 && (
                     <View style={styles.emptyContainer}>
-                      <Text style={styles.emptyIcon}>📋</Text>
+                      <View style={styles.emptyIconContainer}>
+                        <LokalIcon name="document" size={44} color={colors.mutedGray} />
+                      </View>
                       <Text style={styles.emptyTitle}>No ownership claims yet</Text>
                       <Text style={styles.emptySubtitle}>
                         Are you a coffee shop owner or manager? You can submit an ownership claim directly from any coffee shop detail page.
@@ -587,15 +598,14 @@ const styles = StyleSheet.create({
     color: '#4A2E18',
   },
   closeButton: {
-    padding: 6,
-    borderRadius: 20,
+    borderRadius: 24,
     backgroundColor: '#EFEAE4',
-  },
-  closeButtonText: {
-    color: '#4A2E18',
-    fontSize: 16,
-    fontWeight: '600',
-    paddingHorizontal: 4,
+    width: 48,
+    height: 48,
+    minWidth: 48,
+    minHeight: 48,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   userCard: {
     flexDirection: 'row',
@@ -706,9 +716,10 @@ const styles = StyleSheet.create({
     paddingVertical: 48,
     paddingHorizontal: 24,
   },
-  emptyIcon: {
-    fontSize: 40,
+  emptyIconContainer: {
     marginBottom: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   emptyTitle: {
     color: '#4A2E18',
