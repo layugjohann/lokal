@@ -244,6 +244,10 @@ test('starPickerRow specifies flexWrap: wrap and responsive spacing for narrow s
     'starPickerRow must specify flexWrap: "wrap" to prevent narrow viewport overflow'
   );
   assert.ok(
+    /justifyContent:\s*['"]center['"]/.test(pickerBody),
+    'starPickerRow must specify justifyContent: "center" for balanced alignment across rows'
+  );
+  assert.ok(
     /rowGap:\s*\d+/.test(pickerBody),
     'starPickerRow must specify rowGap for clean vertical spacing when wrapped'
   );

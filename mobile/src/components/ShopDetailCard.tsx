@@ -1460,6 +1460,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     flexWrap: 'wrap',
     alignItems: 'center',
+    justifyContent: 'center',
     columnGap: 2,
     rowGap: 6,
     marginBottom: 10,
