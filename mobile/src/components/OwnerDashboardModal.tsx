@@ -15,6 +15,8 @@ import { Shop } from '../types/shop';
 import { OwnerDashboardData } from '../types/claim';
 import { fetchOwnerDashboard, updateOwnerShop } from '../services/claimService';
 import { formatRating } from '../services/shopService';
+import LokalIcon from './common/LokalIcon';
+import { colors } from '../theme/tokens';
 
 export interface OwnerDashboardModalProps {
   visible: boolean;
@@ -159,12 +161,13 @@ export default function OwnerDashboardModal({
       <SafeAreaView style={styles.safeArea}>
         <View style={styles.header}>
           <TouchableOpacity
+            style={styles.closeButton}
             onPress={onClose}
             accessibilityRole="button"
             accessibilityLabel="Close owner dashboard"
-            hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+            activeOpacity={0.8}
           >
-            <Text style={styles.closeText}>Close</Text>
+            <LokalIcon name="close" size={20} color={colors.charcoal} />
           </TouchableOpacity>
           <Text style={styles.headerTitle}>Owner Dashboard</Text>
           <View style={styles.headerPlaceholder} />
@@ -195,7 +198,8 @@ export default function OwnerDashboardModal({
             <View style={styles.shopOverviewCard}>
               <View style={styles.badgeRow}>
                 <View style={styles.ownerBadge}>
-                  <Text style={styles.ownerBadgeText}>👑 Verified Owner</Text>
+                  <LokalIcon name="verified" size={14} color="#8B4513" />
+                  <Text style={styles.ownerBadgeText}>Verified Owner</Text>
                 </View>
                 <Text style={styles.claimantRoleText}>
                   Managed by {data.claim.claimant_name} ({data.claim.claimant_role})
@@ -211,11 +215,16 @@ export default function OwnerDashboardModal({
               <View style={styles.metricsRow}>
                 <View style={styles.metricCard}>
                   <Text style={styles.metricLabel}>LOKAL Community</Text>
-                  <Text style={styles.metricValue}>
-                    {data.lokal_rating !== null && data.lokal_rating !== undefined
-                      ? `☕ ${data.lokal_rating.toFixed(1)} ★`
-                      : 'No reviews'}
-                  </Text>
+                  <View style={styles.metricValueRow}>
+                    {data.lokal_rating !== null && data.lokal_rating !== undefined ? (
+                      <LokalIcon name="coffee" size={14} color="#2C1810" />
+                    ) : null}
+                    <Text style={styles.metricValue}>
+                      {data.lokal_rating !== null && data.lokal_rating !== undefined
+                        ? `${data.lokal_rating.toFixed(1)} ★`
+                        : 'No reviews'}
+                    </Text>
+                  </View>
                   <Text style={styles.metricSub}>
                     {data.lokal_reviews_count} {data.lokal_reviews_count === 1 ? 'review' : 'reviews'}
                   </Text>
@@ -239,12 +248,14 @@ export default function OwnerDashboardModal({
                 <Text style={styles.sectionTitle}>Listing Information</Text>
                 {!isEditing ? (
                   <TouchableOpacity
+                    style={styles.editActionButton}
                     onPress={handleStartEdit}
                     accessibilityRole="button"
                     accessibilityLabel="Edit listing details"
                     activeOpacity={0.7}
                   >
-                    <Text style={styles.editActionText}>✏️ Edit</Text>
+                    <LokalIcon name="edit" size={14} color="#8B4513" />
+                    <Text style={styles.editActionText}>Edit</Text>
                   </TouchableOpacity>
                 ) : null}
               </View>
@@ -318,7 +329,7 @@ export default function OwnerDashboardModal({
                     <Text style={styles.infoValue}>{data.shop.address || 'Not specified'}</Text>
                   </View>
                   <Text style={styles.protectedNotice}>
-                    ℹ️ Coordinates, curation status, and external provider IDs are managed by LOKAL curators.
+                    Coordinates, curation status, and external provider IDs are managed by LOKAL curators.
                   </Text>
                 </View>
               )}
@@ -336,7 +347,10 @@ export default function OwnerDashboardModal({
                   <View key={rev.id} style={styles.reviewItem}>
                     <View style={styles.reviewHeader}>
                       <Text style={styles.reviewAuthor}>{rev.author.display_name}</Text>
-                      <Text style={styles.reviewRating}>☕ {rev.rating} ★</Text>
+                      <View style={styles.reviewRatingRow}>
+                        <LokalIcon name="coffee" size={12} color="#8B4513" />
+                        <Text style={styles.reviewRating}>{rev.rating} ★</Text>
+                      </View>
                     </View>
                     {rev.text ? (
                       <Text style={styles.reviewText}>{rev.text}</Text>
@@ -367,10 +381,15 @@ const styles = StyleSheet.create({
     borderBottomColor: '#E8E2D9',
     backgroundColor: '#FAF8F5',
   },
-  closeText: {
-    fontSize: 15,
-    color: '#8B4513',
-    fontWeight: '600',
+  closeButton: {
+    width: 48,
+    height: 48,
+    minWidth: 48,
+    minHeight: 48,
+    borderRadius: 24,
+    backgroundColor: '#F3EFEA',
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   headerTitle: {
     fontSize: 17,
@@ -379,6 +398,7 @@ const styles = StyleSheet.create({
   },
   headerPlaceholder: {
     width: 48,
+    height: 48,
   },
   centerContainer: {
     flex: 1,
@@ -441,6 +461,9 @@ const styles = StyleSheet.create({
     marginBottom: 10,
   },
   ownerBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
     backgroundColor: '#FAF0E6',
     borderRadius: 6,
     paddingHorizontal: 8,
@@ -486,11 +509,16 @@ const styles = StyleSheet.create({
     color: '#8A7E72',
     marginBottom: 4,
   },
+  metricValueRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    marginBottom: 2,
+  },
   metricValue: {
     fontSize: 16,
     fontWeight: '700',
     color: '#2C1810',
-    marginBottom: 2,
   },
   metricSub: {
     fontSize: 11,
@@ -514,6 +542,15 @@ const styles = StyleSheet.create({
     fontSize: 17,
     fontWeight: '700',
     color: '#2C1810',
+  },
+  editActionButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    borderRadius: 6,
+    backgroundColor: '#F3EFEA',
   },
   editActionText: {
     fontSize: 14,
@@ -631,6 +668,11 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '600',
     color: '#2C1810',
+  },
+  reviewRatingRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
   },
   reviewRating: {
     fontSize: 13,

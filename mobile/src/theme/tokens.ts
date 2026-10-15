@@ -24,6 +24,10 @@ export const colors = {
   successText: '#2E7D32',
   successBg: '#E8F5E9',
   successBorder: '#C8E6C9',
+
+  warningText: '#92400E',
+  warningBg: '#FFFBEB',
+  warningBorder: '#FDE68A',
 } as const;
 
 export const spacing = {

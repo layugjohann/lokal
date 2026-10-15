@@ -41,6 +41,9 @@ These are the approved starting values. Implementation must check contrast and c
 | Muted gray | `#686868` | Supporting text and secondary labels |
 | Neutral border | `#E8E2D9` | Subtle card and section separation |
 | Input border | `#D4C8BE` | Outlined inputs and secondary controls |
+| Warning text | `#92400E` | High-contrast warning/pending status text (WCAG 2.1 AA compliant) |
+| Warning background | `#FFFBEB` | Soft amber surface for warning/pending banners |
+| Warning border | `#FDE68A` | Subtle amber border for warning/pending containers |
 
 ### Color usage rules
 
@@ -72,11 +75,15 @@ Use a consistent 4-point spacing rhythm. Common starting values are 8, 12, 16, 2
 - Validate values against the existing components before creating new shared abstractions.
 
 ### Inputs, buttons, and icons
-
-- Inputs should have clear labels, calm outlined styling, legible placeholder text, visible focus/error states, and existing accessibility labels preserved.
-- Primary actions use deep caramel and white text; secondary actions remain visually quieter.
-- Loading/disabled states must remain obvious and must not be mistaken for successful completion.
-- Keep icons consistent with the current app and dependencies. Do not add an icon package unless the approved issue requires it.
+ 
+ - Inputs should have clear labels, calm outlined styling, legible placeholder text, visible focus/error states, and existing accessibility labels preserved.
+ - Primary actions use deep caramel and white text; secondary actions remain visually quieter.
+ - Loading/disabled states must remain obvious and must not be mistaken for successful completion.
+ - **Brand Logo (`LokalLogo.tsx`):** Monoline Coffee Cup with AI Steam Spark rendered via `react-native-svg` and bound to `colors.deepCaramel` (`#9A6330`).
+ - **Minimalist Icon System (`LokalIcon.tsx`):** Powered by `lucide-react-native` (MIT) and configured in `mobile/src/theme/icons.ts`. Replaces all decorative UI emoji with 14 approved vector icons (`close`, `community`, `profile`, `location`, `sparkles`, `coffee`, `heart`, `share`, `edit`, `verified`, `pending`, `rejected`, `document`, `star`).
+ - **Touch Target Floor:** All icon-only interactive controls enforce a minimum physical bounding box of 48 × 48 logical units (`iconButtonDimensions.minWidth: 48`, `minHeight: 48`).
+ - **Accessibility Contract:** Decorative and parent-labeled icons set `accessible={false}` and `importantForAccessibility="no"`. Standalone interactive icon controls declare explicit `accessibilityRole="button"` and meaningful `accessibilityLabel`.
+ - Typography star glyphs in review lists/filters (`★` / `☆`) and native text strings in `communityService.ts` remain preserved.
 
 ## Map preservation — non-negotiable
 

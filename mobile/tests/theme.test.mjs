@@ -94,6 +94,16 @@ test('normal text pairings meet or exceed WCAG 2.1 AA 4.5:1 threshold', () => {
       fg: colors.charcoal,
       bg: colors.warmCaramel,
     },
+    {
+      name: 'Warning Banner Text on Warning Background (warning amber on warning bg)',
+      fg: colors.warningText,
+      bg: colors.warningBg,
+    },
+    {
+      name: 'Warning Banner Text on White Card (warning amber on white)',
+      fg: colors.warningText,
+      bg: colors.surfaceWhite,
+    },
   ];
 
   for (const pair of normalTextPairs) {
@@ -134,6 +144,11 @@ test('non-text UI indicator pairings meet or exceed WCAG 2.1 AA 3.0:1 threshold'
       name: 'Primary Button Boundary on Canvas (deep caramel on soft neutral)',
       fg: colors.deepCaramel,
       bg: colors.softNeutral,
+    },
+    {
+      name: 'Active Favorite / Star UI Indicator on White (deep caramel on white)',
+      fg: colors.deepCaramel,
+      bg: colors.surfaceWhite,
     },
   ];
 

@@ -16,6 +16,8 @@ import {
 } from '../types/recommendation';
 import { formatDistance, formatRating } from '../services/shopService';
 import ShopDetailCard from './ShopDetailCard';
+import LokalIcon from './common/LokalIcon';
+import { colors } from '../theme/tokens';
 
 interface NearbyShopsSheetProps {
   shops: Shop[];
@@ -113,14 +115,21 @@ export default function NearbyShopsSheet({
             accessibilityLabel="Explore nearby coffee shops"
             accessibilityState={{ selected: activeTab === 'nearby' }}
           >
-            <Text
-              style={[
-                styles.tabButtonText,
-                activeTab === 'nearby' && styles.tabButtonTextActive,
-              ]}
-            >
-              📍 Nearby
-            </Text>
+            <View style={styles.tabContentRow}>
+              <LokalIcon
+                name="location"
+                size={14}
+                color={activeTab === 'nearby' ? '#4A2E18' : '#8C7D73'}
+              />
+              <Text
+                style={[
+                  styles.tabButtonText,
+                  activeTab === 'nearby' && styles.tabButtonTextActive,
+                ]}
+              >
+                Nearby
+              </Text>
+            </View>
           </TouchableOpacity>
           <TouchableOpacity
             style={[
@@ -133,14 +142,21 @@ export default function NearbyShopsSheet({
             accessibilityLabel="Personalized recommendations for you"
             accessibilityState={{ selected: activeTab === 'for_you' }}
           >
-            <Text
-              style={[
-                styles.tabButtonText,
-                activeTab === 'for_you' && styles.tabButtonTextActive,
-              ]}
-            >
-              ✨ For You
-            </Text>
+            <View style={styles.tabContentRow}>
+              <LokalIcon
+                name="sparkles"
+                size={14}
+                color={activeTab === 'for_you' ? '#4A2E18' : '#8C7D73'}
+              />
+              <Text
+                style={[
+                  styles.tabButtonText,
+                  activeTab === 'for_you' && styles.tabButtonTextActive,
+                ]}
+              >
+                For You
+              </Text>
+            </View>
           </TouchableOpacity>
         </View>
       )}
@@ -190,7 +206,7 @@ export default function NearbyShopsSheet({
                 accessibilityRole="button"
                 accessibilityLabel="Clear search input"
               >
-                <Text style={styles.clearButtonText}>✕</Text>
+                <LokalIcon name="close" size={16} color={colors.mutedGray} />
               </TouchableOpacity>
             )}
           </View>
@@ -430,12 +446,15 @@ export default function NearbyShopsSheet({
                       item.lokal_rating !== null ? (
                         <>
                           <Text style={styles.dot}>•</Text>
-                          <Text style={styles.lokalRatingText}>
-                            ☕ {Number(item.lokal_rating).toFixed(1)} ★
-                            {item.lokal_reviews_count
-                              ? ` (${item.lokal_reviews_count})`
-                              : ''}
-                          </Text>
+                          <View style={styles.lokalRatingBadgeRow}>
+                            <LokalIcon name="coffee" size={12} color={colors.deepCaramel} />
+                            <Text style={styles.lokalRatingText}>
+                              {Number(item.lokal_rating).toFixed(1)} ★
+                              {item.lokal_reviews_count
+                                ? ` (${item.lokal_reviews_count})`
+                                : ''}
+                            </Text>
+                          </View>
                         </>
                       ) : null}
                       {dist ? <Text style={styles.dot}>•</Text> : null}
@@ -571,12 +590,15 @@ export default function NearbyShopsSheet({
                         item.shop.lokal_rating !== null ? (
                           <>
                             <Text style={styles.dot}>•</Text>
-                            <Text style={styles.lokalRatingText}>
-                              ☕ {Number(item.shop.lokal_rating).toFixed(1)} ★
-                              {item.shop.lokal_reviews_count
-                                ? ` (${item.shop.lokal_reviews_count})`
-                                : ''}
-                            </Text>
+                            <View style={styles.lokalRatingBadgeRow}>
+                              <LokalIcon name="coffee" size={12} color={colors.deepCaramel} />
+                              <Text style={styles.lokalRatingText}>
+                                {Number(item.shop.lokal_rating).toFixed(1)} ★
+                                {item.shop.lokal_reviews_count
+                                  ? ` (${item.shop.lokal_reviews_count})`
+                                  : ''}
+                              </Text>
+                            </View>
                           </>
                         ) : null}
                         {dist ? <Text style={styles.dot}>•</Text> : null}
@@ -587,9 +609,12 @@ export default function NearbyShopsSheet({
 
                       {/* Grounded explanation badge */}
                       <View style={styles.explanationBox}>
-                        <Text style={styles.explanationLabel}>
-                          ✨ Why it matches:
-                        </Text>
+                        <View style={styles.explanationHeaderRow}>
+                          <LokalIcon name="sparkles" size={12} color="#6B3E14" />
+                          <Text style={styles.explanationLabel}>
+                            Why it matches:
+                          </Text>
+                        </View>
                         <Text style={styles.explanationText} numberOfLines={3}>
                           {item.explanation}
                         </Text>
@@ -646,6 +671,13 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     borderRadius: 8,
+    minHeight: 40,
+  },
+  tabContentRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
   },
   tabButtonActive: {
     backgroundColor: '#FFFFFF',
@@ -708,18 +740,25 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     borderWidth: 1,
     borderColor: '#D4C7BC',
-    paddingHorizontal: 10,
+    paddingLeft: 10,
+    paddingRight: 0,
     marginBottom: 8,
+    minHeight: 48,
   },
   searchInput: {
     flex: 1,
-    height: 38,
+    height: 48,
     fontSize: 13,
     color: '#4A2E18',
     paddingVertical: 0,
   },
   clearButton: {
-    padding: 6,
+    width: 48,
+    height: 48,
+    minWidth: 48,
+    minHeight: 48,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   clearButtonText: {
     color: '#8C7D73',
@@ -836,11 +875,21 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#E6D9CC',
   },
+  explanationHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    marginBottom: 2,
+  },
   explanationLabel: {
     fontSize: 11,
     fontWeight: '700',
     color: '#6B3E14',
-    marginBottom: 2,
+  },
+  lokalRatingBadgeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
   },
   explanationText: {
     fontSize: 12,

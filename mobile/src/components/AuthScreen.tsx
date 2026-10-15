@@ -13,6 +13,7 @@ import {
 } from 'react-native';
 import { useAuth } from '../hooks/useAuth';
 import { colors, spacing, radii, typography, shadows } from '../theme/tokens';
+import LokalLogo from './LokalLogo';
 
 type AuthMode = 'login' | 'register';
 
@@ -105,7 +106,10 @@ export default function AuthScreen() {
       >
         <View style={styles.contentContainer}>
           <View style={styles.header}>
-            <Text style={styles.appTitle}>☕ LOKAL</Text>
+            <View style={styles.titleRow}>
+              <LokalLogo size={36} />
+              <Text style={styles.appTitle}>LOKAL</Text>
+            </View>
             <Text style={styles.appSubtitle}>
               Discover local coffee shops. Support independent cafés.
             </Text>
@@ -265,12 +269,19 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: spacing.xxl,
   },
+  titleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: 48,
+    marginBottom: spacing.sm,
+    gap: spacing.md,
+  },
   appTitle: {
     fontSize: typography.title.fontSize,
     fontWeight: typography.title.fontWeight,
     color: colors.deepCaramel,
     letterSpacing: typography.title.letterSpacing,
-    marginBottom: spacing.sm,
   },
   appSubtitle: {
     fontSize: typography.subhead.fontSize,
