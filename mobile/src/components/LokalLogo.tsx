@@ -8,6 +8,7 @@ export interface LokalLogoProps {
   style?: StyleProp<ViewStyle>;
   color?: string;
   accentColor?: string;
+  accessible?: boolean;
   accessibilityLabel?: string;
 }
 
@@ -16,21 +17,26 @@ export const LokalLogo: React.FC<LokalLogoProps> = ({
   style,
   color = colors.deepCaramel,
   accentColor = colors.warmCaramel,
+  accessible = false,
   accessibilityLabel = 'LOKAL brand logo',
 }) => {
   return (
     <View
       style={style}
-      accessible={false}
-      importantForAccessibility="no"
-      accessibilityElementsHidden={true}
+      accessible={accessible}
+      accessibilityRole={accessible ? 'image' : undefined}
+      accessibilityLabel={accessible ? accessibilityLabel : undefined}
+      importantForAccessibility={accessible ? 'yes' : 'no-hide-descendants'}
+      accessibilityElementsHidden={!accessible}
     >
       <Svg
         width={size}
         height={size}
         viewBox="0 0 72 72"
         fill="none"
-        accessibilityLabel={accessibilityLabel}
+        accessible={false}
+        importantForAccessibility="no-hide-descendants"
+        accessibilityElementsHidden={true}
       >
         {/* Cup Outline */}
         <Path

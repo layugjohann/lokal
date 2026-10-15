@@ -130,20 +130,10 @@ export const semanticIconColors = {
   statusRejected: colors.errorText,
 } as const;
 
-export function getIconAccessibilityProps(options?: {
-  isInteractive?: boolean;
-  label?: string;
-}) {
-  if (options?.isInteractive) {
-    return {
-      accessible: true,
-      accessibilityRole: 'button' as const,
-      accessibilityLabel: options.label,
-    };
-  }
+export function getIconAccessibilityProps() {
   return {
-    accessible: false,
-    importantForAccessibility: 'no' as const,
-    accessibilityElementsHidden: true,
+    accessible: false as const,
+    importantForAccessibility: 'no-hide-descendants' as const,
+    accessibilityElementsHidden: true as const,
   };
 }

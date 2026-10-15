@@ -1,5 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert';
+import fs from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import ts from 'typescript';
 import {
   SUPPORTED_ICON_NAMES,
   iconMapping,
@@ -72,19 +75,31 @@ test('iconMapping default colors bind strictly to approved design tokens', () =>
   }
 });
 
-test('getIconAccessibilityProps returns correct contracts for decorative vs interactive icons', () => {
+test('getIconAccessibilityProps returns purely decorative accessibility contracts', () => {
   const decorativeProps = getIconAccessibilityProps();
   assert.strictEqual(decorativeProps.accessible, false);
-  assert.strictEqual(decorativeProps.importantForAccessibility, 'no');
+  assert.strictEqual(decorativeProps.importantForAccessibility, 'no-hide-descendants');
   assert.strictEqual(decorativeProps.accessibilityElementsHidden, true);
+});
 
-  const interactiveProps = getIconAccessibilityProps({
-    isInteractive: true,
-    label: 'Dismiss modal',
-  });
-  assert.strictEqual(interactiveProps.accessible, true);
-  assert.strictEqual(interactiveProps.accessibilityRole, 'button');
-  assert.strictEqual(interactiveProps.accessibilityLabel, 'Dismiss modal');
+test('LokalLogo implements platform-specific decorative and informative contracts', () => {
+  const logoPath = new URL('../src/components/LokalLogo.tsx', import.meta.url);
+  const content = fs.readFileSync(logoPath, 'utf8');
+
+  // Verify default accessible = false
+  assert.ok(/accessible\s*=\s*false/.test(content), 'accessible prop must default to false');
+  // Verify importantForAccessibility ternary for Android
+  assert.ok(
+    /importantForAccessibility=\{accessible \? ['"]yes['"] : ['"]no-hide-descendants['"]\}/.test(
+      content
+    ),
+    'importantForAccessibility must use no-hide-descendants when decorative'
+  );
+  // Verify accessibilityElementsHidden for iOS
+  assert.ok(
+    /accessibilityElementsHidden=\{!accessible\}/.test(content),
+    'accessibilityElementsHidden must hide decorative logo from iOS VoiceOver'
+  );
 });
 
 test('iconButtonDimensions enforces physical touch-target minimum floor of 48x48', () => {
@@ -143,9 +158,73 @@ test('semanticIconColors binds strictly to approved palette tokens and contracts
   );
 });
 
-test('in-scope TSX icon-only interactive controls enforce 48x48 bounds and accessibility labels', async () => {
-  const fs = await import('node:fs');
+/**
+ * Helper using the TypeScript parser to extract StyleSheet styles and JSX elements
+ * with their exact attributes.
+ */
+function analyzeComponentAst(filePath) {
+  const resolvedPath = filePath instanceof URL ? fileURLToPath(filePath) : filePath;
+  const code = fs.readFileSync(resolvedPath, 'utf8');
+  const sf = ts.createSourceFile(
+    resolvedPath,
+    code,
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TSX
+  );
 
+  const styles = {};
+  const jsxElements = [];
+
+  function visit(node) {
+    if (ts.isCallExpression(node)) {
+      const expr = node.expression;
+      if (ts.isPropertyAccessExpression(expr) && expr.name.text === 'create') {
+        const arg = node.arguments[0];
+        if (arg && ts.isObjectLiteralExpression(arg)) {
+          for (const prop of arg.properties) {
+            if (ts.isPropertyAssignment(prop)) {
+              const styleName = prop.name.getText(sf).replace(/['"]/g, '');
+              if (ts.isObjectLiteralExpression(prop.initializer)) {
+                const rules = {};
+                for (const rule of prop.initializer.properties) {
+                  if (ts.isPropertyAssignment(rule)) {
+                    const ruleName = rule.name.getText(sf).replace(/['"]/g, '');
+                    const ruleVal = rule.initializer.getText(sf).replace(/['"]/g, '');
+                    rules[ruleName] = ruleVal;
+                  }
+                }
+                styles[styleName] = rules;
+              }
+            }
+          }
+        }
+      }
+    }
+
+    if (ts.isJsxOpeningElement(node) || ts.isJsxSelfClosingElement(node)) {
+      const attrs = {};
+      for (const prop of node.attributes.properties) {
+        if (ts.isJsxAttribute(prop)) {
+          const attrName = prop.name.text;
+          const attrVal = prop.initializer ? prop.initializer.getText(sf) : 'true';
+          attrs[attrName] = attrVal;
+        }
+      }
+      jsxElements.push({
+        tagName: node.tagName.getText(sf),
+        attrs,
+      });
+    }
+
+    ts.forEachChild(node, visit);
+  }
+
+  visit(sf);
+  return { styles, jsxElements };
+}
+
+test('in-scope TSX icon-only interactive controls enforce 48x48 bounds and accessibility labels via AST', () => {
   const componentsToVerify = [
     {
       file: '../src/components/LokalMapView.tsx',
@@ -167,7 +246,7 @@ test('in-scope TSX icon-only interactive controls enforce 48x48 bounds and acces
         { styleName: 'shareButton', expectedLabelPattern: /Share coffee shop details/i },
         { styleName: 'favoriteButton', expectedLabelPattern: /favorite/i },
         { styleName: 'favoriteErrorDismiss', expectedLabelPattern: /Dismiss favorite error/i },
-        { styleName: 'starTouchTarget', expectedLabelPattern: /Rate \$\{star\} star/i },
+        { styleName: 'starTouchTarget', expectedLabelPattern: /Rate.*star/i },
       ],
     },
     {
@@ -192,67 +271,74 @@ test('in-scope TSX icon-only interactive controls enforce 48x48 bounds and acces
 
   for (const comp of componentsToVerify) {
     const filePath = new URL(comp.file, import.meta.url);
-    const content = fs.readFileSync(filePath, 'utf8');
+    const { styles, jsxElements } = analyzeComponentAst(filePath);
 
     for (const ctrl of comp.controls) {
-      // 1. Verify style dimensions: width >= 48, height >= 48
-      const styleRegex = new RegExp(`${ctrl.styleName}:\\s*{([^}]+)}`, 's');
-      const match = content.match(styleRegex);
-      assert.ok(match, `Style definition for "${ctrl.styleName}" must exist in ${comp.file}`);
-
-      const styleBody = match[1];
-      const widthMatch = styleBody.match(/(?:minWidth|width):\s*(\d+)/);
-      const heightMatch = styleBody.match(/(?:minHeight|height):\s*(\d+)/);
-
-      assert.ok(widthMatch, `"${ctrl.styleName}" in ${comp.file} must specify width or minWidth`);
-      assert.ok(heightMatch, `"${ctrl.styleName}" in ${comp.file} must specify height or minHeight`);
-
+      // 1. Verify exact style dimensions from AST
+      const styleObj = styles[ctrl.styleName];
       assert.ok(
-        Number(widthMatch[1]) >= 48,
-        `"${ctrl.styleName}" in ${comp.file} width (${widthMatch[1]}) must be >= 48`
-      );
-      assert.ok(
-        Number(heightMatch[1]) >= 48,
-        `"${ctrl.styleName}" in ${comp.file} height (${heightMatch[1]}) must be >= 48`
+        styleObj,
+        `Style definition for "${ctrl.styleName}" must exist in ${comp.file}`
       );
 
-      // 2. Verify accessibility attributes
+      const width = Number(styleObj.width || styleObj.minWidth);
+      const height = Number(styleObj.height || styleObj.minHeight);
+
       assert.ok(
-        ctrl.expectedLabelPattern.test(content),
-        `Component ${comp.file} must contain accessibilityLabel matching ${ctrl.expectedLabelPattern}`
+        !Number.isNaN(width) && width >= 48,
+        `"${ctrl.styleName}" in ${comp.file} width (${width}) must be >= 48`
       );
       assert.ok(
-        content.includes('accessibilityRole="button"'),
-        `Component ${comp.file} must specify accessibilityRole="button"`
+        !Number.isNaN(height) && height >= 48,
+        `"${ctrl.styleName}" in ${comp.file} height (${height}) must be >= 48`
+      );
+
+      // 2. Locate the EXACT JSX opening element that binds to this style
+      const matchingJsx = jsxElements.find(
+        (e) => e.attrs.style && e.attrs.style.includes(ctrl.styleName)
+      );
+      assert.ok(
+        matchingJsx,
+        `JSX element referencing "${ctrl.styleName}" must exist in ${comp.file}`
+      );
+
+      // 3. Verify accessibilityRole and accessibilityLabel on that SAME element
+      assert.strictEqual(
+        matchingJsx.attrs.accessibilityRole,
+        '"button"',
+        `JSX element referencing "${ctrl.styleName}" in ${comp.file} must declare accessibilityRole="button"`
+      );
+      assert.ok(
+        ctrl.expectedLabelPattern.test(matchingJsx.attrs.accessibilityLabel),
+        `JSX element referencing "${ctrl.styleName}" in ${comp.file} accessibilityLabel (${matchingJsx.attrs.accessibilityLabel}) must match ${ctrl.expectedLabelPattern}`
       );
     }
   }
 });
 
-test('starPickerRow specifies flexWrap: wrap and responsive spacing for narrow screen safety', async () => {
-  const fs = await import('node:fs');
+test('starPickerRow specifies flexWrap: wrap and responsive spacing for narrow screen safety', () => {
   const shopCardPath = new URL('../src/components/ShopDetailCard.tsx', import.meta.url);
-  const content = fs.readFileSync(shopCardPath, 'utf8');
+  const { styles } = analyzeComponentAst(shopCardPath);
 
-  // Verify flexWrap: 'wrap' in starPickerRow
-  const pickerMatch = content.match(/starPickerRow:\s*{([^}]+)}/s);
-  assert.ok(pickerMatch, 'starPickerRow style definition must exist');
+  const pickerStyle = styles.starPickerRow;
+  assert.ok(pickerStyle, 'starPickerRow style definition must exist');
 
-  const pickerBody = pickerMatch[1];
-  assert.ok(
-    /flexWrap:\s*['"]wrap['"]/.test(pickerBody),
+  assert.strictEqual(
+    pickerStyle.flexWrap,
+    'wrap',
     'starPickerRow must specify flexWrap: "wrap" to prevent narrow viewport overflow'
   );
-  assert.ok(
-    /justifyContent:\s*['"]center['"]/.test(pickerBody),
+  assert.strictEqual(
+    pickerStyle.justifyContent,
+    'center',
     'starPickerRow must specify justifyContent: "center" for balanced alignment across rows'
   );
   assert.ok(
-    /rowGap:\s*\d+/.test(pickerBody),
+    Number(pickerStyle.rowGap) > 0,
     'starPickerRow must specify rowGap for clean vertical spacing when wrapped'
   );
   assert.ok(
-    /columnGap:\s*\d+/.test(pickerBody),
+    Number(pickerStyle.columnGap) > 0,
     'starPickerRow must specify columnGap for horizontal item spacing'
   );
 
@@ -271,7 +357,7 @@ test('starPickerRow specifies flexWrap: wrap and responsive spacing for narrow s
   assert.strictEqual(availableWidth, 232);
 
   const TARGET_SIZE = 48;
-  const COLUMN_GAP = 2;
+  const COLUMN_GAP = Number(pickerStyle.columnGap);
   const unwrapWidth = 5 * TARGET_SIZE + 4 * COLUMN_GAP; // 248pt
 
   // Confirm unwrap would have overflowed 232pt
@@ -280,7 +366,7 @@ test('starPickerRow specifies flexWrap: wrap and responsive spacing for narrow s
     `Unwrapped width (${unwrapWidth}pt) exceeds available width (${availableWidth}pt)`
   );
 
-  // Confirm that with wrapping, 4 stars fit on Row 1 (198pt <= 200pt) and 1 star on Row 2 (48pt <= 200pt)
+  // Confirm that with wrapping, 4 stars fit on Row 1 (198pt <= 232pt) and 1 star on Row 2 (48pt <= 232pt)
   const row1Width = 4 * TARGET_SIZE + 3 * COLUMN_GAP; // 198pt
   const row2Width = 1 * TARGET_SIZE; // 48pt
   assert.ok(
@@ -293,4 +379,21 @@ test('starPickerRow specifies flexWrap: wrap and responsive spacing for narrow s
   );
 });
 
+test('CommunityFeedView shopName and shopAddress specify flexShrink: 1 to prevent row overflow', () => {
+  const feedPath = new URL('../src/components/CommunityFeedView.tsx', import.meta.url);
+  const { styles } = analyzeComponentAst(feedPath);
 
+  assert.ok(styles.shopName, 'shopName style definition must exist');
+  assert.strictEqual(
+    Number(styles.shopName.flexShrink),
+    1,
+    'shopName in CommunityFeedView must specify flexShrink: 1'
+  );
+
+  assert.ok(styles.shopAddress, 'shopAddress style definition must exist');
+  assert.strictEqual(
+    Number(styles.shopAddress.flexShrink),
+    1,
+    'shopAddress in CommunityFeedView must specify flexShrink: 1'
+  );
+});

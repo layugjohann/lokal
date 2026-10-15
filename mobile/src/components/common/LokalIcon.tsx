@@ -47,8 +47,6 @@ export interface LokalIconProps {
   strokeWidth?: number;
   fill?: string;
   style?: StyleProp<ViewStyle>;
-  isInteractive?: boolean;
-  accessibilityLabel?: string;
 }
 
 export const LokalIcon: React.FC<LokalIconProps> = ({
@@ -58,8 +56,6 @@ export const LokalIcon: React.FC<LokalIconProps> = ({
   strokeWidth = 2,
   fill,
   style,
-  isInteractive = false,
-  accessibilityLabel,
 }) => {
   const IconComponent = ICON_COMPONENTS[name];
   const config = iconMapping[name];
@@ -70,10 +66,7 @@ export const LokalIcon: React.FC<LokalIconProps> = ({
 
   const iconColor = color || config.defaultColor;
   const iconSize = size ?? config.defaultSize;
-  const accessibilityProps = getIconAccessibilityProps({
-    isInteractive,
-    label: accessibilityLabel,
-  });
+  const accessibilityProps = getIconAccessibilityProps();
 
   return (
     <View style={style} {...accessibilityProps}>

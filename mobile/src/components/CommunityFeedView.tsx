@@ -476,6 +476,7 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   shopName: {
+    flexShrink: 1,
     fontSize: 16,
     fontWeight: '700',
     color: '#4A2E18',
@@ -488,6 +489,7 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
   shopAddress: {
+    flexShrink: 1,
     fontSize: 12,
     color: '#8A7A6E',
   },
