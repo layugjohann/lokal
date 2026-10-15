@@ -1458,7 +1458,10 @@ const styles = StyleSheet.create({
   },
   starPickerRow: {
     flexDirection: 'row',
-    gap: 2,
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    columnGap: 2,
+    rowGap: 6,
     marginBottom: 10,
   },
   starTouchTarget: {

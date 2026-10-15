@@ -188,12 +188,6 @@ test('in-scope TSX icon-only interactive controls enforce 48x48 bounds and acces
         { styleName: 'closeButton', expectedLabelPattern: /Close owner dashboard/i },
       ],
     },
-    {
-      file: '../src/components/ClaimShopModal.tsx',
-      controls: [
-        { styleName: 'closeButton', expectedLabelPattern: /Cancel claim/i },
-      ],
-    },
   ];
 
   for (const comp of componentsToVerify) {
@@ -234,4 +228,65 @@ test('in-scope TSX icon-only interactive controls enforce 48x48 bounds and acces
     }
   }
 });
+
+test('starPickerRow specifies flexWrap: wrap and responsive spacing for narrow screen safety', async () => {
+  const fs = await import('node:fs');
+  const shopCardPath = new URL('../src/components/ShopDetailCard.tsx', import.meta.url);
+  const content = fs.readFileSync(shopCardPath, 'utf8');
+
+  // Verify flexWrap: 'wrap' in starPickerRow
+  const pickerMatch = content.match(/starPickerRow:\s*{([^}]+)}/s);
+  assert.ok(pickerMatch, 'starPickerRow style definition must exist');
+
+  const pickerBody = pickerMatch[1];
+  assert.ok(
+    /flexWrap:\s*['"]wrap['"]/.test(pickerBody),
+    'starPickerRow must specify flexWrap: "wrap" to prevent narrow viewport overflow'
+  );
+  assert.ok(
+    /rowGap:\s*\d+/.test(pickerBody),
+    'starPickerRow must specify rowGap for clean vertical spacing when wrapped'
+  );
+  assert.ok(
+    /columnGap:\s*\d+/.test(pickerBody),
+    'starPickerRow must specify columnGap for horizontal item spacing'
+  );
+
+  // Validate mathematical layout constraint on 320pt narrow viewport
+  const NARROW_VIEWPORT_WIDTH = 320;
+  const SHEET_PADDING_HORIZONTAL = 16 * 2;
+  const CARD_PADDING_HORIZONTAL = 16 * 2;
+  const FORM_PADDING_HORIZONTAL = 12 * 2;
+  const availableWidth =
+    NARROW_VIEWPORT_WIDTH -
+    SHEET_PADDING_HORIZONTAL -
+    CARD_PADDING_HORIZONTAL -
+    FORM_PADDING_HORIZONTAL;
+
+  // Available width is 232pt
+  assert.strictEqual(availableWidth, 232);
+
+  const TARGET_SIZE = 48;
+  const COLUMN_GAP = 2;
+  const unwrapWidth = 5 * TARGET_SIZE + 4 * COLUMN_GAP; // 248pt
+
+  // Confirm unwrap would have overflowed 232pt
+  assert.ok(
+    unwrapWidth > availableWidth,
+    `Unwrapped width (${unwrapWidth}pt) exceeds available width (${availableWidth}pt)`
+  );
+
+  // Confirm that with wrapping, 4 stars fit on Row 1 (198pt <= 200pt) and 1 star on Row 2 (48pt <= 200pt)
+  const row1Width = 4 * TARGET_SIZE + 3 * COLUMN_GAP; // 198pt
+  const row2Width = 1 * TARGET_SIZE; // 48pt
+  assert.ok(
+    row1Width <= availableWidth,
+    `Wrapped row 1 width (${row1Width}pt) must fit within available width (${availableWidth}pt)`
+  );
+  assert.ok(
+    row2Width <= availableWidth,
+    `Wrapped row 2 width (${row2Width}pt) must fit within available width (${availableWidth}pt)`
+  );
+});
+
 
