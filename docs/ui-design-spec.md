@@ -1,9 +1,9 @@
 # LOKAL UI Design Specification
 
-**Status:** Approved visual direction; implementation has not started  
+**Status:** Approved visual direction; implementation in progress (tokens, branding, and icon system complete)  
 **Product phase:** Phase 3 — MVP Polish & Validation  
 **Owner:** Product Owner  
-**Last reviewed:** 2026-10-10
+**Last reviewed:** 2026-10-16
 
 ## Purpose
 
@@ -82,7 +82,7 @@ Use a consistent 4-point spacing rhythm. Common starting values are 8, 12, 16, 2
  - **Brand Logo (`LokalLogo.tsx`):** Monoline Coffee Cup with AI Steam Spark rendered via `react-native-svg` and bound to `colors.deepCaramel` (`#9A6330`).
  - **Minimalist Icon System (`LokalIcon.tsx`):** Powered by `lucide-react-native` (MIT) and configured in `mobile/src/theme/icons.ts`. Replaces all decorative UI emoji with 14 approved vector icons (`close`, `community`, `profile`, `location`, `sparkles`, `coffee`, `heart`, `share`, `edit`, `verified`, `pending`, `rejected`, `document`, `star`).
  - **Touch Target Floor:** All icon-only interactive controls enforce a minimum physical bounding box of 48 × 48 logical units (`iconButtonDimensions.minWidth: 48`, `minHeight: 48`).
- - **Accessibility Contract:** Decorative and parent-labeled icons set `accessible={false}` and `importantForAccessibility="no"`. Standalone interactive icon controls declare explicit `accessibilityRole="button"` and meaningful `accessibilityLabel`.
+ - **Accessibility Contract:** Decorative and parent-labeled icons set `accessible={false}`, `importantForAccessibility="no-hide-descendants"`, and `accessibilityElementsHidden={true}` across Android and iOS. Standalone interactive icon controls declare explicit `accessibilityRole="button"` and meaningful `accessibilityLabel` on the parent touch target.
  - Typography star glyphs in review lists/filters (`★` / `☆`) and native text strings in `communityService.ts` remain preserved.
 
 ## Map preservation — non-negotiable

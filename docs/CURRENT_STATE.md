@@ -20,7 +20,7 @@ Features such as coffee shop menus and photo galleries remain future exploration
 
 🟢 **On Track**
 
-The core application stack is operational. **Visual Tokens and Authentication Personalization Pilot (GitHub Issue #51)** is the latest completed feature, establishing the foundational zero-dependency visual design token architecture (`mobile/src/theme/tokens.ts`, `mobile/src/theme/index.ts`), personalizing the authentication experience (`AuthScreen.tsx`), styling the session restoration and connection recovery shells (`App.tsx`), and adding dynamic WCAG 2.1 contrast and layout verification tests (`mobile/tests/theme.test.mjs`).
+The core application stack is operational. **Branding and Minimalist Icon System (GitHub Issue #53)** is the latest completed feature, establishing the brand identity with Concept 1 (Monoline Coffee Cup & AI Steam Spark) vector logo component (`mobile/src/components/LokalLogo.tsx`), replacing decorative emoji across all mobile UI surfaces with a consistent 14-symbol minimalist vector icon system powered by `lucide-react-native` and configured in `mobile/src/theme/icons.ts`, enforcing a strict 48 × 48 logical unit physical touch-target floor across icon-only interactive controls, standardizing responsive star-picker wrapping for narrow viewports, adding text overflow safety in feed cards, and verifying components through TypeScript AST-based testing (`mobile/tests/iconSystem.test.mjs`).
 
 The original LOKAL MVP is centered on a simple product loop: **locate local independent coffee shops and quickly understand each shop through AI-generated review summaries**. The application already provides the underlying discovery, curation, review-data, shop-detail, AI-summary capabilities, and realistic validation data needed for that loop.
 
@@ -30,7 +30,7 @@ The current phase is therefore focused on **MVP Polish & Validation** rather tha
 
 The goal of this phase is to determine whether the existing MVP experience is polished, coherent, reliable, and useful with realistic data. **Coffee shop menus and photo galleries remain future exploration candidates and are not required to satisfy the current MVP definition.**
 
-The latest merged implementation is verified through **427 passing backend tests**, **218 passing mobile tests**, **109 passing database pgTAP assertions**, and **0 TypeScript compilation errors**.
+The latest merged implementation is verified through **427 passing backend tests**, **228 passing mobile tests**, **109 passing database pgTAP assertions**, and **0 TypeScript compilation errors**.
 
 The engineering workflow remains formalized under the **AI-Assisted Engineering Workflow**.
 
@@ -38,50 +38,50 @@ The next work cycle should begin only after the current state is synchronized an
 
 # Latest Completed Feature
 
-## GitHub Issue #51 — Visual Tokens and Authentication Personalization Pilot
+## GitHub Issue #53 — Refine Branding & Minimalist Icon System
 
 **Status:** ✅ Completed
 
 ### Completed Work
 
-* **Zero-Dependency Visual Token System (`mobile/src/theme/tokens.ts`, `mobile/src/theme/index.ts`)**:
-  * Established readonly TypeScript design tokens using `as const` across five foundational subsystems: `colors`, `spacing`, `radii`, `typography`, and `shadows`.
-  * **Color Tokens:** Implemented the approved warm-neutral palette:
-    * Brand Accents: Deep Caramel (`#9A6330`, primary fill) and Warm Caramel (`#C9955A`, restrained highlight).
-    * Surfaces & Canvas: Soft Neutral (`#F5F6F8`, app background/quiet surfaces) and Surface White (`#FFFFFF`, elevated cards/forms).
-    * Content & Typography: Charcoal (`#242424`, high-priority text) and Muted Gray (`#686868`, supporting text/inactive controls).
-    * Borders & Dividers: Neutral Border (`#E8E2D9`, card dividers), Input Border (`#D4C8BE`, resting outlines), and Focus Border (`#9A6330`, active focus ring).
-    * Semantic Feedback: Error text (`#C62828`), error background (`#FDECEA`), error border (`#F5C6CB`), success text (`#2E7D32`), success background (`#E8F5E9`), and success border (`#C8E6C9`).
-  * **Spacing Scale:** Monotonically increasing 4-point scale (`xs: 4`, `sm: 8`, `md: 12`, `base: 16`, `lg: 20`, `xl: 24`, `xxl: 32`, `xxxl: 48`).
-  * **Border Radii:** Consistent corner geometry (`sm: 6`, `control: 8`, `button: 10`, `pill: 10`, `card: 16`).
-  * **Typography Presets:** System sans-serif hierarchy definitions (`title`, `headline`, `subhead`, `body`, `label`, `button`, `caption`) with explicit font sizes, weights, line heights, and letter spacing.
-  * **Elevation Shadows:** Platform-adapted shadow definitions for elevated cards (`shadows.card`) and active tabs (`shadows.tabActive`).
-* **Personalized Authentication Experience (`mobile/src/components/AuthScreen.tsx`)**:
-  * **Responsive Container Layout:** Centered content container constrained to `maxWidth: 420` pt, ensuring clean presentation across standard phones, tablets, and landscape viewports.
-  * **Standardized 48-Unit Touch Targets:** Guaranteed `minHeight: 48` logical units across all primary interactive elements: Log In / Sign Up segmented tabs, text input fields (Email and Password), and the primary submit button.
-  * **Presentation-Only Focus State:** Tracks `focusedField` (`email` | `password` | `null`) on `onFocus` and `onBlur`, applying active focus styling (`borderColor: colors.borderFocus`, `borderWidth: 1.5`) strictly at the presentation layer without altering form validation, submission lifecycle, or authentication state.
-  * **Accessible High-Contrast Feedback Banners:** Rendered semantic error banner (`#C62828` on `#FDECEA`, 4.92:1 contrast) and registration confirmation banner (`#2E7D32` on `#E8F5E9`, 4.56:1 contrast) with rounded container styling.
-  * **Screen-Reader Speech Announcements:** Calls `AccessibilityInfo.announceForAccessibility` when `errorMessage` or `infoMessage` updates, ensuring speech dispatch occurs cleanly across platforms without relying on conditionally mounted live regions on Android. Banners retain structural accessibility roles (`accessibilityRole="alert"` on error, `accessibilityRole="text"` on info).
-* **Session Restoration & Connection Shell Personalization (`mobile/App.tsx`)**:
-  * Aligned session restoration loading indicator (`deepCaramel`), loading text (`charcoal`), canvas background (`softNeutral`), and connection issue card with design tokens.
-  * Standardized connection error recovery action buttons (`Sign Out` and `Retry`) to 48 logical units minimum height, clear hierarchy, and accessible color tokens.
-* **Dynamic Role-Specific Theme Tests (`mobile/tests/theme.test.mjs`)**:
-  * Dynamically computes relative luminance and contrast ratios directly from hex token values per WCAG 2.1 formulas without hardcoded expected ratios.
-  * Asserts normal text pairs meet or exceed 4.5:1 (including Charcoal on Warm Caramel Accent `#242424` on `#C9955A` at 5.86:1, Charcoal on White at 15.52:1, Charcoal on Soft Neutral at 14.36:1, Muted Gray on Soft Neutral at 5.15:1, and Error/Success banners).
-  * Asserts large text pairs meet or exceed 3.0:1 (Brand Title on Canvas `#9A6330` on `#F5F6F8` at 4.62:1).
-  * Asserts non-text UI indicators meet or exceed 3.0:1 (Focus Outline `#9A6330` on White at 5.00:1).
-  * Enforces the architectural guardrail: White text on Warm Caramel fails 4.5:1 (computed 2.65:1), ensuring warm caramel is used exclusively with dark text.
-  * Asserts 48-unit touch target floor and 420 pt container maxWidth constraint.
-  * Added mathematical JSDoc documentation for color calculation utilities.
+* **Brand Identity & Vector Logo (`mobile/src/components/LokalLogo.tsx`)**:
+  * Implemented Concept 1 (Monoline Coffee Cup & AI Steam Spark) as an accessible, resolution-independent vector component using `react-native-svg`.
+  * Integrated `LokalLogo` into the `AuthScreen.tsx` header alongside the typography wordmark (`LOKAL`), replacing raw emoji text headers.
+  * Configured dual-platform accessibility behavior: decorative by default (`accessible={false}`, `importantForAccessibility="no-hide-descendants"`, and `accessibilityElementsHidden={true}` on container and child `<Svg>`); when explicitly set to `accessible={true}`, it cleanly announces with `accessibilityRole="image"` and custom `accessibilityLabel` without duplicate descendant announcements.
+* **Minimalist Vector Icon System (`mobile/src/theme/icons.ts`, `mobile/src/components/common/LokalIcon.tsx`)**:
+  * Introduced `react-native-svg` and `lucide-react-native` (MIT) dependencies.
+  * Centralized icon definitions in `mobile/src/theme/icons.ts` covering all 14 approved minimalist icons: `close`, `community`, `profile`, `location`, `sparkles`, `coffee`, `heart`, `share`, `edit`, `verified`, `pending`, `rejected`, `document`, and `star`.
+  * Bound all icons strictly to semantic design tokens: active favorites and review stars to `colors.deepCaramel` (`#9A6330`), inactive states to `colors.mutedGray` (`#686868`), warning/pending states to `colors.warningText` (`#92400E`), and default accents to `colors.deepCaramel` and `colors.warmCaramel`.
+  * Pure decorative accessibility contracts on `LokalIcon.tsx`: sets `accessible={false}`, `importantForAccessibility="no-hide-descendants"`, and `accessibilityElementsHidden={true}`. Interactive accessibility roles (`accessibilityRole="button"`) and accessible labels reside strictly on the parent touchable elements.
+* **Full Mobile UI Emoji Replacement**:
+  * `LokalMapView.tsx`: Replaced floating overlay emoji with `community` and `profile` vector icons.
+  * `NearbyShopsSheet.tsx`: Replaced discovery tabs (`location`, `sparkles`), clear query button (`close`), and coffee shop card badges (`coffee`, `sparkles`).
+  * `ShopDetailCard.tsx`: Replaced header action buttons (`share`, `heart`), dismiss buttons (`close`), shop badges (`coffee`, `sparkles`), claim status banners (`pending`, `rejected`), and converted interactive star picker into vector `star` icons.
+  * `ProfileView.tsx`: Replaced modal close button (`close`), favorite indicator (`heart`), and empty state icons (`heart`, `document`).
+  * `CommunityFeedView.tsx`: Replaced close button (`close`), header and empty state icons (`community`), author/shop badges (`coffee`, `location`, `profile`), and share action (`share`).
+  * `OwnerDashboardModal.tsx`: Replaced modal close button (`close`), verified owner badge (`verified`), KPI metric badge (`coffee`), and edit shop profile button (`edit`).
+* **Interactive Touch Target Floor ($\ge 48 \times 48$)**:
+  * Enforced physical bounding box minimum of $48 \times 48$ logical units (`iconButtonDimensions.minWidth = 48`, `iconButtonDimensions.minHeight = 48`) across all icon-only interactive controls with zero exceptions.
+* **Responsive Layout & Overflow Protection**:
+  * Centered wrapped star picker (`flexWrap: 'wrap'`, `justifyContent: 'center'`, `columnGap: 2`, `rowGap: 6`) ensuring all five 48 × 48 star touch targets fit comfortably on narrow viewports ($\le 320$ pt) without horizontal clipping or awkward single-item left alignment.
+  * Added `flexShrink: 1` to `shopName` and `shopAddress` in `CommunityFeedView.tsx` to guarantee text truncates cleanly with ellipsis without colliding with neighboring badges or overflowing card bounds.
+* **AST-Based Component Verification (`mobile/tests/iconSystem.test.mjs`)**:
+  * Implemented AST-based component verification using `typescript`'s compiler API (`ts.createSourceFile`).
+  * Directly links each style definition in `StyleSheet.create` to the specific JSX element referencing it, asserting `accessibilityRole="button"`, `accessibilityLabel`, and $\ge 48 \times 48$ physical dimensions on that exact element.
+  * Asserts supported icon count (14), token bindings, decorative accessibility contracts, and narrow screen wrapping math.
+* **Preserved Scope**:
+  * `ClaimShopModal.tsx` remains completely identical to `main`.
+  * Map rendering, location behaviors, markers, and selection logic in `LokalMapView.tsx` remain 100% untouched.
+  * Native share text strings in `communityService.ts`, validation dataset fixtures in `validation_dataset.py`, and inline review text glyphs (`★` / `☆`) remain preserved.
 * **Automated Verification**:
+  * Icon System Test Suite (`mobile/tests/iconSystem.test.mjs`): **10 / 10 tests passed**.
   * Theme Suite (`mobile/tests/theme.test.mjs`): **9 / 9 tests passed**.
-  * Full Mobile Suite (`npm test --prefix mobile`): **218 / 218 tests passed**.
+  * Full Mobile Suite (`npm test --prefix mobile`): **228 / 228 tests passed**.
   * Backend Regression Suite: **427 / 427 tests passed** (`./backend/.venv/bin/python -m unittest discover -s backend/tests -v`).
   * Mobile TypeScript Compiler: **0 errors** (`./mobile/node_modules/.bin/tsc --noEmit --project mobile/tsconfig.json`).
-  * Metro Bundler Export: **0 errors** for iOS and Android (`npx expo export --platform ios`, `npx expo export --platform android`).
-  * Running UI Visual Inspection: Verified on booted iPhone 17 Pro simulator (iOS 26.0) across resting login, email input focus (1.5 border), validation error, sign-up tab with confirmation banner, and session restoration failure states.
+  * Metro Bundler Export: **0 errors** for iOS (2674 modules) and Android (2672 modules).
 * **Pull Request**:
-  * Pull Request #52 reviewed, CodeRabbit findings addressed (Android TalkBack initial-mount announcement handling, normal text contrast assertion for charcoal on warm caramel, JSDoc documentation), approved, and merged into `main` by the Product Owner (merge commit `750c41c9`).
+  * Pull Request #54 reviewed, CodeRabbit feedback addressed (star picker wrapping, feed text overflow, logo accessibility, AST test tightening), approved, and merged into `main` by the Product Owner (merge commit `4a337f08`).
 
 ---
 
@@ -114,6 +114,7 @@ The next work cycle should begin only after the current state is synchronized an
 | Issue #47 — Community Feed and Social Sharing                | ✅ Complete |
 | Issue #49 — Realistic MVP Validation Dataset                 | ✅ Complete |
 | Issue #51 — Visual Tokens and Authentication Pilot           | ✅ Complete |
+| Issue #53 — Refine Branding & Minimalist Icon System         | ✅ Complete |
 
 ---
 
@@ -121,8 +122,16 @@ The next work cycle should begin only after the current state is synchronized an
 
 The React Native (Expo) mobile application currently provides:
 
+* **Brand Identity & Minimalist Vector Icon System**:
+  * Vector brand logo component (`mobile/src/components/LokalLogo.tsx`) rendering Concept 1 (Monoline Coffee Cup & AI Steam Spark) via `react-native-svg`, bound to `colors.deepCaramel` (`#9A6330`).
+  * Dual-platform accessibility on `LokalLogo`: decorative by default (`accessible={false}`, `importantForAccessibility="no-hide-descendants"`, `accessibilityElementsHidden={true}`) when paired with visible wordmark; announces as `accessibilityRole="image"` with `accessibilityLabel` when `accessible={true}` is set.
+  * Shared minimalist icon component (`mobile/src/components/common/LokalIcon.tsx`) powered by `lucide-react-native` (MIT), configured via `mobile/src/theme/icons.ts` covering 14 approved minimalist icons: `close`, `community`, `profile`, `location`, `sparkles`, `coffee`, `heart`, `share`, `edit`, `verified`, `pending`, `rejected`, `document`, and `star`.
+  * Clean decorative accessibility contract: all icons set `accessible: false`, `importantForAccessibility: "no-hide-descendants"`, and `accessibilityElementsHidden: true`; interactive accessibility roles and labels reside exclusively on parent touchables.
+  * Strict physical touch-target floor enforcing minimum dimensions of $48 \times 48$ logical units (`iconButtonDimensions.minWidth: 48`, `minHeight: 48`) on all icon-only interactive controls.
+  * Responsive star-picker layout in `ShopDetailCard.tsx` with `flexWrap: 'wrap'`, `justifyContent: 'center'`, `columnGap: 2`, and `rowGap: 6`, guaranteeing 48 × 48 targets remain usable and centered on narrow screens down to 320 pt.
+  * Flex shrink protection (`flexShrink: 1`) on `shopName` and `shopAddress` in `CommunityFeedView.tsx` preventing text collision with rating badges on compact viewports.
 * **Community Feed & Social Sharing**:
-  * Top-left `👥 Community` button on `LokalMapView` (`top: 50, left: 16`) providing immediate, accessible discovery of community activity, mirroring the top-right `Profile` button.
+  * Top-left Community button on `LokalMapView` (`top: 50, left: 16`) styled with `LokalIcon name="community"`, providing immediate, accessible discovery of community activity, mirroring the top-right Profile button.
   * Controlled modal feed presentation (`CommunityFeedView`) using iOS `pageSheet` presentation style.
   * Chronological first-party review cards featuring shop name, shop street address, star ratings, author display names, relative timestamps, `(Edited)` indicators, and review text.
   * Interactive card actions:
@@ -139,7 +148,7 @@ The React Native (Expo) mobile application currently provides:
     * Resilient pagination unblocking: clears `isLoadingMore = false` in `refresh()` catch block.
     * Active cancellation: `cancel()` increments `requestId` and immediately resets `isLoading`, `isLoadingMore`, and `isRefreshing`.
 * **User Profile & Saved Coffee Shops (Favorites Discovery)**:
-  * Top-right `Profile` button on the interactive map opening a controlled `ProfileView` modal for authenticated users.
+  * Top-right Profile button on the interactive map styled with `LokalIcon name="profile"`, opening a controlled `ProfileView` modal for authenticated users.
   * User profile header displaying avatar initial, full name or display name fallback (`getUserDisplayName`), email, and an accessible Log Out action.
   * Dedicated saved coffee shops list displaying favorited shops ordered by most-recently favorited first.
   * Complete lifecycle states: loading indicator, error banner with localized retry action, empty state with guidance to save shops, and card list presentation.
@@ -159,7 +168,7 @@ The React Native (Expo) mobile application currently provides:
   * My Claims tab rendering user's submitted claims with status badges, submission timestamps, curator rejection explanations, and direct `Open Dashboard` action for approved claims.
   * Monotonic request invalidation guard (`claimsRequestId.current += 1`) in `ProfileView` triggered when the profile view is closed (`!visible`) or on auth token loss (`!authToken`), preventing in-flight claim responses from overwriting state after modal dismissal.
   * Dedicated Owner Dashboard modal (`OwnerDashboardModal`):
-    * Verified owner badge (`☕ Verified Owner`).
+    * Verified owner badge (`LokalIcon name="verified"` / `LokalIcon name="coffee"`).
     * Key performance indicators: LOKAL Community Rating, Total Reviews Count, and Claim Status.
     * Quick-edit form for shop Name and Address with client validation, dirty state tracking, and explicit address clearing (`null`).
     * Bounded customer reviews feed showing top 5 reviews with star ratings, author display names, and relative timestamps, omitting sensitive user UUIDs and emails.
@@ -250,7 +259,7 @@ The React Native (Expo) mobile application currently provides:
   * Monotonic request counters (`currentRequestId`, `currentSummaryRequestId`, `currentRecommendationsRequestId`, `currentFavoriteRequestId`) and mutation counters (`currentMutationId`, `currentFavoriteMutationId`) in `ShopDetailCard` ensuring late-arriving responses or mutations from previously selected shops or previous auth sessions are discarded.
   * Component lifecycle keying in `NearbyShopsSheet` (`${selectedShop.id}:${authToken || 'anon'}`) ensuring complete reset of review form, submission, deletion, summary, recommendation, and favorite states on shop selection change.
 * Non-blocking review loading and retry behavior.
-* Zero external UI dependencies, maintaining scope discipline and clean architecture.
+* Approved, lightweight UI vector dependencies (`react-native-svg`, `lucide-react-native`), maintaining scope discipline and clean architecture.
 
 Background location tracking remains outside the current implementation scope.
 
@@ -593,6 +602,11 @@ The recent development cycles established the following engineering practices:
 * **Metric Separation in Unified Domains**: Preserving separate provider and community rating metrics (`average_rating` vs `lokal_average_rating`) provides transparency and provenance without introducing premature composite scoring algorithms.
 * **Request-Scoped Supabase Client**: PostgREST queries should carry the caller's JWT rather than relying on a shared anonymous session so that Row Level Security (RLS) policies and RPCs can identify `auth.uid()`.
 * **REST Semantic Discipline**: Distinguishing between client-caused validation errors (`400`/`422`), nonexistent resources (`404`), unique constraint violations (`409`), external provider failures (`502`), service unavailability (`503`), and unexpected server-side errors (`500`) yields predictable API behavior.
+* **AST-Based Component Verification for Touch Targets and Accessibility**: When verifying UI accessibility contracts and touch-target dimensions across React Native components without a full DOM or mounted React renderer, analyzing TypeScript source files via the TypeScript compiler AST (`ts.createSourceFile`) allows precise, deterministic inspection. Linking each named style definition directly to the specific JSX element utilizing it verifies both physical dimension minimums ($\ge 48 \times 48$) and accessibility props (`accessibilityRole="button"`, `accessibilityLabel`) on the exact control rather than relying on coarse file-wide text matches.
+* **Dual-Platform Descendant Hiding for Decorative SVGs**: In React Native, SVGs wrapped in containers require platform-specific accessibility attributes. Android TalkBack does not hide child SVG text or nodes with `importantForAccessibility="no"`; it requires `importantForAccessibility="no-hide-descendants"`. Conversely, iOS VoiceOver requires `accessibilityElementsHidden={true}` on the parent container. Setting both properties ensures decorative brand artwork and icons are cleanly ignored by screen readers on both platforms.
+* **Responsive Wrapping and Alignment for Fixed Touch Target Grids**: When a row of fixed-dimension interactive touch targets (such as five $48 \times 48$ star rating buttons) is embedded in a card on narrow screens ($\le 320$ pt), unwrapped flex rows overflow the usable viewport width. Configuring `flexWrap: 'wrap'`, `justifyContent: 'center'`, `columnGap`, and `rowGap` ensures the controls cleanly wrap to a secondary row while remaining visually centered, avoiding clipped touch targets and awkward single-item left alignment.
+* **Flex Shrink Boundary on Text Rows with Badges**: In horizontal flex rows where text elements (such as shop names or addresses) sit alongside icons and variable-width rating badges, applying `flexShrink: 1` to the text style ensures `numberOfLines={1}` truncates with ellipsis before colliding with or pushing adjacent badges off the card.
+* **Separation of Decorative Icon Presentation from Interactive Container Roles**: Vector icons (`LokalIcon`) should remain strictly decorative presentation components (`accessible={false}`, `importantForAccessibility="no-hide-descendants"`). Exposing interactive attributes (`accessibilityRole="button"`) directly on non-touchable icon views creates duplicate or confusing focus targets for screen readers. Interactive roles and labels must reside exclusively on parent touchables (`TouchableOpacity`, `Pressable`).
 * **Fail-Closed Eligibility**: Business eligibility and public discovery should default to hidden/pending when evidence is insufficient rather than risk exposing unsupported businesses.
 * **Human-Controlled Merge**: Agy prepares and validates changes, while the Product Owner performs the final review and merge.
 * **Current-State Discipline**: `CURRENT_STATE.md` describes `main` only and is updated after changes are merged.
@@ -634,4 +648,4 @@ After implementation:
 
 ---
 
-**Last Updated:** Phase 3 — MVP Polish & Validation (Issue #51 merged; visual tokens and authentication personalization pilot established)
+**Last Updated:** Phase 3 — MVP Polish & Validation (Issue #53 merged; branding refined with Concept 1 logo and minimalist vector icon system established)
