@@ -308,5 +308,181 @@ class TestAuthDependency(unittest.TestCase):
         self.assertEqual(ctx.exception.status_code, 503)
 
 
+class TestSupabaseUrlValidation(unittest.TestCase):
+    def setUp(self):
+        import app.core.supabase as supabase_module
+
+        self.supabase_module = supabase_module
+        self.orig_client = supabase_module._supabase_client
+        self.orig_sr_client = supabase_module._service_role_supabase_client
+        supabase_module._supabase_client = None
+        supabase_module._service_role_supabase_client = None
+
+    def tearDown(self):
+        self.supabase_module._supabase_client = self.orig_client
+        self.supabase_module._service_role_supabase_client = self.orig_sr_client
+
+    def test_local_loopback_http_accepted_in_development(self):
+        from unittest.mock import patch
+
+        loopback_urls = [
+            "http://127.0.0.1:54321",
+            "http://localhost:54321",
+            "http://[::1]:54321",
+        ]
+        for url in loopback_urls:
+            with self.subTest(url=url):
+                self.supabase_module._supabase_client = None
+                self.supabase_module._service_role_supabase_client = None
+                with (
+                    patch.object(self.supabase_module.settings, "ENVIRONMENT", "development"),
+                    patch.object(self.supabase_module.settings, "SUPABASE_URL", url),
+                    patch.object(self.supabase_module.settings, "SUPABASE_ANON_KEY", "anon-key"),
+                    patch.object(
+                        self.supabase_module.settings,
+                        "SUPABASE_SERVICE_ROLE_KEY",
+                        "service-role-key",
+                    ),
+                    patch.object(self.supabase_module, "create_client") as mock_create,
+                ):
+                    mock_client = MagicMock()
+                    mock_create.return_value = mock_client
+
+                    self.supabase_module.validate_supabase_url(url, "development")
+                    c1 = self.supabase_module.get_supabase_client()
+                    c2 = self.supabase_module.get_service_role_supabase_client()
+                    c3 = self.supabase_module.create_scoped_supabase_client("user-jwt")
+
+                    self.assertIs(c1, mock_client)
+                    self.assertIs(c2, mock_client)
+                    self.assertIs(c3, mock_client)
+                    self.assertEqual(mock_create.call_count, 3)
+
+    def test_remote_http_rejected_even_in_development(self):
+        from unittest.mock import patch
+
+        remote_http_urls = [
+            "http://thustdjwwtkhlhbnuvin.supabase.co",
+            "http://example.com:54321",
+            "http://192.168.1.10:54321",
+        ]
+        for url in remote_http_urls:
+            with self.subTest(url=url):
+                self.supabase_module._supabase_client = None
+                self.supabase_module._service_role_supabase_client = None
+                with (
+                    patch.object(self.supabase_module.settings, "ENVIRONMENT", "development"),
+                    patch.object(self.supabase_module.settings, "SUPABASE_URL", url),
+                    patch.object(self.supabase_module.settings, "SUPABASE_ANON_KEY", "anon-key"),
+                    patch.object(
+                        self.supabase_module.settings,
+                        "SUPABASE_SERVICE_ROLE_KEY",
+                        "service-role-key",
+                    ),
+                ):
+                    with self.assertRaises(ValueError):
+                        self.supabase_module.get_supabase_client()
+                    with self.assertRaises(ValueError):
+                        self.supabase_module.get_service_role_supabase_client()
+                    with self.assertRaises(ValueError):
+                        self.supabase_module.create_scoped_supabase_client("user-jwt")
+                    conn_status = self.supabase_module.verify_supabase_connection()
+                    self.assertEqual(conn_status["status"], "error")
+
+    def test_loopback_http_rejected_outside_development(self):
+        from unittest.mock import patch
+
+        for env in ("production", "staging", "test", ""):
+            with self.subTest(env=env):
+                self.supabase_module._supabase_client = None
+                self.supabase_module._service_role_supabase_client = None
+                with (
+                    patch.object(self.supabase_module.settings, "ENVIRONMENT", env),
+                    patch.object(
+                        self.supabase_module.settings,
+                        "SUPABASE_URL",
+                        "http://127.0.0.1:54321",
+                    ),
+                    patch.object(self.supabase_module.settings, "SUPABASE_ANON_KEY", "anon-key"),
+                    patch.object(
+                        self.supabase_module.settings,
+                        "SUPABASE_SERVICE_ROLE_KEY",
+                        "service-role-key",
+                    ),
+                ):
+                    with self.assertRaises(ValueError):
+                        self.supabase_module.get_supabase_client()
+                    with self.assertRaises(ValueError):
+                        self.supabase_module.get_service_role_supabase_client()
+                    with self.assertRaises(ValueError):
+                        self.supabase_module.create_scoped_supabase_client("user-jwt")
+                    conn_status = self.supabase_module.verify_supabase_connection()
+                    self.assertEqual(conn_status["status"], "error")
+
+    def test_https_allowed_remote_host_accepted(self):
+        from unittest.mock import patch
+
+        url = "https://thustdjwwtkhlhbnuvin.supabase.co"
+        for env in ("development", "production"):
+            with self.subTest(env=env):
+                self.supabase_module._supabase_client = None
+                self.supabase_module._service_role_supabase_client = None
+                with (
+                    patch.object(self.supabase_module.settings, "ENVIRONMENT", env),
+                    patch.object(self.supabase_module.settings, "SUPABASE_URL", url),
+                    patch.object(self.supabase_module.settings, "SUPABASE_ANON_KEY", "anon-key"),
+                    patch.object(
+                        self.supabase_module.settings,
+                        "SUPABASE_SERVICE_ROLE_KEY",
+                        "service-role-key",
+                    ),
+                    patch.object(self.supabase_module, "create_client") as mock_create,
+                ):
+                    mock_create.return_value = MagicMock()
+                    self.supabase_module.get_supabase_client()
+                    self.supabase_module.get_service_role_supabase_client()
+                    self.supabase_module.create_scoped_supabase_client("user-jwt")
+                    self.assertEqual(mock_create.call_count, 3)
+
+    def test_malformed_and_lookalike_loopback_urls_rejected(self):
+        from unittest.mock import patch
+
+        bad_urls = [
+            "http://127.0.0.1.evil.com:54321",
+            "http://localhost.evil.com",
+            "http://evil.com/127.0.0.1",
+            "http://localhost@evil.com:54321",
+            "http://evil.com@127.0.0.1:54321",
+            "ftp://127.0.0.1:54321",
+            "http://127.0.0.1:notaport",
+            "https://",
+            "http://",
+            "https://thustdjwwtkhlhbnuvin.supabase.co/path with spaces",
+        ]
+        for url in bad_urls:
+            with self.subTest(url=url):
+                self.supabase_module._supabase_client = None
+                self.supabase_module._service_role_supabase_client = None
+                with (
+                    patch.object(self.supabase_module.settings, "ENVIRONMENT", "development"),
+                    patch.object(self.supabase_module.settings, "SUPABASE_URL", url),
+                    patch.object(self.supabase_module.settings, "SUPABASE_ANON_KEY", "anon-key"),
+                    patch.object(
+                        self.supabase_module.settings,
+                        "SUPABASE_SERVICE_ROLE_KEY",
+                        "service-role-key",
+                    ),
+                ):
+                    with self.assertRaises(ValueError):
+                        self.supabase_module.get_supabase_client()
+                    with self.assertRaises(ValueError):
+                        self.supabase_module.get_service_role_supabase_client()
+                    with self.assertRaises(ValueError):
+                        self.supabase_module.create_scoped_supabase_client("user-jwt")
+                    conn_status = self.supabase_module.verify_supabase_connection()
+                    self.assertEqual(conn_status["status"], "error")
+
+
 if __name__ == '__main__':
     unittest.main()
+

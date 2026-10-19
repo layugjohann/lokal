@@ -31,6 +31,9 @@ FIELD_MASK = (
 )
 
 
+SYNTHETIC_PLACE_ID_PREFIX = "test-place-"
+
+
 class GooglePlacesReviewProvider(BaseReviewProvider):
     """External review provider implementing Google Places API (New) Place Details."""
 
@@ -52,6 +55,13 @@ class GooglePlacesReviewProvider(BaseReviewProvider):
         Raises:
             ExternalProviderError: If the Google Places API request fails or times out.
         """
+        if external_id and external_id.startswith(SYNTHETIC_PLACE_ID_PREFIX):
+            logger.debug(
+                "Skipping outbound Google Places request for synthetic fixture ID '%s'.",
+                external_id,
+            )
+            return [], None, None, None
+
         if not self.api_key:
             logger.error("GOOGLE_PLACES_API_KEY is not configured.")
             raise ExternalProviderError("Google Places API key is not configured.")
