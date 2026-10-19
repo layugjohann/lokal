@@ -1,11 +1,55 @@
 import logging
+from urllib.parse import urlparse
 import httpx
 from supabase import create_client, Client, ClientOptions
 from .config import settings
 
 logger = logging.getLogger(__name__)
 
+APPROVED_DEV_LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
+
 _supabase_client: Client | None = None
+
+
+def validate_supabase_url(url: str, environment: str | None = None) -> None:
+    """Validate that SUPABASE_URL uses HTTPS, or HTTP strictly on local loopback in development.
+
+    Raises:
+        ValueError: If the URL is malformed, uses HTTP on a non-loopback host, or uses HTTP
+                    outside the 'development' environment.
+    """
+    raw_url = (url or "").strip()
+    if not raw_url or any(ch.isspace() for ch in raw_url):
+        raise ValueError(
+            "SUPABASE_URL must begin with https:// to ensure secure communication."
+        )
+
+    try:
+        parsed = urlparse(raw_url)
+        _ = parsed.port
+    except ValueError as exc:
+        raise ValueError(
+            "SUPABASE_URL must begin with https:// to ensure secure communication."
+        ) from exc
+
+    scheme = (parsed.scheme or "").lower()
+    hostname = (parsed.hostname or "").lower()
+
+    if not parsed.netloc or not hostname or parsed.username is not None or parsed.password is not None:
+        raise ValueError(
+            "SUPABASE_URL must begin with https:// to ensure secure communication."
+        )
+
+    if scheme == "https":
+        return
+
+    active_env = (environment if environment is not None else settings.ENVIRONMENT or "").strip().lower()
+    if scheme == "http" and active_env == "development" and hostname in APPROVED_DEV_LOOPBACK_HOSTS:
+        return
+
+    raise ValueError(
+        "SUPABASE_URL must begin with https:// to ensure secure communication."
+    )
 
 
 def get_supabase_client() -> Client:
@@ -24,10 +68,7 @@ def get_supabase_client() -> Client:
             "SUPABASE_URL and either SUPABASE_SERVICE_ROLE_KEY or SUPABASE_ANON_KEY must be configured."
         )
 
-    if not settings.SUPABASE_URL.lower().startswith("https://"):
-        raise ValueError(
-            "SUPABASE_URL must begin with https:// to ensure secure communication."
-        )
+    validate_supabase_url(settings.SUPABASE_URL)
 
     key = settings.SUPABASE_SERVICE_ROLE_KEY or settings.SUPABASE_ANON_KEY
     _supabase_client = create_client(settings.SUPABASE_URL, key)
@@ -44,7 +85,7 @@ def get_service_role_supabase_client() -> Client:
 
     Raises:
         ValueError: If SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY is not configured,
-                    or if SUPABASE_URL does not begin with https://.
+                    or if SUPABASE_URL does not begin with https:// (except approved dev loopback).
     """
     global _service_role_supabase_client
 
@@ -56,10 +97,7 @@ def get_service_role_supabase_client() -> Client:
             "SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY must be configured for privileged operations."
         )
 
-    if not settings.SUPABASE_URL.lower().startswith("https://"):
-        raise ValueError(
-            "SUPABASE_URL must begin with https:// to ensure secure communication."
-        )
+    validate_supabase_url(settings.SUPABASE_URL)
 
     _service_role_supabase_client = create_client(
         settings.SUPABASE_URL, settings.SUPABASE_SERVICE_ROLE_KEY
@@ -74,17 +112,14 @@ def create_scoped_supabase_client(token: str) -> Client:
 
     Raises:
         ValueError: If SUPABASE_URL or SUPABASE_ANON_KEY environment variables are not set,
-                    or if SUPABASE_URL does not begin with https://.
+                    or if SUPABASE_URL does not begin with https:// (except approved dev loopback).
     """
     if not settings.SUPABASE_URL or not settings.SUPABASE_ANON_KEY:
         raise ValueError(
             "SUPABASE_URL and SUPABASE_ANON_KEY environment variables must be configured."
         )
 
-    if not settings.SUPABASE_URL.lower().startswith("https://"):
-        raise ValueError(
-            "SUPABASE_URL must begin with https:// to ensure secure communication."
-        )
+    validate_supabase_url(settings.SUPABASE_URL)
 
     options = ClientOptions(headers={"Authorization": f"Bearer {token}"})
     client = create_client(settings.SUPABASE_URL, settings.SUPABASE_ANON_KEY, options=options)
@@ -108,10 +143,12 @@ def verify_supabase_connection() -> dict:
             "message": "SUPABASE_URL or SUPABASE_ANON_KEY is not set.",
         }
 
-    if not url.lower().startswith("https://"):
+    try:
+        validate_supabase_url(url)
+    except ValueError as exc:
         return {
             "status": "error",
-            "message": "SUPABASE_URL must begin with https:// to ensure secure communication.",
+            "message": str(exc),
         }
 
 

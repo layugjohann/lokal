@@ -268,10 +268,27 @@ class TestGooglePlacesReviewProvider(unittest.IsolatedAsyncioTestCase):
         self.assertIsInstance(review.rating, float)
         self.assertEqual(review.text, "Very good pour-over, nearly perfect.")
 
+    async def test_fetch_reviews_synthetic_place_id_short_circuits_without_api_call(self):
+        provider_no_key = GooglePlacesReviewProvider(api_key="", timeout=2.0)
+        with (
+            patch("app.services.reviews.google_places.settings.GOOGLE_PLACES_API_KEY", ""),
+            patch("httpx.AsyncClient.get", new_callable=AsyncMock) as mock_get,
+        ):
+            reviews, attribution, avg_rating, count = await provider_no_key.fetch_reviews(
+                "test-place-single-origin-1"
+            )
+
+        self.assertEqual(reviews, [])
+        self.assertIsNone(attribution)
+        self.assertIsNone(avg_rating)
+        self.assertIsNone(count)
+        mock_get.assert_not_called()
+
 
 
 
 class TestReviewService(unittest.IsolatedAsyncioTestCase):
+
     def setUp(self):
         self.mock_provider = AsyncMock()
         self.service = ReviewService(provider=self.mock_provider)
@@ -462,8 +479,46 @@ class TestReviewService(unittest.IsolatedAsyncioTestCase):
             ctx.exception.detail, "A database error occurred while retrieving the coffee shop."
         )
 
+    async def test_get_shop_reviews_synthetic_place_id_preserves_first_party_reviews(self):
+        real_provider = GooglePlacesReviewProvider(api_key="", timeout=2.0)
+        real_service = ReviewService(provider=real_provider)
+        self.shops_builder = MockQueryBuilder(data=[{
+            "id": self.shop_id,
+            "name": "[Test] Single Origin Lab — BGC",
+            "rating": 4.9,
+            "google_place_id": "test-place-single-origin-1",
+        }])
+        lokal_row = {
+            "id": "11111111-2222-3333-4444-555555555555",
+            "shop_id": self.shop_id,
+            "user_id": "99999999-8888-7777-6666-555555555555",
+            "author_name": "Elena Gomez",
+            "rating": 5,
+            "content": "Superb pour-over and great staff.",
+            "source": "lokal",
+            "created_at": "2026-09-19T01:00:00Z",
+            "updated_at": "2026-09-19T01:00:00Z",
+        }
+        self.reviews_builder = MockQueryBuilder(data=[lokal_row])
+
+        with (
+            patch("app.services.reviews.google_places.settings.GOOGLE_PLACES_API_KEY", ""),
+            patch("httpx.AsyncClient.get", new_callable=AsyncMock) as mock_get,
+        ):
+            response = await real_service.get_shop_reviews(self.shop_id, self.mock_supabase)
+
+        self.assertEqual(len(response.reviews), 1)
+        self.assertEqual(response.reviews[0].source, ReviewSource.LOKAL)
+        self.assertEqual(response.lokal_reviews_count, 1)
+        self.assertEqual(response.lokal_average_rating, 5.0)
+        self.assertEqual(response.total_reviews_count, 0)
+        self.assertEqual(response.attributions, [])
+        mock_get.assert_not_called()
+
+
 
 class TestReviewEndpoint(unittest.TestCase):
+
     def setUp(self):
         self.mock_supabase = MagicMock()
         app.dependency_overrides[get_supabase] = lambda: self.mock_supabase
